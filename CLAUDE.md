@@ -33,11 +33,14 @@ Trello is the single source of truth for all work. There is no separate daily pl
 
 | List | Meaning |
 |------|---------|
-| To-do | Rossella's backlog — raw requests waiting to be picked up |
+| Backlog | Rossella's idea list — **agents must never touch cards here** |
+| To-do | Ready to be worked on — Rossella moves cards here from Backlog when ready |
 | Work in Progress | Being worked on this session |
 | Needs Revision | Delivered but Rossella is not satisfied — read her comment before touching |
 | Ready for Review | Complete — awaiting Rossella's approval |
 | Done | Approved and closed |
+
+> **Backlog rule:** The Backlog list is managed exclusively by Rossella. Agents must never pick up, modify, comment on, or move cards in the Backlog. Only cards in To-do or Needs Revision are fair game.
 
 ### Priority labels (set by Rossella or Ross)
 
@@ -110,6 +113,7 @@ Even when one agent leads, all agents contribute at their layer:
 - Quinn always does a final check before the card moves to Ready for Review
 - Ross documents any significant decisions in DECISIONS.md
 - Beau always runs `npm run build` and confirms it passes before moving a card
+- **User testing required before Ready for Review:** Ross must test the feature by using the running app as a real user (not by reading code). Additionally, either Beau or Quinn must also test the feature as a user in the running app. Both tests must pass before the card moves to Ready for Review. Note this in the card comment.
 
 ### Priority order each session
 

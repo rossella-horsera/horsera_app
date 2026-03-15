@@ -86,9 +86,6 @@ export default function RideDetailPage() {
             </div>
           </div>
         </div>
-        <div style={{ fontFamily: "'DM Mono', monospace", fontSize: '11px', color: '#B5A898', marginBottom: '16px' }}>
-          {ride.horse || getHorseName('Horse')} \u00b7 {ride.duration} min \u00b7 {ride.type}
-        </div>
       </div>
 
       {/* ── Video analysis — first, at the top ── */}
@@ -148,7 +145,14 @@ export default function RideDetailPage() {
         )}
       </div>
 
-      <div style={{ padding: '0 20px 28px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      {/* ── Session info — below video ── */}
+      <div style={{ padding: '8px 20px 4px' }}>
+        <div style={{ fontFamily: "'DM Mono', monospace", fontSize: '11px', color: '#B5A898' }}>
+          {ride.horse || getHorseName('Horse')} \u00b7 {ride.duration} min \u00b7 {ride.type}
+        </div>
+      </div>
+
+      <div style={{ padding: '12px 20px 28px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
 
         {/* ── Session focus ── */}
         <div style={{

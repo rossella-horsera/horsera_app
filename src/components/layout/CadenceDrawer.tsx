@@ -62,7 +62,8 @@ Your personality:
 - You are ambient and calm — you suggest, you don't announce
 - You know this rider well and refer to their specific progress and patterns
 - Keep responses concise and focused (2-4 sentences unless asked for more)
-- Never be generic — always connect advice to ${name}'s specific situation with ${horse}`;
+- Never be generic — always connect advice to ${name}'s specific situation with ${horse}
+- You can also answer general equestrian questions (gaits, biomechanics, disciplines, breeds, training concepts) with the same warm, expert tone — always grounding your answer in the rider's context when relevant`;
 }
 
 function renderMarkdown(text: string): string {
@@ -544,9 +545,35 @@ export default function CadenceDrawer({ open, onClose, onStreamingChange, onSpee
 
 function getFallbackResponse(question: string): string {
   const q = question.toLowerCase();
+
+  // Ride-specific questions (use mock data context)
   if (q.includes('focus') || q.includes('next ride')) return "Based on your last 3 rides, I'd focus on your lower leg stability — specifically the right-rein drift we've been seeing.";
   if (q.includes('stirrup') || q.includes('right')) return "The right stirrup pattern is interesting — it shows up consistently across 4 of your last 5 rides.";
   if (q.includes('ready') || q.includes('spring classic') || q.includes('show')) return "You have 21 days until the Spring Classic — your core stability is mastered, rein steadiness is consolidating well.";
   if (q.includes('lower leg') || q.includes('stability score')) return "Your lower leg stability score is 72% — improving from 55% six weeks ago.";
+
+  // General gait questions
+  if (q.includes('trot') && (q.includes('sitting') || q.includes('sit'))) return "Sitting trot becomes easier when you follow the horse's movement rather than resist it. Think of your pelvis as a pendulum — let it swing fore and aft with each beat. Absorb through your hip flexors, not your lower back.";
+  if (q.includes('canter') || q.includes('canter transition')) return "A clean canter transition comes from preparation, not force. Half-halt to balance the horse, position your outside leg slightly back, then ask with a light squeeze. The horse needs to be on the hindquarters before you ask.";
+  if (q.includes('trot')) return "Trot has two beats — diagonal pairs of legs move together. In rising trot, you post on one diagonal; in dressage, you'll want to vary diagonals to develop the horse evenly. The rhythm should feel like a steady two-beat metronome.";
+  if (q.includes('walk')) return "Walk is the foundation of everything. It's a four-beat gait with no moment of suspension — each hoof falls individually. Quality walk has clear, ground-covering strides with the hindfoot overtracking the frontfoot print.";
+  if (q.includes('halt') || q.includes('square halt')) return "A square halt comes from riding forward into stillness, not pulling back. Use half-halts to prepare, close your leg to push the horse onto a giving hand, then close both legs and hands together. Think 'park the energy', not 'stop'.";
+  if (q.includes('lateral') || q.includes('leg yield') || q.includes('shoulder-in') || q.includes('travers') || q.includes('renvers')) return "Lateral work teaches the horse to step under and across with the hindleg — this builds collection and suppleness. Leg yield is the gateway: the horse moves forward and sideways, with a slight flexion away from the direction of travel.";
+
+  // Biomechanics / position
+  if (q.includes('seat') || q.includes('deep seat')) return "A deep seat isn't about pushing down — it's about allowing your seat bones to follow the horse's back. Soften your hip flexors, breathe deeply, and think of your weight melting down through a relaxed leg. Tension is the enemy of depth.";
+  if (q.includes('hand') || q.includes('rein contact') || q.includes('soft hand')) return "Soft hands aren't passive hands — they're elastic. Think of holding a small bird: firm enough that it can't fly away, gentle enough that it isn't hurt. The contact should travel from your elbow, through a supple wrist, to a steady finger.";
+  if (q.includes('core') || q.includes('balance')) return "Core stability in the saddle isn't about bracing — it's about dynamic stability. Engage your deep abdominals gently, as if you're wearing a soft corset. This stabilises your pelvis so your leg and hand can operate independently.";
+  if (q.includes('leg position') || q.includes('heel down')) return "The heel-down position is a consequence of a long, relaxed leg — not something you force. Let your weight sink into your heel naturally. If you have to push the heel down, the leg is probably too tense. Think about stretching down through the calf, not pointing the toe up.";
+
+  // Disciplines
+  if (q.includes('dressage')) return "Dressage is the art of riding the horse through progressive scales — rhythm, relaxation, contact, impulsion, straightness, collection. Each level builds on the last. The goal isn't perfection in movements; it's harmony between horse and rider.";
+  if (q.includes('hunter') || q.includes('jumper') || q.includes('jumping')) return "In Hunter/Jumper, your eye to the fence is everything. Establish your rhythm in canter, find the distance early, and trust it. A balanced two-point and a following hand over the fence let the horse bascule freely through the back.";
+  if (q.includes('pony club')) return "Pony Club develops well-rounded horsepeople: position, stable management, first aid, and eventually flatwork and jumping. The progressive rating system (D through A) gives you clear milestones. Each level tests both knowledge and practical skill.";
+
+  // Breeds / horses
+  if (q.includes('warmblood') || q.includes('thoroughbred') || q.includes('quarter horse') || q.includes('breed')) return "Different breeds have different movement characteristics. Warmbloods tend to have naturally elevated, elastic gaits. Thoroughbreds are often more sensitive and forward. Quarter Horses are compact and quick. Work with the horse you have — understand their natural balance before asking for more.";
+
+  // Default — keep it personal to the rider's data
   return "Based on your recent rides and your current focus on Training Level Test 1, your strongest area right now is core stability — build everything else from a solid seat outward.";
 }
