@@ -1,0 +1,214 @@
+Biomechanics Group,Biomechanics,Plain English Description,Landmarks Needed,Formula,Symbol Definitions,MVP,MP,MVN,YOLO,OP,DLC,Typical values,Ideal Value,Feedback Mapping
+LOWER LEG STABILITY GROUP,⭐ Lower Leg Stability ,"Measures how much the lower leg swings relative to the rider’s hip over time.
+A stable lower leg is a core indicator of rider balance and seat stability.","Hip, Knee, Ankle","LowerLegStability = RMS( v_leg(t) - mean(v_leg) ) / torso_length
+
+v_leg(t) = A(t) - H(t) [ankle position relative to hip over time]","A = ankle position
+H = hip position
+K = knee position
+Heel = heel position
+T = toe position
+
+baseline = reference neutral position
+torso_length = distance from midpoint of shoulders to midpoint of hips
+foot_length = distance from heel to toe",⭐,✅,✅,✅,✅,🔧,0 – ~0.2+,Close to 0 - Lower is better,"0 – 0.03 → Excellent lower leg stability
+0.03 – 0.06 → Very stable leg
+0.06 – 0.10 → Slight leg movement
+0.10 – 0.15 → Leg instability visible"
+,Knee Angle Stability,"Measures how consistently the rider maintains knee bend during the ride.
+Frequent changes in knee angle often indicate gripping or loss of balance.","Hip, Knee, Ankle","KneeAngleStability = StdDev( theta_knee(t) )
+
+theta_knee(t) = angle(H(t), K(t), A(t)) [knee angle over time]",,✅,✅,✅,✅,✅,🔧,0° – 30°,0° variation- Lower is better,"0 – 3° → Knee very stable
+3 – 6° → Knee mostly stable
+6 – 10° → Mild knee movement
+10 – 18° → Noticeable instability"
+,Heel Position Stability,"Measures how stable the rider’s heel position is during the ride.
+Stable heels help anchor the rider’s leg and maintain balance.","Knee, Ankle, Heel, Toe","HeelPositionStability = StdDev( theta_heel(t) )
+
+theta_heel(t) = angle(K(t), A(t), T(t)) [ankle-foot angle over time]",,"✅
+If foot landmarks are avalable",⚠️,❌,❌,✅,🔧,0° – 25°,0° variation - Lower is better,"0 – 4° → Heel extremely stable
+4 – 7° → Heel mostly stable
+7 – 12° → Heel movement noticeable
+12 – 18° → Heel unstable"
+,Lower Leg Drift,Detects whether the rider’s leg gradually shifts forward or backward relative to the seat.,"Hip, Ankle","LowerLegDrift = | mean(v_leg(t)) - baseline_leg_position |
+
+v_leg(t) = A(t) - H(t) [ankle position relative to hip over time]",,✅,✅,✅,✅,✅,🔧,0 - 0.15,0 - Lower is better,"0 – 0.02 → Leg position ideal
+0.02 – 0.05 → Slight drift
+0.05 – 0.09 → Moderate drift
+0.09 – 0.12 → Leg creeping forward/back"
+HAND / REIN CONTROL GROUP,⭐ Rein Symmetry,Measures whether the rider’s hands are carried at even heights. Uneven hands can contribute to crookedness and uneven contact,"Left Wrist, Right Wrist","ReinSymmetry = | y(LW) - y(RW) | / shoulder_width
+
+LW = mean(LW(t)) [average left wrist position over the analysis window]
+RW = mean(RW(t)) [average right wrist position over the analysis window]","LW(t) = left wrist position at time t
+RW(t) = right wrist position at time t
+LS(t) = left shoulder position at time t
+RS(t) = right shoulder position at time t
+LE(t) = left elbow position at time t
+RE(t) = right elbow position at time t
+W(t) = wrist position at time t
+S(t) = shoulder position at time t
+E(t) = elbow position at time t
+
+shoulder_width = distance between left and right shoulders
+torso_length = distance from midpoint of shoulders to midpoint of hips",⭐,✅,✅,✅,✅,🔧,0 - 0.30,0 - Closer to zero is better,"0 – 0.02 → Hands perfectly even
+0.02 – 0.05 → Hands mostly level
+0.05 – 0.08 → Slight hand imbalance
+0.08 – 0.15 → Noticeable uneven hands"
+,⭐ Rein Steadiness,Measures how much the rider’s hands move relative to the shoulders over time. Steadier hands generally support more consistent contact.,"Shoulder, Elbow, Wrist","ReinSteadiness = RMS( v_hand(t) - mean(v_hand) ) / torso_length
+
+v_hand(t) = W(t) - S(t) [wrist position relative to shoulder over time]",,⭐,✅,✅,✅,✅,🔧,0 - 0.20,0 - Lower is better,"0 – 0.02 → Hands extremely steady
+0.02 – 0.05 → Hands steady
+0.05 – 0.08 → Slight hand movement
+0.08 – 0.15 → Hands moving frequently"
+,Hand Spacing Stability,Measures whether the distance between the hands remains consistent over time.,"Left Wrist, Right Wrist","HandSpacingStability = StdDev( d_hands(t) / shoulder_width )
+
+d_hands(t) = distance(LW(t), RW(t)) [distance between hands over time]",,✅,✅,✅,✅,✅,🔧,0 - 0.10,0 - Lower is better,"0.00–0.02 = hand width very consistent
+0.02–0.04 = mostly consistent
+0.04–0.06 = mild inconsistency
+0.06–0.10 = noticeably variable"
+,Elbow Symmetry,Measures whether both elbows maintain similar bend angles.,"Shoulder, Elbow, Wrist","ElbowSymmetry = | theta_elbow_left - theta_elbow_right |
+
+theta_elbow_left = angle(LS, LE, LW) [left elbow angle]
+theta_elbow_right = angle(RS, RE, RW) [right elbow angle]",,⚠️,✅,✅,✅,✅,🔧,0° - 30°,0° - Closer to zero is better,"0–3° = elbows very even
+3–6° = mostly even
+6–10° = mild asymmetry
+10–18° = noticeable asymmetry"
+,Elbow Elasticity,"Measures whether the elbow maintains a soft, functional bend rather than becoming rigid or excessively unstable.","Shoulder, Elbow, Wrist","ElbowElasticity_mean = mean( theta_elbow(t) )
+ElbowElasticity_var = StdDev( theta_elbow(t) )
+
+theta_elbow(t) = angle(S(t), E(t), W(t)) [elbow angle over time]",,⚠️,✅,✅,✅,✅,🔧,"Mean angle: roughly ~120° to 170°
+Variation: 0° to ~25°","Mean angle target band: ~130°–155°
+Variation target: ~0°–8°
+
+Target range for mean; lower is better for variability","Mean too open + low variability = likely locked elbow
+Mean in target band + low variability = elastic and steady
+High variability = unstable elbow position"
+UPPER BODY ALIGNMENT GROUP (POSTURE),⭐ Upper Body Vertical Alignment,Measures whether the rider leans forward or backward relative to vertical.,"Shoulders, Hips","UpperBodyVerticalAlignment = mean( theta_trunk(t) )
+
+theta_trunk(t) = angle( trunk_vector(t), vertical ) [trunk angle relative to vertical over time]
+trunk_vector(t) = MS(t) - MH(t) [vector from mid-hip to mid-shoulder]","MS(t) = midpoint between shoulders at time t
+MH(t) = midpoint between hips at time t
+LH(t) = left hip position at time t
+RH(t) = right hip position at time t
+Head(t) = head position at time t
+
+vertical = vertical axis of the image
+torso_length = distance from midpoint of shoulders to midpoint of hips",⭐,✅,✅,✅,✅,🔧,0° – 40°,0° - Closer to zero is better,"0 – 5° → Excellent posture
+5 – 10° → Good alignment
+10 – 15° → Slight lean
+15 – 25° → Noticeable lean"
+,Shoulder Levelness,Detects whether the rider collapses or leans to one side.,"Left Shoulder, Right Shoulder","ShoulderLevelness = | y(LS) - y(RS) | / shoulder_width
+
+LS = mean(LS(t)) [average left shoulder position over the analysis window]
+RS = mean(RS(t)) [average right shoulder position over the analysis window]
+shoulder_width = distance(LS, RS) [distance between average left and right shoulder positions]",,✅,✅,✅,✅,✅,🔧,0 - 0.20,0 - Lower is better,"0 – 0.02 → Shoulders level
+0.02 – 0.05 → Minor tilt
+0.05 – 0.08 → Slight lean
+0.08 – 0.15 → Noticeable tilt"
+,Torso Rotation,Measures twisting through the torso by comparing shoulder-line orientation to hip-line orientation.,"Shoulders, Hips","TorsoRotation = | yaw(shoulder_line) - yaw(hip_line) |
+
+shoulder_line = mean(LS(t) - RS(t)) [average shoulder line orientation over the analysis window]
+hip_line = mean(LH(t) - RH(t)) [average hip line orientation over the analysis window]
+yaw(...) = horizontal orientation angle",,⚠️,⚠️,⚠️,⚠️,⚠️,🔧,0° – 35°,0° - Closer to zero is better,"0–5° = torso aligned
+5–10° = slight twist
+10–15° = noticeable twist
+15–25° = strong twist"
+,Head Stability,Measures how much the rider’s head moves or bounces relative to its average position.,"Head, Shoulders",HeadStability = RMS( Head(t) - mean(Head) ) / torso_length,,⚠️,✅,✅,✅,⚠️,🔧,0 - 0.15,0 - Lower is better,"0.00–0.02 = head very stable
+0.02–0.04 = mostly steady
+0.04–0.07 = mild movement
+0.07–0.12 = noticeable head movement"
+CORE & SEAT STABILITY GROUP,⭐ Core Stability,Measures stability of the rider’s torso relative to the pelvis.,"Shoulders, Hips","CoreStability = RMS( trunk_vector(t) - mean(trunk_vector) ) / torso_length
+
+trunk_vector(t) = MS(t) - MH(t) [vector from mid-hip to mid-shoulder over time]","MS(t) = midpoint between shoulders at time t
+MH(t) = midpoint between hips at time t
+LH(t) = left hip position at time t
+RH(t) = right hip position at time t
+
+vertical = vertical axis of the image
+torso_length = distance from midpoint of shoulders to midpoint of hips
+hip_width = distance between left and right hips",⭐,✅,✅,✅,✅,🔧,0 - 0.15,0 - Lower is better,"0 – 0.015 → Excellent core stability
+0.015 – 0.035 → Good stability
+0.035 – 0.07 → Slight instability
+0.07 – 0.12 → Core unstable"
+,Trunk Angle Stability,Measures how consistently the rider maintains trunk angle over time.,"Shoulders, Hips","TrunkAngleStability = StdDev( theta_trunk(t) )
+
+theta_trunk(t) = angle( MS(t) - MH(t), vertical ) [trunk angle relative to vertical over time]",,✅,✅,✅,✅,✅,🔧,0° – 20°,0° - Closer to zero is better,"0–2° = extremely stable trunk
+2–4° = stable trunk posture
+4–7° = mild variation
+7–12° = noticeable variation"
+,⭐ Pelvis Vertical Stability,Measures how smoothly the pelvis follows the horse’s movement.,"Left Hip, Right Hip","PelvisVerticalStability = StdDev( y(midHip(t)) ) / torso_length
+
+midHip(t) = ( LH(t) + RH(t) ) / 2 [midpoint between left and right hips over time]",,⭐,✅,✅,✅,✅,🔧,0 - 0.2,"0.01 – 0.03
+
+ (This is one of the few metrics where the ideal is not zero, because the pelvis should move with the horse.)","0.01 – 0.03 → Excellent seat following motion
+0.03 – 0.05 → Smooth seat
+0.05 – 0.08 → Slight bounce
+0.08 – 0.12 → Noticeable bounce"
+,Pelvis Levelness,Measures whether one hip drops or lifts more than the other.,"Left Hip, Right Hip","PelvisLevelness = | y(LH) - y(RH) | / hip_width
+
+LH = mean(LH(t)) [average left hip position over the analysis window]
+RH = mean(RH(t)) [average right hip position over the analysis window]",,⚠️,✅,✅,✅,✅,🔧,0 - 0.2,0 - Closer to zero is better,"0.00–0.02 = pelvis level
+0.02–0.05 = slight asymmetry
+0.05–0.08 = mild collapse on one side
+0.08–0.15 = noticeable unevenness"
+LEG / STIRRUP ORGANIZATION GROUP,Heel Depth,Measures whether the heel is lower than the toe. This is the primary metric for the trainer cue: “heels down.”,"Heel, Toe","HeelDepth = ( y(T) - y(Heel) ) / foot_length
+
+T = mean(T(t)) [average toe position over the analysis window]
+Heel = mean(Heel(t)) [average heel position over the analysis window]","Heel(t) = heel position at time t
+T(t) = toe position at time t
+A(t) = ankle position at time t
+K(t) = knee position at time t
+
+foot_length = distance from heel to toe",✅,⚠️,❌,❌,✅,🔧,~ -0.2 to +0.4,"Moderately positive, for example ~ +0.05 to +0.20","<0.00 = heel above toe
+0.00–0.05 = nearly level
+0.05–0.20 = heel appropriately down
+0.20–0.30 = strong heel-down position"
+,Ankle Flexion Angle,Measures ankle articulation and overall foot organization.,"Knee, Ankle, Toe","AnkleFlexionAngle = angle(K, A, T)
+
+K = mean(K(t)) [average knee position over the analysis window]
+A = mean(A(t)) [average ankle position over the analysis window]
+T = mean(T(t)) [average toe position over the analysis window]",,Optional,⚠️,❌,❌,✅,🔧,"Often ~70° to 160°, depending on context",Target band rather than single value; depends on discipline and situation,Needs calibration against riding context; better used as an internal metric before direct user-facing feedback
+,Foot Stability,Measures whether the foot rotates or swings inconsistently over time.,"Heel, Toe","FootStability = StdDev( phi_foot(t) )
+
+phi_foot(t) = angle(Heel(t), T(t)) [foot orientation angle over time]",,Optional,⚠️,❌,❌,✅,🔧,0° to ~25°,0° variation- Lower is better,"0–3° = very stable foot
+3–6° = mostly stable
+6–10° = mild instability
+10–18° = noticeable movement"
+BALANCE / SYMMETRY GROUP,Rider Centerline Alignment,Measures whether rider stays centered over saddle.,"MidShoulder, MidHip","RiderCenterlineAlignment = | x(MS) - x(MH) | / torso_length
+
+MS = mean(MS(t)) [average midpoint between shoulders over the analysis window]
+MH = mean(MH(t)) [average midpoint between hips over the analysis window]","MS(t) = midpoint between shoulders at time t
+MH(t) = midpoint between hips at time t
+LS(t) = left shoulder position at time t
+RS(t) = right shoulder position at time t
+LH(t) = left hip position at time t
+RH(t) = right hip position at time t
+LK(t) = left knee position at time t
+RK(t) = right knee position at time t
+LA(t) = left ankle position at time t
+RA(t) = right ankle position at time t
+
+shoulder_width = distance between left and right shoulders
+hip_width = distance between left and right hips
+torso_length = distance from midpoint of shoulders to midpoint of hips
+knee_angle_scale = normalization constant for knee asymmetry",⚠️,✅,✅,✅,⚠️,🔧,0 - 0.15,0 - closer to 0 is better,"0.00–0.02 = centered
+0.02–0.05 = slightly off-center
+0.05–0.08 = moderate offset
+0.08–0.12 = noticeable imbalance"
+,Left–Right Symmetry Index,"Composite measure of body symmetry across shoulders, pelvis, and knees.","Shoulders, Hips, Knees","LeftRightSymmetryIndex = mean( ShoulderLevelness, PelvisLevelness, knee_asymmetry_norm )
+
+knee_asymmetry_norm = | theta_knee_left - theta_knee_right | / knee_angle_scale [normalized knee angle asymmetry]
+theta_knee_left = angle(LH, LK, LA) [left knee angle]
+theta_knee_right = angle(RH, RK, RA) [right knee angle]
+LH, LK, LA = mean([LH or LK or LA](t)) [average left hip or knee or ankle position over the analysis window]
+RH, RK, RA = mean([RH or RK or RA](t)) [average roght hip or knee or ankle position over the analysis window]
+",,⚠️,✅,✅,✅,⚠️,🔧,0 to ~0.2,0 - closer to 0 is better,"0.00–0.03 = highly symmetrical
+0.03–0.06 = mostly symmetrical
+0.06–0.10 = mild asymmetry
+0.10–0.15 = noticeable asymmetry"
+,Seat Independence,Measures whether the limbs move independently from the trunk rather than being dragged by torso instability.,"Shoulders, Wrists, Ankles","SeatIndependence = corr( trunk_motion(t), limb_motion(t) )
+
+trunk_motion(t) = motion magnitude of the trunk over time
+limb_motion(t) = motion magnitude of wrists and ankles over time",,Later,✅,✅,✅,⚠️,🔧,"-1 to +1 correlation, though in practice usually ~0 to 1 here",Closer to 0 is generally better than closer to 1,"0.00–0.20 = strong independence
+0.20–0.40 = good independence
+0.40–0.60 = moderate coupling
+0.60–0.80 = strong coupling"

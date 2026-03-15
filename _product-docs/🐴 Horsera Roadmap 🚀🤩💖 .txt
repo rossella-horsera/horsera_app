@@ -1,0 +1,168 @@
+﻿🏗️ Roadmap
+See Roadmap here 
+✅ EPIC 1 — System of Record + Progression
+MVP Outcome: A rider can:
+* See where they are
+* See what they’re working toward
+* See progress accumulate over time
+No AI needed yet. Just clean structure.
+✅ EPIC 2 — Evidence Capture Layer
+MVP Outcome: A rider can log a ride, upload a video, and capture reflections (text or voice) — creating durable evidence instead of lost moments.
+No interpretation yet. Just clean capture.
+✅ EPIC 3 — Intelligence + Readiness
+MVP Outcome: After logging a ride and uploading a video, the rider receives AI analysis, comparison to prior rides, recommended drills, next focus guidance, a readiness signal, and contextual answers from Cadence. This is where the loop closes.
+EPIC
+	Category
+	MVP
+	V2
+	V3 (Horse Version)
+	EPIC 1 - System of Record + Progression
+	Profiles
+	Rider + 1 horse (basic profile)
+	Multi-role (trainer/owner)
+	Full horse persona
+	Core Data Model
+	Goals, Milestones, Rides, Videos, Feedback, Program
+	Advanced history views
+	Horse development data model
+	Program Framework
+	1 structured program (e.g., Pony Club-inspired)
+Static milestone library
+	Discipline versions (Dressage, Jumper, Eventing)
+Trainer-customizable programs
+	Horse-specific program framework
+	Goals
+	1 active rider goal
+	Multiple goal types
+	Horse goals (fitness, development, conditioning)
+	Milestones
+	10–20 starter milestones
+	Level system + skill domains
+	Horse milestones
+	Learning / Drills
+	Static drills tied to milestones + ride history timeline
+	Rich learning library
+	Horse training exercises
+	Progress View
+	Basic milestone states
+	Trends + readiness indicators
+	Horse readiness dashboard
+	Competition (structural only)
+	❌
+	Competition objects (shows, classes, eligibility fields)
+	Horse eligibility structure
+	EPIC 2 — Ride Capture
+	Ride Log
+	Manual ride log + focus milestones
+	Sensor integration
+	Horse session logs
+	Video Upload
+	Upload + async processing
+	Trimming + highlight detection
+	Horse movement focus
+	Self-Reflection
+	Rider reflection (voice/text)
+	Structured rubric
+	Trainer-led horse feedback
+	Feedback Object
+	Structured feedback (rider) + AI summary
+	Trainer validation
+	Trainer-led horse feedback
+	EPIC 3 — Intelligence + Readiness
+	AI Video Analysis
+	Basic rider position summary
+	Goal-specific analysis
+	Horse biomechanics analysis
+	Comparative Insight
+	Compare to previous ride/video (e.g., seat more balanced than last week)
+	Longitudinal pattern detection
+	Horse improvement trends
+	Next Focus Engine
+	Recommend:
+• Drills
+• Learning material
+• Continue milestone or advance
+• Based on previous performance comparison
+	Fully adaptive planning engine
+	Horse next focus planning
+	Cadence Shell
+	Persistent AI chat
+	Multi-persona views
+	Horse-aware Cadence
+	Context Retrieval
+	Cadence sees goals, rides, milestones, video summaries
+	Long-term memory modeling
+	Horse context modeling
+	Progress Summary
+	“Summarize my last 3 rides”
+	Pattern detection
+	Horse development summaries
+	Readiness Summary
+	Heuristic readiness signal (based on milestone state + consistency + recent performance)
+	Formal readiness scoring
+	Horse readiness signals
+	Competition (intelligence layer)
+	❌
+	Connect to external competition DBs + triangulate with readiness
+	Horse eligibility signals
+	Proactive Suggestions
+	On-demand only
+	Proactive nudges
+	Cross rider-horse alignment
+	
+
+
+
+
+
+🐎 Position & Stability — Scoring Logic Overview
+
+
+Component
+	What We Measure
+	High-Level Logic
+	Ideal
+	Head Alignment
+	Head balance over torso
+	Measure head tilt relative to vertical axis and its movement variability over time
+	Head centered over shoulders with minimal tilt (±2° range)
+	Upper Body Stability
+	Torso lean & steadiness
+	Calculate torso angle relative to vertical and how much it fluctuates frame-to-frame
+	Neutral upright posture with low angle variability
+	Hip Stability
+	Seat symmetry & pelvic balance
+	Measure left/right hip alignment and vertical movement consistency relative to torso
+	Even weight distribution, minimal left/right bias (±2–3°)
+	Lower Leg Stability
+	Lower leg position consistency
+	Track ankle position relative to hip/knee and measure drift or swinging
+	Quiet leg with minimal forward/back displacement
+	Hand Stability
+	Rein steadiness & symmetry
+	Measure wrist position variability and left/right asymmetry
+	Even, steady hands with minimal bounce and balanced height
+	Overall Score
+Metric
+	Logic
+	Ideal
+	Overall Position & Stability
+	Weighted average of the 5 component scores
+	100 = stable, balanced, minimal deviation
+	
+
+Directional Feedback (for UI)
+
+
+Feedback Type
+	Logic
+	Example
+	Forward / Back Lean
+	Average torso angle vs vertical
+	“4° forward lean”
+	Left / Right Bias
+	Average hip or shoulder horizontal offset
+	“6° left hip bias”
+	Hand Asymmetry
+	Difference between left & right wrist height
+	“3° right bias”

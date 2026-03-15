@@ -1,0 +1,30 @@
+EPIC,Category,MVP,V2,V3 (Horse Version),,,,,,,,,,,,Pillar
+EPIC 1 - System of Record + Progression,Profiles,Rider + 1 horse (basic profile),Multi-role (trainer/owner),Full horse persona,,,,,,,,,,,,Pillar 9 - Persistent System of Record
+,Core Data Model,"Goals, Milestones, Rides, Videos, Feedback, Program",Advanced history views,Horse development data model,,,,,,,,,,,,Pillar 9 - Persistent System of Record
+,Program Framework,"1 structured program (e.g., Pony Club-inspired)
+Static milestone library","Discipline versions (Dressage, Jumper, Eventing)
+Trainer-customizable programs",Horse-specific program framework,,,,,,,,,,,,Pillar 2 — Goals & Structured Progression
+,Goals,1 active rider goal,Multiple goal types,"Horse goals (fitness, development, conditioning)",,,,,,,,,,,,Pillar 2 — Goals & Structured Progression
+,Milestones,10–20 starter milestones,Level system + skill domains,Horse milestones,,,,,,,,,,,,Pillar 2 — Goals & Structured Progression
+,Learning / Drills,Static drills tied to milestones + ride history timeline,Rich learning library,Horse training exercises,,,,,,,,,,,,Pillar 3 — Learning & Guided Practice
+,Progress View,Basic milestone states,Trends + readiness indicators,Horse readiness dashboard,,,,,,,,,,,,Pillar 2 — Goals & Structured Progression
+,Competition (structural only),❌,"Competition objects (shows, classes, eligibility fields) ",Horse eligibility structure,,,,,,,,,,,,"(Pillar 7 — Achievement/Competition, partial in V2)"
+EPIC 2 — Ride Capture,Ride Log,Manual ride log + focus milestones,Sensor integration,Horse session logs,,,,,,,,,,,,Pillar 4 — Ride Capture & Evidence
+,Video Upload,Upload + async processing,Trimming + highlight detection,Horse movement focus,,,,,,,,,,,,Pillar 4 — Ride Capture & Evidence
+,Self-Reflection,Rider reflection (voice/text),Structured rubric,Trainer-led horse feedback,,,,,,,,,,,,Pillar 4 — Ride Capture & Evidence
+,Feedback Object,Structured feedback (rider) + AI summary,Trainer validation,Trainer-led horse feedback,,,,,,,,,,,,"Pillar 5 — Assessment, Feedback & Validation"
+EPIC 3 — Intelligence + Readiness,AI Video Analysis,Basic rider position summary,Goal-specific analysis,Horse biomechanics analysis,,,,,,,,,,,,"Pillar 5 — Assessment, Feedback & Validation"
+,Comparative Insight,"Compare to previous ride/video (e.g., seat more balanced than last week)",Longitudinal pattern detection,Horse improvement trends,,,,,,,,,,,,"Pillar 5 — Assessment, Feedback & Validation"
+,Next Focus Engine,"Recommend:
+• Drills
+• Learning material
+• Continue milestone or advance
+• Based on previous performance comparison",Fully adaptive planning engine,Horse next focus planning,,,,,,,,,,,,Pillar 6 — Adjustment & Personalized Next Focus
+,Genie Shell,Persistent AI chat,Multi-persona views,Horse-aware Genie,,,,,,,,,,,,Pillar 1 — Cross-Cutting AI Coach
+,Context Retrieval,"Genie sees goals, rides, milestones, video summaries",Long-term memory modeling,Horse context modeling,,,,,,,,,,,,"Pillar 1 — Cross-Cutting AI Coach
+Pillar 9 - Persistent System of Record"
+,Progress Summary,“Summarize my last 3 rides”,Pattern detection,Horse development summaries,,,,,,,,,,,,Pillar 1 — Cross-Cutting AI Coach
+,Readiness Summary,Heuristic readiness signal (based on milestone state + consistency + recent performance),Formal readiness scoring,Horse readiness signals,,,,,,,,,,,,"Pillar 6 — Adjustment
+Pillar 7 — Achievement & Readiness"
+,Competition (intelligence layer),❌,Connect to external competition DBs + triangulate with readiness,Horse eligibility signals,,,,,,,,,,,,Pillar 7 — Achievement & Readiness
+,Proactive Suggestions,On-demand only,Proactive nudges,Cross rider-horse alignment,,,,,,,,,,,,Pillar 1 — Cross-Cutting AI Coach

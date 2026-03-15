@@ -1,0 +1,302 @@
+﻿Horsera Architecture (Conceptual Model) 
+Horsera is a structured, evidence-based rider development system that models how riders improve.
+It separates rider development into clear, connected layers:
+* What the rider controls (RiderBiomechanics)
+* How riding is evaluated (RidingQuality)
+* What skills must be demonstrated (Tasks)
+* How progression is structured (Levels)
+This architecture works across disciplines (Dressage, Pony Club, Jumping, etc.) by keeping the development engine global and mapping it into each discipline’s level system.
+1. Architectural Overview
+Horsera is built on four core layers:
+1. RiderBiomechanics: Trainable, rider-controlled physical levers (e.g., lower leg stability, Rein steadiness, balanced sit, etc.).
+2. RidingQuality:  Evaluative dimensions used to judge performance. For example: “is the horse moving evenly (Rhythm)?”, “Is the circle actually round (Straightness)?”, “Does the pair look balanced?”
+3. Tasks: Observable skills a rider must demonstrate. These are visible, assessable actions. Examples: Ride a 20-meter circle, Transition smoothly from walk to trot, Jump a small fence, Perform a leg yield. 
+4. Levels: Structured progression milestones defined by each discipline (e.g.,  USDF Intro Level (Dressage); Pony Club D2; etc.). Levels group Tasks into meaningful stages of advancement.
+How the Layers Work Together
+These layers form a structured causal chain.
+RiderBiomechanics influence how well a rider expresses RidingQuality.
+RidingQuality determines how successfully a Task can be performed.
+Consistent Task execution determines readiness for a Level.
+For example: If a rider improves lower leg stability (RiderBiomechanics), the horse becomes more balanced and straighter (RidingQuality), the 20-meter circle becomes more accurate (Task), and readiness for Intro Level increases (Level).
+Horsera makes this chain visible and measurable, so riders can see not just what to do next, but why.
+Measurement Layer (Underneath Everything)
+Horsera’s progression engine is powered by evidence. Evidence may include:
+* Video-derived signals (e.g., pose estimation data, symmetry measurements, stability patterns)
+* Structured trainer rubric scores
+* Written trainer feedback
+* Ride notes or session history
+These inputs are raw measurements or observations.  They are not progression dimensions themselves.
+They inform RiderBiomechanics evaluation, which influences RidingQuality Proficiency, which determines Task and Level Readiness.
+Simple Concrete Example (Dressage – USDF Intro Level Test C)
+In USDF Intro Level Test C, riders must demonstrate consistent trot work, including 20-meter circles in both directions.
+Task:  Ride a balanced 20-meter circle at trot.
+RidingQuality (How it is judged)
+* Rhythm (Is the trot steady and even?)
+* Straightness (Is the circle round?)
+* Balance (Does the horse stay stable?)
+RiderBiomechanics (What the rider controls)
+* Rein symmetry
+* Core stability
+* Lower leg stability
+If the rider’s lower leg swings: → The horse drifts outward → The circle becomes uneven → Straightness proficiency decreases → Task readiness decreases → Level readiness decreases
+As biomechanics stabilize: → RidingQuality becomes consistent → Task readiness improves → Level readiness increases
+Horsera tracks and connects all of this.
+2. Core Global Layers
+2.1 RiderBiomechanics
+RiderBiomechanics are rider-controlled body mechanics that influence how Tasks are executed and how RidingQuality is expressed. They are the most actionable layer of the system.
+If Tasks are what the rider does, and RidingQuality is how it appears, then RiderBiomechanics is what the rider can physically adjust to improve it.
+RiderBiomechanics are global and discipline-agnostic. One biomechanical lever can influence many tasks across disciplines. For example, lower leg stability affects Jumping fences (relevant in Hunter-Jumper), 
+Executing flying changes (relevant in dressage), and Maintaining canter rhythm (relevant overall). 
+Example: If a rider is told “be straighter,” that refers to RidingQuality (Straightness) and the biomechanical adjustments might be: Keep hands level, Engage core, Stabilize lower leg.  Those adjustments improve RidingQuality. 
+Canonical RiderBiomechanics Set (v1)
+* Lower leg stability (tier1)
+* Core stability (tier1)
+* Upper body alignment (tier1)
+* Rein steadiness (tier1)
+* Rein symmetry (tier1)
+* Pelvis neutrality (tier1)
+* Seat independence
+* Timing of aids
+* Half-halt coordination
+* Weight distribution
+
+
+
+
+
+
+RiderBiomechanics represent conceptual rider-controlled levers. Each lever may be evaluated using one or more measurable biomechanics metrics derived from pose estimation data. The table below defines these metrics and specifies how they are computed from detected body landmarks.
+Horsera
+2.2 RidingQuality
+RidingQuality Represents how riding is evaluated and it is aligned to what judges score a rider against. 
+The following is the canonical RidingQuality set used in Horsera v1. It represents the foundational dimensions by which riding is evaluated across disciplines. The set may evolve as additional disciplines are supported.
+* Rhythm
+* Relaxation
+* Contact
+* Straightness
+* Impulsion
+* Collection
+* Balance
+* Adjustability
+RidingQuality dimensions apply to all Tasks, but each Task emphasizes a specific subset more strongly; in practice, certain qualities carry greater weight depending on what the Task is designed to test.
+While all RidingQualities are present in every Task, their relative influence varies. In practice, Tasks emphasize certain qualities more strongly than others, and this relative weighting informs assessment and readiness logic.
+Example: In jumping, “Adjustability” might mean shortening or lengthening stride between fences.
+In dressage, it might mean controlling stride length in a medium trot.
+The dimension is the same — the context differs.
+2.3 Tasks
+Tasks are observable skills that can be demonstrated and assessed (e.g., “ride a 20m circle,” “perform a leg yield,” “jump a small course”, “flying change”, etc.). Horsera maintains a single global Task library. Each discipline maps its Levels to a subset of those Tasks. Discipline-specific tasks can be added to the global library and then mapped into that discipline’s level structure.
+2.4 Levels (Progression Milestones)
+A Level represents a stage of advancement within a riding discipline. Just like in school you move from beginner to intermediate to advanced, riding disciplines define structured stages that riders progress through over time. Each discipline has its own naming system and structure. For example:
+* In Dressage, levels include Intro Level, Training Level, First Level, and so on.
+* In Pony Club, levels include D1, D2, D3, C1, C2, etc.
+The names differ, but the idea is the same.  A Level defines:
+* What skills (Tasks) a rider is expected to demonstrate,
+* The expected quality and consistency of those skills,
+* The increasing complexity of work as riders advance.
+As riders move up levels:
+* The tasks become more difficult,
+* The required precision increases,
+* The expectations for consistency rise.
+Levels do not change how Horsera evaluates riders. They package the same global development engine (RiderBiomechanics → RidingQuality → Task) into structured discipline-specific journeys.
+Detailed progression tables (Levels → Tasks → Primary RidingQualities → Key RiderBiomechanics) can be found here (PonyClub, Dressage). 
+2.5. Assessment
+Each layer in Horsera is continuously assessed based on accumulated evidence.
+Assessment reflects the system’s current understanding of how a rider is performing within that layer. It is derived from video signals, trainer input, structured rubrics, and ride history.
+Although the underlying structure is consistent, the meaning of assessment differs by layer.
+* RiderBiomechanics Assessment evaluates how stable and controlled a rider’s physical mechanics are (e.g., lower leg stability, rein symmetry, pelvis neutrality).  This reflects physical consistency and control.
+* RidingQuality Assessment evaluates how consistently a rider expresses key qualities such as rhythm, balance, straightness, or contact. This reflects visible performance stability across situations.
+* Task Assessment evaluates how likely the rider is to successfully and consistently execute a specific skill (e.g., 20m circle, leg yield, small course). This reflects execution reliability.
+* Level Assessment: Evaluates whether the rider is likely ready to advance within a discipline. This reflects overall progression readiness.
+Assessment values may be represented as stages (e.g., Emerging → Mastering) or as numeric scores, but the conceptual meaning remains developmental rather than binary.
+________________
+
+
+3. Data Model - Structural Overview
+The Horsera architecture maps cleanly into a structured data model composed of four distinct groups. This separation mirrors the progression engine and keeps responsibilities clear.
+1. Global Definitions (Shared Vocabulary)
+These entities define the core development language and are shared across all disciplines.
+* RidingQuality – How riding is evaluated (e.g., Rhythm, Balance, Contact).
+* RiderBiomechanics – Rider-controlled physical levers (e.g., Lower leg stability, Rein steadiness).
+* Task – Observable skills that can be demonstrated (e.g., 20m circle, Leg yield, Small course).
+* Discipline – A progression track (Dressage, Pony Club, etc.).
+* DisciplineLevel – A structured stage within a discipline (Intro Level, D2, etc.).
+These entities are stable, global definitions.
+2. Mapping Entities (How Disciplines Package the Engine)
+These entities define how the global engine is organized within each discipline.
+* LevelTaskMap – Which Tasks belong to each Level.
+* TaskRidingQualityMap – Which RidingQualities a Task emphasizes (relative influence may vary).
+* TaskBiomechanicsMap – Which RiderBiomechanics influence each Task.
+These mappings allow:
+* The same Task to appear in multiple disciplines.
+* The same RidingQuality to matter differently depending on the Task.
+* Root-cause insights across tasks and levels.
+3. Evidence (Raw Inputs)
+Evidence represents the source-of-truth input that feeds the progression engine. Evidence may include:
+* Video-derived signals (pose estimation, symmetry measurements, stability metrics)
+* Structured trainer rubric scores
+* Written trainer feedback
+* Ride notes or session history
+Evidence does not contain readiness or proficiency directly. It informs derived assessments.
+4. Derived State (Assessment Outputs)
+Assessment represents the system’s current understanding of a rider’s developmental state. Assessments are computed from accumulated evidence and mappings.
+* Assessment_RidingQuality – Consistency of each RidingQuality.
+* Assessment_Biomechanics – Stability and control of each biomechanical lever.
+* Assessment_Task – Likelihood of consistent execution of a Task.
+* Assessment_Level – Overall readiness to progress within a discipline.
+This separation enables:
+* Cross-discipline scalability
+* Root-cause insight (“what to work on next”)
+* Clear progression logic
+* Clean future schema derivation
+
+4. Data Model - Normalized Entity Model (Conceptual)
+The following tables represent a normalized conceptual model of the architecture.  This is not a final database schema, but a structured representation of how entities relate.
+Type indicates data type (Text / Number / Enum / JSON / Foreign Key).
+Allowed Values indicates whether the field is constrained or free-form.
+Core Structural Entities
+
+
+Entity
+	Definition
+	Type
+	Allowed Values
+	Example
+	Rider
+	A person using the system.
+	Entity
+	Free-form (user-created)
+	Rossella
+	Discipline
+	A progression track that organizes levels and tasks.
+	Master list
+	Dressage, Pony Club (extensible: Jumping, Eventing, etc.)
+	Dressage
+	DisciplineLevel
+	A named stage within a discipline’s progression structure.
+	Entity (linked to Discipline)
+	Defined per discipline (e.g., Intro Level, Training Level; D1, D2)
+	Intro Level
+	Task
+	An observable skill that can be demonstrated and assessed.
+	Canonical global library
+	Defined in Task Library (e.g., 20m circle, Leg yield, Jump 2’ course)
+	20m circle at trot
+	RidingQuality
+	An evaluative dimension used to judge performance.
+	Canonical global list (v1)
+	Rhythm, Relaxation, Contact, Straightness, Impulsion, Collection, Balance, Adjustability
+	Straightness
+	RiderBiomechanics
+	A rider-controlled physical lever influencing task execution and riding quality.
+	Canonical global list (v1)
+	Rein symmetry, Rein steadiness, Lower leg stability, Core stability, Seat independence, Pelvis neutrality, Upper body alignment, Timing of aids, Half-halt coordination, Weight distribution
+	Lower leg stability
+	
+
+Mapping Entities
+
+
+Entity
+	Definition
+	Type
+	Allowed Values
+	Example
+	LevelTaskMap
+	Defines which Tasks are required for a given DisciplineLevel.
+	Relationship entity
+	References existing DisciplineLevel + Task
+	Intro Level → 20m circle
+	TaskRidingQualityMap
+	Defines which RidingQualities are used to evaluate a Task and their relative influence.
+	Relationship entity (weighted)
+	References existing Task + RidingQuality
+	20m circle → Straightness (0.4), Rhythm (0.3), Balance (0.3)
+	TaskBiomechanicsMap
+	Defines which RiderBiomechanics influence successful execution of a Task.
+	Relationship entity
+	References existing Task + RiderBiomechanics
+	20m circle → Rein symmetry, C
+	Important Clarification:
+   * The same Task may appear in multiple Levels.
+   * The same RidingQuality may influence many Tasks.
+   * The same RiderBiomechanics may influence many Tasks.
+   * Relative influence (weights) may differ per Task.
+   * Not all RidingQualities influence a Task equally.
+This design enables flexibility without duplicating logic across disciplines.
+________________
+
+
+Evidence
+Entity
+	Definition
+	Type
+	Allowed Values
+	Example
+	Evidence
+	A recorded instance of riding activity used for evaluation.
+	Entity
+	References Rider and optionally Task
+	Ride session on March 3
+	VideoSignals
+	Quantitative metrics extracted from video analysis.
+	Structured data (JSON or metric set)
+	Pose-derived measurements
+	Rein asymmetry = 0.12
+	RubricScores
+	Structured trainer or judge evaluation aligned to RidingQuality.
+	Structured data
+	Keys must match canonical RidingQuality list
+	Rhythm = 3, Straightness = 4
+	TrainerNotes
+	Qualitative written feedback from trainer.
+	Free text
+	Any
+	“Horse drifts right in circle”
+	SessionMetadata
+	Context about the ride session.
+	Structured data
+	Date, duration, environment, horse
+	Indoor arena, 45 min
+	Important Architectural Clarifications:
+   * Evidence is immutable raw input.
+   * Evidence informs assessments but does not store progression conclusions.
+   * Assessments can be recalculated as models improve.
+   * Multiple pieces of Evidence accumulate over time to produce stable developmental state.
+________________
+
+
+Assessment (Derived State)
+Assessments represent Horsera’s current evaluation of the rider across each layer of the engine.
+They are derived from evidence over time (not a single ride), and can be recalculated as the system improves.
+Entity
+	Definition
+	Type
+	Allowed Values
+	Example
+	Assessment_Biomechanics
+	Current evaluation of a rider’s control/stability for a given RiderBiomechanics element.
+	Derived state
+	Stage scale (v1): Emerging, Inconsistent, Developing, Consistent, Mastering
+	Lower leg stability = Developing
+	Assessment_RidingQuality
+	Current evaluation of how consistently a rider demonstrates a given RidingQuality.
+	Derived state
+	Stage scale (v1): Emerging, Inconsistent, Developing, Consistent, Mastering
+	Straightness = Inconsistent
+	Assessment_Task
+	Current evaluation of how likely a rider is to execute a Task consistently in its intended context.
+	Derived state
+	Task stage scale (v1): NotReady, AlmostReady, LikelyReady, ConsistentlyReady
+	20m circle = AlmostReady
+	Assessment_Level
+	Current evaluation of whether a rider is likely ready to succeed at a given DisciplineLevel.
+	Derived state
+	Level stage scale (v1): NotReady, AlmostReady, LikelyReady
+	Intro Level = LikelyReady
+	Key Clarifications
+   * Assessments are computed from accumulated evidence, not single-ride performance.
+   * Assessments represent developmental state (stability + consistency), not peak ability.
+   * Higher-layer assessments depend on lower layers:
+   * Biomechanics and RidingQuality contribute to Task assessment.
+   * Task assessments aggregate into Level assessment.
+   * Assessments can be recalculated as additional evidence is collected or models improve.

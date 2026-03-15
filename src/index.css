@@ -1,0 +1,162 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400&family=DM+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Luxury Equestrian Palette */
+    --background: 36 38% 97%;
+    --foreground: 0 0% 18%;
+
+    --card: 33 35% 95%;
+    --card-foreground: 0 0% 18%;
+
+    --popover: 36 38% 97%;
+    --popover-foreground: 0 0% 18%;
+
+    --primary: 152 30% 17%;
+    --primary-foreground: 36 38% 97%;
+
+    --secondary: 33 25% 91%;
+    --secondary-foreground: 0 0% 22%;
+
+    --muted: 33 18% 93%;
+    --muted-foreground: 25 8% 48%;
+
+    --accent: 41 46% 60%;
+    --accent-foreground: 0 0% 12%;
+
+    --destructive: 0 55% 48%;
+    --destructive-foreground: 36 38% 97%;
+
+    --border: 33 18% 89%;
+    --input: 33 18% 89%;
+    --ring: 152 30% 17%;
+
+    --radius: 1rem;
+
+    --sidebar-background: 33 28% 95%;
+    --sidebar-foreground: 0 0% 18%;
+    --sidebar-primary: 152 30% 17%;
+    --sidebar-primary-foreground: 36 38% 97%;
+    --sidebar-accent: 33 18% 93%;
+    --sidebar-accent-foreground: 0 0% 18%;
+    --sidebar-border: 33 18% 89%;
+    --sidebar-ring: 152 30% 17%;
+
+    /* Custom Horsera tokens */
+    --sage: 152 30% 17%;
+    --sage-light: 152 15% 92%;
+    --saddle: 26 30% 32%;
+    --sand: 33 25% 91%;
+    --sand-dark: 33 20% 68%;
+    --walnut: 25 30% 22%;
+    --warmth: 41 46% 60%;
+    --warmth-light: 41 30% 94%;
+    --cream: 36 38% 97%;
+    --ivory: 36 45% 98%;
+    --charcoal: 0 0% 18%;
+    --genie-glow: 152 30% 17%;
+    --genie-glow-light: 152 15% 92%;
+
+    font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  }
+
+  .dark {
+    --background: 25 15% 7%;
+    --foreground: 33 20% 90%;
+    --card: 25 12% 11%;
+    --card-foreground: 33 20% 90%;
+    --popover: 25 12% 11%;
+    --popover-foreground: 33 20% 90%;
+    --primary: 152 25% 38%;
+    --primary-foreground: 25 15% 7%;
+    --secondary: 25 12% 15%;
+    --secondary-foreground: 33 20% 90%;
+    --muted: 25 10% 16%;
+    --muted-foreground: 33 10% 52%;
+    --accent: 41 40% 52%;
+    --accent-foreground: 25 15% 7%;
+    --destructive: 0 50% 35%;
+    --destructive-foreground: 33 20% 90%;
+    --border: 25 10% 18%;
+    --input: 25 10% 18%;
+    --ring: 152 25% 38%;
+
+    --sage: 152 25% 38%;
+    --sage-light: 152 12% 15%;
+    --saddle: 26 25% 50%;
+    --sand: 25 12% 15%;
+    --sand-dark: 33 12% 38%;
+    --walnut: 25 15% 68%;
+    --warmth: 41 40% 52%;
+    --warmth-light: 41 15% 14%;
+    --cream: 25 15% 7%;
+    --ivory: 25 12% 9%;
+    --charcoal: 0 0% 85%;
+    --genie-glow: 152 25% 38%;
+    --genie-glow-light: 152 12% 15%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  h1, h2, h3, h4 {
+    font-family: 'Playfair Display', Georgia, serif;
+    letter-spacing: -0.01em;
+  }
+}
+
+/* #60 — Branded Champagne pulse keyframes (must be outside @layer) */
+@keyframes champagnePulse {
+  0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+  40% { opacity: 1; transform: scale(1); }
+}
+
+@layer utilities {
+  .font-display {
+    font-family: 'Playfair Display', Georgia, serif;
+  }
+  .font-body {
+    font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  }
+  .glass-card {
+    @apply bg-card/60 backdrop-blur-xl border border-border/40 rounded-2xl;
+  }
+  .glass-card-solid {
+    @apply bg-card border border-border/50 rounded-2xl;
+  }
+  .safe-bottom {
+    padding-bottom: max(env(safe-area-inset-bottom, 0px), 0.5rem);
+  }
+  .font-mono {
+    font-family: 'DM Mono', monospace;
+  }
+  .champagne-pulse {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #C9A96E;
+    animation: champagnePulse 1.4s ease-in-out infinite;
+  }
+  .text-balance {
+    text-wrap: balance;
+  }
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}
