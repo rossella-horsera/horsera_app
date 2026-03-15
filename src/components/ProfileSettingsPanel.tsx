@@ -45,7 +45,7 @@ function CropModal({ imageSrc, onConfirm, onCancel }: CropModalProps) {
   const [dragging, setDragging] = useState(false);
   const dragStart = useRef({ x: 0, y: 0, ox: 0, oy: 0 });
 
-  const CROP_SIZE = 240; // px displayed crop circle
+  const CROP_SIZE = 320; // px displayed crop circle (320 = sharp on 2× retina at 88px CSS)
   const [minScale, setMinScale] = useState(0.1);
 
   // Draw the preview whenever scale/offset changes
@@ -68,12 +68,11 @@ function CropModal({ imageSrc, onConfirm, onCancel }: CropModalProps) {
     ctx.arc(sz / 2, sz / 2, sz / 2, 0, Math.PI * 2);
     ctx.clip();
 
-    // Draw scaled + offset image centred
+    // Draw scaled + offset image — preserve natural aspect ratio
     const naturalW = img.naturalWidth;
     const naturalH = img.naturalHeight;
-    const minDim = Math.min(naturalW, naturalH);
-    const displayW = minDim * scale;
-    const displayH = minDim * scale;
+    const displayW = naturalW * scale;
+    const displayH = naturalH * scale;
     const x = sz / 2 - displayW / 2 + offset.x;
     const y = sz / 2 - displayH / 2 + offset.y;
     ctx.drawImage(img, x, y, displayW, displayH);
@@ -124,11 +123,13 @@ function CropModal({ imageSrc, onConfirm, onCancel }: CropModalProps) {
           onLoad={() => {
             const img = imgRef.current;
             if (img) {
-              // Calculate minimum scale so the full image fits within the crop circle
+              // Minimum scale: both dims must fill the crop circle
+              // With natural aspect ratio preserved: scale >= CROP_SIZE / naturalW AND scale >= CROP_SIZE / naturalH
+              // So minScale = CROP_SIZE / min(naturalW, naturalH)
               const minDim = Math.min(img.naturalWidth, img.naturalHeight);
               const computedMin = minDim > 0 ? CROP_SIZE / minDim : 0.1;
               setMinScale(computedMin);
-              setScale(computedMin); // start fully zoomed out
+              setScale(computedMin); // start just covering the circle
             } else {
               // Trigger initial draw fallback
               setScale(s => s + 0.0001);
@@ -214,7 +215,10 @@ export default function ProfileSettingsPanel({ open, onClose }: ProfileSettingsP
   const handleSave = () => {
     saveUserProfile(profile);
     setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    setTimeout(() => {
+      setSaved(false);
+      onClose();
+    }, 900);
   };
 
   const handlePhotoSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
