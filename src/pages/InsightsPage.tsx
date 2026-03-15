@@ -160,28 +160,28 @@ function PatternsTab() {
 
   const patterns = [
     {
-      icon: '🔁',
+      icon: '↻',
       title: 'Right-rein drift',
       detail: 'Your lower leg tends to drift forward on the right rein — visible in 4 of your last 5 rides.',
       color: '#C4714A',
       tag: 'Persistent',
     },
     {
-      icon: '⏱',
+      icon: '◑',
       title: 'Warm-up pattern',
       detail: 'Rein steadiness consistently improves in the second half of every ride.',
       color: '#C9A96E',
       tag: 'Consistent',
     },
     {
-      icon: '✓',
+      icon: '◆',
       title: 'Core is solid',
       detail: 'Core stability scores have been above 85% for 6 consecutive rides. This is mastered.',
       color: '#7D9B76',
       tag: 'Mastered',
     },
     {
-      icon: '📈',
+      icon: '↗',
       title: '4-week trajectory',
       detail: 'All 5 biometric areas have improved over the past 4 weeks. Lower leg shows the most growth (+17pts).',
       color: '#8C5A3C',
@@ -313,7 +313,13 @@ export default function InsightsPage() {
         alignItems: 'center', justifyContent: 'center',
         padding: '40px 20px',
       }}>
-        <div style={{ fontSize: '40px', marginBottom: '16px' }}>🎯</div>
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '18px' }}>
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" stroke="#C4714A" strokeWidth="1.4" />
+            <circle cx="12" cy="12" r="5.5" stroke="#C4714A" strokeWidth="1.2" />
+            <circle cx="12" cy="12" r="2" fill="#C4714A" />
+          </svg>
+        </div>
         <h1 style={{
           fontFamily: "'Playfair Display', serif",
           fontSize: '22px', fontWeight: 400, color: '#1A140E',
@@ -494,7 +500,11 @@ export default function InsightsPage() {
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 2, marginTop: 12 }}>
-              <span style={{ fontSize: 20 }}>🎯</span>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" stroke="#8C5A3C" strokeWidth="1.5" />
+                <circle cx="12" cy="12" r="5" stroke="#8C5A3C" strokeWidth="1.3" />
+                <circle cx="12" cy="12" r="1.5" fill="#8C5A3C" />
+              </svg>
               <div>
                 <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 17, color: '#1A140E' }}>Riding Quality</div>
                 <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: '#B5A898' }}>The Scales Over Time</div>

@@ -46,6 +46,7 @@ function CropModal({ imageSrc, onConfirm, onCancel }: CropModalProps) {
   const dragStart = useRef({ x: 0, y: 0, ox: 0, oy: 0 });
 
   const CROP_SIZE = 240; // px displayed crop circle
+  const [minScale, setMinScale] = useState(0.1);
 
   // Draw the preview whenever scale/offset changes
   useEffect(() => {
@@ -121,9 +122,18 @@ function CropModal({ imageSrc, onConfirm, onCancel }: CropModalProps) {
           src={imageSrc}
           style={{ display: 'none' }}
           onLoad={() => {
-            // Trigger initial draw
-            setScale(s => s + 0.0001);
-            setTimeout(() => setScale(s => s - 0.0001), 10);
+            const img = imgRef.current;
+            if (img) {
+              // Calculate minimum scale so the full image fits within the crop circle
+              const minDim = Math.min(img.naturalWidth, img.naturalHeight);
+              const computedMin = minDim > 0 ? CROP_SIZE / minDim : 0.1;
+              setMinScale(computedMin);
+              setScale(computedMin); // start fully zoomed out
+            } else {
+              // Trigger initial draw fallback
+              setScale(s => s + 0.0001);
+              setTimeout(() => setScale(s => s - 0.0001), 10);
+            }
           }}
         />
 
@@ -152,7 +162,7 @@ function CropModal({ imageSrc, onConfirm, onCancel }: CropModalProps) {
         <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 10, color: COLORS.muted, fontFamily: FONTS.mono }}>–</span>
           <input
-            type="range" min={0.5} max={3} step={0.05}
+            type="range" min={minScale} max={Math.max(minScale * 4, 2)} step={minScale / 20}
             value={scale}
             onChange={e => setScale(Number(e.target.value))}
             style={{ flex: 1, accentColor: COLORS.cognac }}
@@ -435,7 +445,7 @@ export default function ProfileSettingsPanel({ open, onClose }: ProfileSettingsP
                 transition: 'background 0.2s ease',
               }}
             >
-              {saved ? '✓ Saved' : 'Save Changes'}
+              {saved ? 'Saved' : 'Save Changes'}
             </button>
           </div>
 

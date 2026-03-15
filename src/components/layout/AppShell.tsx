@@ -2,8 +2,9 @@ import React, { useState } from 'react';
 import BottomNav from './BottomNav';
 import CadenceFAB from './CadenceFAB';
 import { CadenceProvider, useCadence } from '../../context/CadenceContext';
-import { getUserProfile } from '../../lib/userProfile';
+import { getUserProfile, isProfileComplete } from '../../lib/userProfile';
 import ProfileSettingsPanel from '../ProfileSettingsPanel';
+import ProfileSetupModal from '../ProfileSetupModal';
 import { safeStorage } from '../../lib/safeStorage';
 
 /** Profile avatar — shows photo if available, otherwise initials */
@@ -28,8 +29,16 @@ interface AppShellProps {
 function AppShellInner({ children }: AppShellProps) {
   const { openCadence, isStreaming, speechState } = useCadence();
   const [showSettings, setShowSettings] = useState(false);
+  const [onboardingDone, setOnboardingDone] = useState(isProfileComplete);
   const profile = getUserProfile();
   const initial = profile.firstName ? profile.firstName[0].toUpperCase() : '?';
+
+  // Show onboarding modal before any app content if profile not yet set
+  if (!onboardingDone) {
+    return (
+      <ProfileSetupModal onComplete={() => setOnboardingDone(true)} />
+    );
+  }
 
   return (
     <div

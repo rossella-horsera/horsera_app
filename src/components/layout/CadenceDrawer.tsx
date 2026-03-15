@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import React from 'react';
 import { getUserProfile } from '../../lib/userProfile';
+import { mockGoal, mockRides } from '../../data/mock';
 import { CadenceIcon } from './CadenceFAB';
 
 interface Message {
@@ -9,12 +10,6 @@ interface Message {
   timestamp: string;
 }
 
-interface UsageStats {
-  daily_used: number;
-  daily_limit: number;
-  monthly_used: number;
-  monthly_limit: number;
-}
 
 const suggestedPrompts = [
   'What should I focus on in my next ride?',
@@ -23,7 +18,40 @@ const suggestedPrompts = [
   'Explain my lower leg stability score',
 ];
 
-const API_BASE = import.meta.env.DEV ? 'http://localhost:5000' : '__PORT_5000__'.startsWith('__') ? '' : '__PORT_5000__';
+const OPENAI_API_KEY = import.meta.env.VITE_OPENAI_API_KEY as string | undefined;
+
+function buildSystemPrompt(): string {
+  const profile = getUserProfile();
+  const name = profile.firstName || 'the rider';
+  const horse = profile.horseName || 'their horse';
+  const discipline = profile.discipline === 'usdf' ? 'USDF Dressage'
+    : profile.discipline === 'pony-club' ? 'Pony Club'
+    : profile.discipline === 'hunter-jumper' ? 'Hunter/Jumper'
+    : 'general equestrian';
+
+  const activeMilestone = mockGoal.milestones.find(m => m.state === 'working');
+  const milestoneName = activeMilestone?.name || 'their current milestone';
+  const currentLevel = mockGoal.currentDisciplineLevel || 'training';
+  const recentRides = mockRides.slice(0, 3);
+  const ridesSummary = recentRides.map(r =>
+    `${r.date}: ${r.type} ride on ${r.horse}, focus: ${r.focusMilestone}, signal: ${r.signal}${r.biometrics ? `, avg score: ${Math.round(Object.values(r.biometrics).reduce((a, b) => a + b, 0) / Object.values(r.biometrics).length * 100)}%` : ''}`
+  ).join('\n');
+
+  return `You are Cadence, an intelligent riding advisor built into the Horsera app. You are deeply knowledgeable about equestrian riding, biomechanics, and development.
+
+Your rider is ${name}, who rides a horse named ${horse} and trains in ${discipline}. They are currently working toward ${currentLevel} level, with their active milestone being "${milestoneName}".
+
+Recent rides:
+${ridesSummary}
+
+Your personality:
+- Warm, precise, and deeply equestrian — you speak like an experienced trainer, not a chatbot
+- You give specific, actionable guidance rooted in the rider's actual data
+- You are ambient and calm — you suggest, you don't announce
+- You know this rider well and refer to their specific progress and patterns
+- Keep responses concise and focused (2-4 sentences unless asked for more)
+- Never be generic — always connect advice to ${name}'s specific situation with ${horse}`;
+}
 
 function renderMarkdown(text: string): string {
   return text
@@ -66,7 +94,6 @@ export default function CadenceDrawer({ open, onClose, onStreamingChange, onSpee
   ]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
-  const [usage, setUsage] = useState<UsageStats | null>(null);
   const [rateLimitMsg, setRateLimitMsg] = useState<string | null>(null);
   const [speechState, setSpeechState] = useState<SpeechState>('idle');
   const [interimTranscript, setInterimTranscript] = useState('');
@@ -83,14 +110,6 @@ export default function CadenceDrawer({ open, onClose, onStreamingChange, onSpee
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  useEffect(() => {
-    if (open) {
-      fetch(`${API_BASE}/api/cadence/usage`)
-        .then(r => r.json())
-        .then(setUsage)
-        .catch(() => {});
-    }
-  }, [open]);
 
   // Abort any active recognition when drawer closes
   useEffect(() => {
@@ -117,33 +136,69 @@ export default function CadenceDrawer({ open, onClose, onStreamingChange, onSpee
     setPendingImage(null);
     setIsStreaming(true); onStreamingChange?.(true);
     setRateLimitMsg(null);
+
     const allMessages = [...messages, riderMsg];
-    const apiMessages = allMessages.map(m => ({
-      role: m.role === 'rider' ? 'user' : 'assistant',
-      content: m.text,
-    }));
+
+    if (!OPENAI_API_KEY) {
+      // No API key — use fallback
+      const fallback = getFallbackResponse(text);
+      setTimeout(() => {
+        setMessages(prev => [...prev, { role: 'cadence', text: fallback, timestamp: now }]);
+        setIsStreaming(false); onStreamingChange?.(false);
+      }, 800);
+      return;
+    }
+
+    // Build OpenAI messages: system prompt + full conversation history
+    const openAiMessages: { role: string; content: string | { type: string; text?: string; image_url?: { url: string } }[] }[] = [
+      { role: 'system', content: buildSystemPrompt() },
+      ...allMessages.map(m => {
+        if (m === riderMsg && imageDataUrl) {
+          return {
+            role: 'user',
+            content: [
+              { type: 'text', text },
+              { type: 'image_url', image_url: { url: imageDataUrl } },
+            ],
+          };
+        }
+        return {
+          role: m.role === 'rider' ? 'user' : 'assistant',
+          content: m.text,
+        };
+      }),
+    ];
+
     try {
-      const response = await fetch(`${API_BASE}/api/cadence/chat`, {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${OPENAI_API_KEY}`,
+        },
         body: JSON.stringify({
-          messages: apiMessages,
-          riderName: getUserProfile().firstName || undefined,
-          image: imageDataUrl || undefined,
+          model: 'gpt-4o-mini',
+          messages: openAiMessages,
+          stream: true,
+          max_tokens: 400,
+          temperature: 0.7,
         }),
       });
+
       if (response.status === 429) {
-        const err = await response.json();
-        setRateLimitMsg(err.detail?.message || 'You have reached your message limit. Please try again later.');
+        setRateLimitMsg('Cadence is resting — try again in a moment.');
         setIsStreaming(false); onStreamingChange?.(false);
         return;
       }
-      if (!response.ok) throw new Error(`API error: ${response.status}`);
+      if (!response.ok) throw new Error(`OpenAI API error: ${response.status}`);
+
       const cadenceMsg: Message = { role: 'cadence', text: '', timestamp: now };
       setMessages(prev => [...prev, cadenceMsg]);
+
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
       if (!reader) throw new Error('No response body');
+
       let buffer = '';
       while (true) {
         const { done, value } = await reader.read();
@@ -153,24 +208,16 @@ export default function CadenceDrawer({ open, onClose, onStreamingChange, onSpee
         buffer = lines.pop() || '';
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue;
-          const data = line.slice(6);
+          const data = line.slice(6).trim();
           if (data === '[DONE]') continue;
           try {
             const parsed = JSON.parse(data);
-            if (parsed.type === 'text') {
+            const delta = parsed.choices?.[0]?.delta?.content;
+            if (delta) {
               setMessages(prev => {
                 const updated = [...prev];
                 const last = updated[updated.length - 1];
-                if (last.role === 'cadence') updated[updated.length - 1] = { ...last, text: last.text + parsed.text };
-                return updated;
-              });
-            } else if (parsed.type === 'usage') {
-              setUsage({ daily_used: parsed.daily_used, daily_limit: parsed.daily_limit, monthly_used: parsed.monthly_used, monthly_limit: parsed.monthly_limit });
-            } else if (parsed.type === 'error') {
-              setMessages(prev => {
-                const updated = [...prev];
-                const last = updated[updated.length - 1];
-                if (last.role === 'cadence') updated[updated.length - 1] = { ...last, text: "I'm having trouble connecting right now. Please try again in a moment." };
+                if (last.role === 'cadence') updated[updated.length - 1] = { ...last, text: last.text + delta };
                 return updated;
               });
             }
@@ -304,11 +351,6 @@ export default function CadenceDrawer({ open, onClose, onStreamingChange, onSpee
             <div style={{ fontFamily: "'DM Sans', sans-serif", fontSize: '15px', fontWeight: 600, color: '#1A140E' }}>Cadence</div>
             <div style={{ fontFamily: "'DM Sans', sans-serif", fontSize: '11px', color: '#B5A898' }}>Your intelligent riding advisor</div>
           </div>
-          {usage && (
-            <div style={{ fontSize: '9px', fontFamily: "'DM Mono', monospace", color: usage.daily_used > usage.daily_limit * 0.8 ? '#C4714A' : '#B5A898', textAlign: 'right', marginRight: 8 }}>
-              {usage.daily_used}/{usage.daily_limit} today
-            </div>
-          )}
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#B5A898', fontSize: '20px', lineHeight: 1, padding: '4px' }}>×</button>
         </div>
 

@@ -7,9 +7,8 @@ import { computeRidingQualities, generateInsights } from '../lib/poseAnalysis';
 import type { MovementInsight } from '../lib/poseAnalysis';
 import { saveRide, getRides } from '../lib/storage';
 import type { StoredRide } from '../lib/storage';
-import { getUserProfile, isProfileComplete } from '../lib/userProfile';
+import { getUserProfile } from '../lib/userProfile';
 import VideoSilhouetteOverlay from '../components/VideoSilhouetteOverlay';
-import ProfileSetupModal from '../components/ProfileSetupModal';
 
 // ─────────────────────────────────────────────────────────
 // DESIGN TOKENS
@@ -42,10 +41,10 @@ const signalConfig = {
 };
 
 const rideTypeLabel: Record<string, string> = {
-  training:    '🐎 Training',
-  lesson:      '👩‍🏫 Lesson',
-  'mock-test': '📋 Mock Test',
-  hack:        '🌳 Hack',
+  training:    'Training',
+  lesson:      'Lesson',
+  'mock-test': 'Mock Test',
+  hack:        'Hack',
 };
 
 function scoreColor(score: number): string {
@@ -77,36 +76,6 @@ const PROCESSING_MESSAGES = [
   'Calculating scores…',
 ];
 
-// ─────────────────────────────────────────────────────────
-// CAMERA TIPS CHIPS (#59)
-// ─────────────────────────────────────────────────────────
-
-function CameraTips() {
-  return (
-    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' }}>
-      {[
-        { icon: '📐', text: 'Side view works best' },
-        { icon: '☀️', text: 'Good lighting helps' },
-        { icon: '📱', text: 'Any orientation works' },
-      ].map(tip => (
-        <div
-          key={tip.text}
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: '5px',
-            background: 'rgba(201,169,110,0.12)',
-            border: '1px solid rgba(201,169,110,0.35)',
-            borderRadius: '20px', padding: '5px 10px',
-            fontSize: '11px', color: '#7A6B5D',
-            fontFamily: "'DM Sans', sans-serif",
-          }}
-        >
-          <span style={{ fontSize: '12px' }}>{tip.icon}</span>
-          {tip.text}
-        </div>
-      ))}
-    </div>
-  );
-}
 
 // ─────────────────────────────────────────────────────────
 // BRANDED PULSE (#60)
@@ -346,7 +315,9 @@ function KeyMomentsSection({ duration }: { duration: number }) {
           width: 28, height: 28, borderRadius: '50%', background: `${COLORS.green}20`,
           display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
         }}>
-          <span style={{ fontSize: 14 }}>⭐</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" stroke={COLORS.green} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
         </div>
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
@@ -370,7 +341,11 @@ function KeyMomentsSection({ duration }: { duration: number }) {
           width: 28, height: 28, borderRadius: '50%', background: `${COLORS.attention}18`,
           display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
         }}>
-          <span style={{ fontSize: 14 }}>🎯</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" stroke={COLORS.attention} strokeWidth="1.6" />
+              <circle cx="12" cy="12" r="5" stroke={COLORS.attention} strokeWidth="1.4" />
+              <circle cx="12" cy="12" r="1.5" fill={COLORS.attention} />
+            </svg>
         </div>
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
@@ -819,9 +794,6 @@ function RideDetailView({
 export default function RidesPage() {
   const navigate = useNavigate();
 
-  // Profile setup
-  const [showProfileSetup, setShowProfileSetup] = useState(() => !isProfileComplete());
-
   // Log form state
   const [showLogForm, setShowLogForm] = useState(false);
   const [logNote, setLogNote] = useState('');
@@ -991,38 +963,30 @@ export default function RidesPage() {
   return (
     <div style={{ background: COLORS.parchment, minHeight: '100%' }}>
 
-      {/* ── Profile Setup Modal (first visit) ──────────────── */}
-      {showProfileSetup && (
-        <ProfileSetupModal onComplete={() => setShowProfileSetup(false)} />
-      )}
-
       {/* ── HEADER ─────────────────────────────────────────── */}
       <div style={{ padding: '20px 20px 16px', borderBottom: `1px solid ${COLORS.border}` }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
             {(() => {
               const profile = getUserProfile();
-              const hour = new Date().getHours();
-              const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
               const name = profile.firstName || '';
-              return name ? (
-                <>
-                  <div style={{ fontFamily: FONTS.body, fontSize: '13px', color: COLORS.muted, marginBottom: '2px' }}>
-                    {greeting}, {name}
-                  </div>
-                  <div style={{ fontFamily: FONTS.heading, fontSize: '26px', fontWeight: 400, color: COLORS.charcoal }}>
-                    Ride Analysis
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div style={{ fontFamily: FONTS.heading, fontSize: '26px', fontWeight: 400, color: COLORS.charcoal }}>
-                    Ride Analysis
-                  </div>
-                  <div style={{ fontFamily: FONTS.mono, fontSize: '11px', color: COLORS.muted }}>
-                    AI-powered biomechanics
-                  </div>
-                </>
+              return (
+                <div style={{
+                  fontFamily: FONTS.heading,
+                  fontSize: '26px',
+                  fontWeight: 400,
+                  color: COLORS.charcoal,
+                  lineHeight: 1.2,
+                }}>
+                  {name ? (
+                    <>
+                      Welcome,{' '}
+                      <span style={{ fontStyle: 'italic' }}>{name}</span>
+                    </>
+                  ) : (
+                    'Ride Analysis'
+                  )}
+                </div>
               );
             })()}
           </div>
@@ -1057,7 +1021,12 @@ export default function RidesPage() {
         }}>
           {logSubmitted ? (
             <div style={{ textAlign: 'center', padding: '20px 0' }}>
-              <div style={{ fontSize: '32px', marginBottom: '8px' }}>✓</div>
+              <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
+                <svg width="36" height="36" viewBox="0 0 36 36" fill="none" aria-hidden="true">
+                  <circle cx="18" cy="18" r="16" stroke={COLORS.cognac} strokeWidth="1.8" />
+                  <path d="M11 18l5 5 9-9" stroke={COLORS.cognac} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
               <div style={{ fontFamily: FONTS.heading, fontSize: '18px', color: COLORS.cognac }}>
                 Ride logged.
               </div>
@@ -1149,8 +1118,6 @@ export default function RidesPage() {
                 />
               </div>
 
-              {/* Camera tips (#59) */}
-              <CameraTips />
               {/* ── Video Upload Area ──────────────────────────── */}
               <div
                 onClick={() => fileInputRef.current?.click()}
@@ -1218,7 +1185,11 @@ export default function RidesPage() {
           borderRadius: '12px', padding: '12px 16px',
           display: 'flex', alignItems: 'center', gap: '10px',
         }}>
-          <span style={{ fontSize: '16px' }}>⏱</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ flexShrink: 0 }}>
+            <circle cx="12" cy="13" r="8" stroke="#C9A96E" strokeWidth="1.6" />
+            <path d="M12 9v4l2.5 2.5" stroke="#C9A96E" strokeWidth="1.6" strokeLinecap="round" />
+            <path d="M10 2h4" stroke="#C9A96E" strokeWidth="1.6" strokeLinecap="round" />
+          </svg>
           <span style={{ fontFamily: FONTS.body, fontSize: '13px', color: '#7A6B5D', flex: 1 }}>
             {fileSizeWarning}
           </span>
@@ -1377,7 +1348,7 @@ export default function RidesPage() {
 
                 {/* ── Layer 2: Riding Quality ────────────────── */}
                 <div style={{ marginTop: '8px', marginBottom: '20px' }}>
-                  <LayerHeader icon="🎯" title="Riding Quality" subtitle="The Training Scales" />
+                  <LayerHeader icon="◎" title="Riding Quality" subtitle="The Training Scales" />
 
                   <div style={{
                     display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
@@ -1417,7 +1388,7 @@ export default function RidesPage() {
                       color: COLORS.green, fontFamily: FONTS.body,
                       fontSize: '14px', fontWeight: 600,
                     }}>
-                      ✓ Ride Saved
+                      Ride Saved
                     </div>
                   )}
                   <button
@@ -1441,8 +1412,6 @@ export default function RidesPage() {
       {/* ── Quick Upload (when no analysis active) ──────── */}
       {status === 'idle' && !showLogForm && (
         <div style={{ padding: '0 20px', marginBottom: '12px' }}>
-          {/* Camera tips (#59) */}
-          <CameraTips />
           <div
             onClick={() => fileInputRef.current?.click()}
             style={{
@@ -1482,30 +1451,45 @@ export default function RidesPage() {
             <div style={{
               position: 'absolute', bottom: 20, left: 20, right: 20,
             }}>
+              {/* Cadence AI badge */}
               <div style={{
-                fontFamily: FONTS.heading, fontSize: '22px', color: COLORS.parchment,
-                marginBottom: '6px',
-                textShadow: '0 1px 6px rgba(0,0,0,0.3)',
+                display: 'inline-flex', alignItems: 'center', gap: 5,
+                background: 'rgba(107,127,163,0.25)',
+                border: '1px solid rgba(107,127,163,0.45)',
+                borderRadius: '20px', padding: '4px 10px',
+                marginBottom: '10px',
               }}>
-                Analyze Your Ride
+                <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#6B7FA3' }} />
+                <span style={{ fontSize: '10px', color: 'rgba(200,215,240,0.9)', fontFamily: FONTS.mono, letterSpacing: '0.08em' }}>
+                  CADENCE AI ANALYSIS
+                </span>
               </div>
               <div style={{
-                fontFamily: FONTS.body, fontSize: '12px', color: 'rgba(250,247,243,0.75)',
-                lineHeight: 1.5, marginBottom: '14px', maxWidth: 260,
+                fontFamily: FONTS.heading, fontSize: '24px', color: COLORS.parchment,
+                marginBottom: '6px', lineHeight: 1.15,
+                textShadow: '0 2px 8px rgba(0,0,0,0.4)',
               }}>
-                Upload a riding video and Cadence will analyze your position, balance, and biomechanics.
+                See how you really ride.
+              </div>
+              <div style={{
+                fontFamily: FONTS.body, fontSize: '12px', color: 'rgba(250,247,243,0.72)',
+                lineHeight: 1.5, marginBottom: '16px', maxWidth: 240,
+              }}>
+                Cadence reads your position, balance & biomechanics — every ride.
               </div>
               <div style={{
                 display: 'inline-flex', alignItems: 'center', gap: 8,
-                background: COLORS.cognac, color: COLORS.parchment,
-                borderRadius: '14px', padding: '10px 22px',
+                background: COLORS.cognac,
+                color: COLORS.parchment,
+                borderRadius: '14px', padding: '11px 24px',
                 fontSize: '13px', fontWeight: 600, fontFamily: FONTS.body,
+                boxShadow: '0 4px 20px rgba(140,90,60,0.45)',
               }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                  <path d="M12 4v12M6 10l6-6 6 6" stroke={COLORS.parchment} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                  <path d="M4 18h16" stroke={COLORS.parchment} strokeWidth="2" strokeLinecap="round" />
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                  <path d="M12 4v12M6 10l6-6 6 6" stroke={COLORS.parchment} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M4 18h16" stroke={COLORS.parchment} strokeWidth="2.2" strokeLinecap="round" />
                 </svg>
-                Upload Ride
+                Upload a Ride
               </div>
             </div>
           </div>
@@ -1528,7 +1512,13 @@ export default function RidesPage() {
             background: '#FFFFFF', borderRadius: '16px',
             border: '1px solid #EDE7DF',
           }}>
-            <div style={{ fontSize: '32px', marginBottom: '12px' }}>🐎</div>
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '14px' }}>
+              <svg width="38" height="38" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                {/* Minimal horse head silhouette */}
+                <path d="M6 18c0-4 2-7 5-8.5C13 8 15 6 15 4c0 2-1 3-2 4 2 0 4 1 5 3-1-1-3-1.5-4-1 1 1 2 3 2 5 0 3-2 4-4 4H8c-1.3 0-2-.8-2-2z" stroke={COLORS.muted} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+                <path d="M8 18v2M12 18v2" stroke={COLORS.muted} strokeWidth="1.4" strokeLinecap="round" />
+              </svg>
+            </div>
             <div style={{
               fontFamily: FONTS.heading, fontSize: '17px', color: COLORS.charcoal,
               marginBottom: '8px',

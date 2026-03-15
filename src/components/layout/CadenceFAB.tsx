@@ -64,7 +64,9 @@ export default function CadenceFAB({ onClick, isActive = false, isListening = fa
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          animation: 'cadence-glow 4s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+          animation: isAnimated
+            ? 'cadence-glow 4s cubic-bezier(0.4, 0, 0.6, 1) infinite'
+            : 'cadence-breathe 3.8s cubic-bezier(0.45, 0, 0.55, 1) infinite',
           transition: 'transform 0.15s ease',
         }}
         onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = 'scale(1.07)'; }}
@@ -89,6 +91,38 @@ export default function CadenceFAB({ onClick, isActive = false, isListening = fa
 }
 
 export function CadenceIcon({ size = 28, animated = true }: { size?: number; animated?: boolean }) {
+  // Idle state: gentle breathing orb (no waveform)
+  // Active state: animated waveform bars
+  if (!animated) {
+    return (
+      <div
+        style={{
+          width: size,
+          height: size,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+        aria-hidden="true"
+      >
+        <div style={{
+          width: `${size * 0.36}px`,
+          height: `${size * 0.36}px`,
+          borderRadius: '50%',
+          background: 'radial-gradient(circle at 38% 38%, #F0D888 0%, #C9A96E 55%, #A07040 100%)',
+          boxShadow: `0 0 ${size * 0.28}px rgba(201,169,110,0.55)`,
+          animation: 'cadence-orb-breathe 3.8s cubic-bezier(0.45, 0, 0.55, 1) infinite',
+        }} />
+        <style>{`
+          @keyframes cadence-orb-breathe {
+            0%, 100% { transform: scale(0.88); opacity: 0.80; box-shadow: 0 0 6px rgba(201,169,110,0.35); }
+            50%       { transform: scale(1.12); opacity: 1.0;  box-shadow: 0 0 14px rgba(201,169,110,0.65); }
+          }
+        `}</style>
+      </div>
+    );
+  }
+
   return (
     <div
       style={{
@@ -98,7 +132,6 @@ export function CadenceIcon({ size = 28, animated = true }: { size?: number; ani
         alignItems: 'flex-end',
         justifyContent: 'center',
         gap: `${size * 0.09}px`,
-        animation: animated ? 'cadence-icon-breathe 3s ease-in-out infinite' : undefined,
       }}
       aria-hidden="true"
     >
@@ -109,7 +142,7 @@ export function CadenceIcon({ size = 28, animated = true }: { size?: number; ani
         background: 'linear-gradient(180deg, #DFBF74 0%, #A87D4A 100%)',
         opacity: 0.65,
         transformOrigin: 'bottom center',
-        animation: animated ? 'cadence-wv-0 2.9s ease-in-out infinite' : 'none',
+        animation: 'cadence-wv-0 2.9s ease-in-out infinite',
       }} />
       <div style={{
         width: `${size * 0.115}px`,
@@ -118,7 +151,7 @@ export function CadenceIcon({ size = 28, animated = true }: { size?: number; ani
         background: 'linear-gradient(180deg, #EACF80 0%, #C9A96E 100%)',
         opacity: 0.85,
         transformOrigin: 'bottom center',
-        animation: animated ? 'cadence-wv-1 2.1s ease-in-out infinite' : 'none',
+        animation: 'cadence-wv-1 2.1s ease-in-out infinite',
       }} />
       <div style={{
         width: `${size * 0.13}px`,
@@ -127,7 +160,7 @@ export function CadenceIcon({ size = 28, animated = true }: { size?: number; ani
         background: 'linear-gradient(180deg, #F0D888 0%, #C9A96E 60%, #A07040 100%)',
         opacity: 1,
         transformOrigin: 'bottom center',
-        animation: animated ? 'cadence-wv-2 1.8s ease-in-out infinite' : 'none',
+        animation: 'cadence-wv-2 1.8s ease-in-out infinite',
         boxShadow: `0 0 ${size * 0.25}px rgba(201,169,110,0.4)`,
       }} />
       <div style={{
@@ -137,7 +170,7 @@ export function CadenceIcon({ size = 28, animated = true }: { size?: number; ani
         background: 'linear-gradient(180deg, #EACF80 0%, #C9A96E 100%)',
         opacity: 0.85,
         transformOrigin: 'bottom center',
-        animation: animated ? 'cadence-wv-3 2.5s ease-in-out infinite' : 'none',
+        animation: 'cadence-wv-3 2.5s ease-in-out infinite',
       }} />
       <div style={{
         width: `${size * 0.115}px`,
@@ -146,7 +179,7 @@ export function CadenceIcon({ size = 28, animated = true }: { size?: number; ani
         background: 'linear-gradient(180deg, #DFBF74 0%, #A87D4A 100%)',
         opacity: 0.6,
         transformOrigin: 'bottom center',
-        animation: animated ? 'cadence-wv-4 3.1s ease-in-out infinite' : 'none',
+        animation: 'cadence-wv-4 3.1s ease-in-out infinite',
       }} />
 
       <style>{`
@@ -169,10 +202,6 @@ export function CadenceIcon({ size = 28, animated = true }: { size?: number; ani
         @keyframes cadence-wv-4 {
           0%, 100% { transform: scaleY(0.5); }
           50%       { transform: scaleY(1.0); }
-        }
-        @keyframes cadence-icon-breathe {
-          0%, 100% { transform: scale(0.97); opacity: 0.88; }
-          50%       { transform: scale(1.0);  opacity: 1.0; }
         }
       `}</style>
     </div>
