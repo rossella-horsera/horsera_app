@@ -8,6 +8,19 @@ A running record of every meaningful change to the product, codebase, or documen
 
 ---
 
+## 2026-03-15 (Session — 8 cards)
+
+- [Beau] [code] [new] Card 1 — Onboarding gate centralized in AppShell.tsx; ProfileSetupModal shown before any route if !isProfileComplete()
+- [Lauren+Beau] [code] Card 2 — Personalized header: "Welcome, [Name]" with name in Playfair italic on Rides screen
+- [Beau] [code] [fix] Card 3 — CameraTips component deleted; upload screen clean
+- [Lauren+Beau] [code] Card 4 — Upload CTA: "See how you really ride.", Cadence AI badge, shadow on CTA
+- [Lauren+Beau] [code] Card 5 — All emoji replaced with thin SVG line art across RidesPage, InsightsPage, ProfileSettingsPanel
+- [Lauren+Beau] [code] Card 6 — Cadence FAB: breathing orb (idle), waveform bars (active/listening only)
+- [Beau] [code] [new] Card 7 — Cadence wired to OpenAI gpt-4o-mini via streaming; dynamic system prompt with rider context
+- [Quinn+Beau] [code] [fix] Card 8 — Profile zoom fix: minScale calculated from image dimensions; slider min = full image visible
+- [Beau] [docs] Card 9 — Deploy blocked on Vercel login; code pushed to GitHub; instructions in Trello
+- [Beau] [code] Build passes ✅ (492KB main bundle)
+
 ## 2026-03-12 (Iteration Sprint — Tasks 1–8 complete)
 
 - [Ross] [docs] All 6 decisions written to DECISIONS.md (live video feedback, tab naming, 4th tab, rides list, homepage, position rename, skill→score mapping)

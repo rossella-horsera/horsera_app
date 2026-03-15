@@ -8,7 +8,7 @@ This file is the team's growing knowledge base. It is updated at the end of ever
 
 ## Current State of the Product
 
-**As of:** 2026-03-11 (late evening — pose pipeline session complete)
+**As of:** 2026-03-15 (session — 8 cards complete)
 
 **What exists:**
 - Full MVP scaffold in local repo (not yet pushed to GitHub — Lovable shows older version)
@@ -57,7 +57,13 @@ This file is the team's growing knowledge base. It is updated at the end of ever
 - Issue 1 (Cadence visual identity broader concepts) — not yet presented
 
 **Current focus:**
-Pose pipeline is built and wired. Next session: test with a real video from Google Drive, validate metrics, then push to GitHub.
+8 UI/feature cards complete (2026-03-15). Pending: deploy to horsera.app (needs Rossella's Vercel login), add VITE_OPENAI_API_KEY to activate Cadence AI.
+
+**Key new architecture:**
+- Onboarding gate in AppShell.tsx (ProfileSetupModal shown centrally on first launch)
+- CadenceDrawer wired to OpenAI gpt-4o-mini with streaming + personalized system prompt
+- Profile photo zoom uses dynamic minScale (image-dimensions-based)
+- VITE_OPENAI_API_KEY in .env.local (empty by default — Rossella must add her key)
 
 ---
 
