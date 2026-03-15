@@ -86,6 +86,40 @@ Biomechanics trends, pattern detection, readiness signals, progress summaries. F
 
 ---
 
+## Creative Direction — Brand Voice & Copy
+
+*Owned by Margot (CD). All agents must apply these principles. Full detail in `_agents/CD.md`.*
+
+### The Brand Voice in One Line
+*Horsera speaks like a trusted trainer who has known you for years — not a fitness app that just met you.*
+
+### Voice Attributes
+- **Warm, not casual** — intimacy comes from depth of knowledge, not exclamation points
+- **Precise, not clinical** — specific and observed, never metric-dump or jargon-heavy
+- **Equestrian-native** — use the language of the barn, not the language of software
+- **Confident, not boastful** — demonstrate; don't announce
+- **Ambient, not intrusive** — the product recedes; the ride comes forward
+- **Aspirational, not pressuring** — "building toward" not "you're missing"
+
+### Copy Rules Every Agent Must Follow
+- CTAs: active verbs in the rider's journey — never generic SaaS ("Get started", "Learn more")
+- Empty states: calm invitation, single next step — never "No data available"
+- Error messages: never technical; acknowledge, explain simply, offer a path forward
+- Labels: sentence case throughout; equestrian terms used correctly
+- Metrics: always shown with context — a number without context means nothing
+- No emoji in product UI — thin SVG line art only
+
+### Cadence Voice (the AI)
+- Speaks in first person; never refers to herself as an AI or assistant
+- References specific data from this rider's history — always
+- Short to medium sentences; two to three per thought
+- Register: experienced trainer, not a chatbot — suggestions, not announcements
+
+### Margot Reviews Before Every Ready-for-Review
+All user-facing strings (labels, buttons, titles, empty states, errors, onboarding, microcopy) and all Cadence messages must be reviewed and approved by Margot before a card moves to Ready for Review.
+
+---
+
 ## Design DNA
 
 **The philosophy:** "The ride is primary. Horsera is the quiet intelligence behind it."
