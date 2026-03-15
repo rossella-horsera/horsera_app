@@ -9,16 +9,42 @@ interface PathNode {
   state: 'done' | 'active' | 'future' | 'far';
 }
 
-// Progression maps are discipline-specific.
-// These follow the classical Training Scale (common to all English disciplines),
-// mapped to Horsera's milestone framework. Full discipline branching arrives in V2.
-const journeyNodes: PathNode[] = [
-  { label: 'Foundation',   sublabel: 'Balance & rhythm',        state: 'done'   },
-  { label: 'Connection',   sublabel: 'Rein contact & softness', state: 'active' },
-  { label: 'Impulsion',    sublabel: 'Energy & forward',        state: 'future' },
-  { label: 'Straightness', sublabel: 'Alignment & symmetry',    state: 'future' },
-  { label: 'Collection',   sublabel: 'Elevation & lightness',   state: 'far'    },
-];
+function getJourneyNodes(discipline: string): PathNode[] {
+  if (discipline === 'pony-club') {
+    return [
+      { label: 'D1 — Foundations',      sublabel: 'Walk, trot control, circles',          state: 'done'   },
+      { label: 'D2 — Independent Rider', sublabel: 'Diagonal, 20m circle, transitions',    state: 'active' },
+      { label: 'D3 — Balanced Rider',    sublabel: 'Correct leads, small cross rails',      state: 'future' },
+      { label: 'C1 — Influential Rider', sublabel: '4–6 fence course, consistent leads',    state: 'future' },
+      { label: 'C2 — Performance Ready', sublabel: "2'–2'6\" course, stride adjustability", state: 'far'    },
+    ];
+  }
+  if (discipline === 'usdf' || discipline === 'usdf-dressage') {
+    return [
+      { label: 'Intro Level',    sublabel: 'Walk, trot, rhythm, relaxation',  state: 'done'   },
+      { label: 'Training Level', sublabel: 'Steady contact, balanced canter', state: 'active' },
+      { label: 'First Level',    sublabel: 'Bend, balance, leg yield',        state: 'future' },
+      { label: 'Second Level',   sublabel: 'Collection, shoulder-in, travers',state: 'future' },
+      { label: 'Third Level',    sublabel: 'Flying changes, half-pass',       state: 'far'    },
+    ];
+  }
+  if (discipline === 'hunter-jumper') {
+    return [
+      { label: 'Foundation',       sublabel: 'Position, 2-point, ground poles',    state: 'done'   },
+      { label: 'Cross rails',      sublabel: 'Course work, rhythm, approach',       state: 'active' },
+      { label: "Novice (2')",      sublabel: 'Consistent pace, turns, 8-fence',     state: 'future' },
+      { label: "Modified (2'6\")", sublabel: 'Related distances, pace control',     state: 'future' },
+      { label: "Training (3')",    sublabel: 'Scope, adjustability, confidence',    state: 'far'    },
+    ];
+  }
+  return [
+    { label: 'Foundation',   sublabel: 'Balance & rhythm',        state: 'done'   },
+    { label: 'Connection',   sublabel: 'Rein contact & softness', state: 'active' },
+    { label: 'Impulsion',    sublabel: 'Energy & forward',        state: 'future' },
+    { label: 'Straightness', sublabel: 'Alignment & symmetry',    state: 'future' },
+    { label: 'Collection',   sublabel: 'Elevation & lightness',   state: 'far'    },
+  ];
+}
 
 const DISCIPLINE_LABELS: Record<string, string> = {
   'usdf-dressage':        'USDF Dressage',
@@ -36,6 +62,7 @@ export default function JourneyPage() {
   const [thanked, setThanked] = useState(false);
   const profile = getUserProfile();
   const disciplineLabel = DISCIPLINE_LABELS[profile.discipline] ?? 'Equestrian';
+  const journeyNodes = getJourneyNodes(profile.discipline);
 
   const handleExcited = () => {
     if (thanked) return;
@@ -123,7 +150,7 @@ export default function JourneyPage() {
           borderRadius: '20px',
           padding: '3px 10px',
         }}>
-          {disciplineLabel} · Training Scale
+          {disciplineLabel}{profile.discipline === 'pony-club' ? ' · Progression Path' : profile.discipline === 'hunter-jumper' ? ' · Course Path' : ' · Training Scale'}
         </div>
       </div>
 
@@ -381,13 +408,9 @@ export default function JourneyPage() {
                 animation: excited ? 'journey-heart-pop 0.4s ease' : 'none',
               }}
             >
-              <span style={{
-                fontSize: '18px',
-                display: 'inline-block',
-                animation: excited ? 'journey-heart-pop 0.4s ease' : 'none',
-              }}>
-                🤍
-              </span>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ display: 'inline-block', animation: excited ? 'journey-heart-pop 0.4s ease' : 'none' }}>
+                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" stroke="#8C5A3C" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
               <span style={{
                 fontFamily: "'DM Sans', sans-serif",
                 fontSize: '13px',
@@ -408,7 +431,12 @@ export default function JourneyPage() {
             textAlign: 'center',
             animation: 'journey-fade-in 0.5s ease both',
           }}>
-            <div style={{ fontSize: '20px', marginBottom: 6 }}>🤎</div>
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10 }}>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="10" stroke="#8C5A3C" strokeWidth="1.4" fill="rgba(140,90,60,0.08)"/>
+                <path d="M8 12l3 3 5-5" stroke="#8C5A3C" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </div>
             <p style={{
               fontFamily: "'DM Sans', sans-serif",
               fontSize: '13px',
@@ -417,7 +445,7 @@ export default function JourneyPage() {
               lineHeight: 1.5,
               margin: 0,
             }}>
-              That warmth means everything.
+              We'll let you know.
             </p>
             <p style={{
               fontFamily: "'DM Sans', sans-serif",
@@ -427,7 +455,7 @@ export default function JourneyPage() {
               marginTop: 4,
               marginBottom: 0,
             }}>
-              Your journey is on its way.
+              Your full journey map is coming — you'll be the first to see it.
             </p>
           </div>
         )}

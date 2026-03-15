@@ -58,7 +58,7 @@ export default function CadenceFAB({ onClick, isActive = false, isListening = fa
           width: '52px',
           height: '52px',
           borderRadius: '50%',
-          background: '#1C1510',
+          background: 'radial-gradient(circle at 35% 35%, #2E2318 0%, #1C1510 65%)',
           border: 'none',
           cursor: 'pointer',
           display: 'flex',
@@ -78,7 +78,7 @@ export default function CadenceFAB({ onClick, isActive = false, isListening = fa
           width: '52px',
           height: '52px',
           borderRadius: '50%',
-          border: '1.5px solid rgba(201,169,110,0.40)',
+          border: '1px solid rgba(201,169,110,0.22)',
           animation: 'cadence-ripple 4s cubic-bezier(0.2, 0, 0.8, 1) infinite',
           pointerEvents: 'none',
         }} />

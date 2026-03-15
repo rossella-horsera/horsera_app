@@ -122,7 +122,7 @@ function AppShellInner({ children }: AppShellProps) {
         <button
           onClick={() => setShowSettings(true)}
           style={{
-            position: 'absolute', right: 16, top: '50%', transform: 'translateY(-50%)',
+            position: 'absolute', right: 16, top: 'calc(env(safe-area-inset-top, 0px) + 24px)', transform: 'translateY(-50%)',
             width: 32, height: 32,
             minWidth: 32, minHeight: 32,
             borderRadius: '50%',

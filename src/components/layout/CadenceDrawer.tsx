@@ -2,7 +2,11 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import React from 'react';
 import { getUserProfile } from '../../lib/userProfile';
 import { mockGoal, mockRides } from '../../data/mock';
+import { getRides } from '../../lib/storage';
+import { safeStorage } from '../../lib/safeStorage';
 import { CadenceIcon } from './CadenceFAB';
+
+const CADENCE_HISTORY_KEY = 'horsera_cadence_history';
 
 interface Message {
   role: 'cadence' | 'rider';
@@ -32,10 +36,18 @@ function buildSystemPrompt(): string {
   const activeMilestone = mockGoal.milestones.find(m => m.state === 'working');
   const milestoneName = activeMilestone?.name || 'their current milestone';
   const currentLevel = mockGoal.currentDisciplineLevel || 'training';
-  const recentRides = mockRides.slice(0, 3);
-  const ridesSummary = recentRides.map(r =>
-    `${r.date}: ${r.type} ride on ${r.horse}, focus: ${r.focusMilestone}, signal: ${r.signal}${r.biometrics ? `, avg score: ${Math.round(Object.values(r.biometrics).reduce((a, b) => a + b, 0) / Object.values(r.biometrics).length * 100)}%` : ''}`
-  ).join('\n');
+  const storedRides = getRides();
+  const ridesSummary = storedRides.length > 0
+    ? storedRides.slice(0, 3).map(r => {
+        const avg = r.biometrics
+          ? Math.round(Object.values(r.biometrics).reduce((a, b) => a + b, 0) / Object.values(r.biometrics).length * 100)
+          : null;
+        const signal = r.overallScore > 0.75 ? 'improving' : r.overallScore > 0.55 ? 'consistent' : 'needs-work';
+        return `${r.date}: ${r.type} ride on ${r.horse || horse}, signal: ${signal}${avg ? `, avg score: ${avg}%` : ''}`;
+      }).join('\n')
+    : mockRides.slice(0, 3).map(r =>
+        `${r.date}: ${r.type} ride on ${r.horse}, focus: ${r.focusMilestone}, signal: ${r.signal}${r.biometrics ? `, avg score: ${Math.round(Object.values(r.biometrics).reduce((a, b) => a + b, 0) / Object.values(r.biometrics).length * 100)}%` : ''}`
+      ).join('\n');
 
   return `You are Cadence, an intelligent riding advisor built into the Horsera app. You are deeply knowledgeable about equestrian riding, biomechanics, and development.
 
@@ -82,16 +94,27 @@ interface CadenceDrawerProps {
   onSpeechStateChange?: (v: SpeechState) => void;
 }
 
+function loadHistory(): Message[] {
+  try {
+    const raw = safeStorage.getItem(CADENCE_HISTORY_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch {}
+  const p = getUserProfile();
+  const name = p.firstName || 'Rider';
+  return [{
+    role: 'cadence',
+    text: `Hi ${name}. I've been watching your recent rides. Your rein steadiness has improved noticeably — and your lower leg is your current focus. What's on your mind today?`,
+    timestamp: 'Now',
+  }];
+}
+
 export default function CadenceDrawer({ open, onClose, onStreamingChange, onSpeechStateChange }: CadenceDrawerProps) {
   const profile = getUserProfile();
   const riderName = profile.firstName || 'Rider';
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: 'cadence',
-      text: `Hi ${riderName}. I've been watching your recent rides. Your rein steadiness has improved noticeably — and your lower leg is your current focus. What's on your mind today?`,
-      timestamp: 'Now',
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>(loadHistory);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [rateLimitMsg, setRateLimitMsg] = useState<string | null>(null);
@@ -108,6 +131,12 @@ export default function CadenceDrawer({ open, onClose, onStreamingChange, onSpee
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  useEffect(() => {
+    if (messages.length > 1) {
+      safeStorage.setItem(CADENCE_HISTORY_KEY, JSON.stringify(messages.slice(-30)));
+    }
   }, [messages]);
 
 
@@ -332,7 +361,7 @@ export default function CadenceDrawer({ open, onClose, onStreamingChange, onSpee
   return (
     <>
       <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(26,20,14,0.4)', zIndex: 70, transition: 'opacity 0.2s ease' }} />
-      <div style={{ position: 'fixed', bottom: 0, left: '50%', transform: 'translateX(-50%)', width: '100%', maxWidth: '430px', height: '78%', background: '#FAF7F3', borderRadius: '28px 28px 0 0', zIndex: 80, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 -8px 40px rgba(0,0,0,0.18)' }}>
+      <div style={{ position: 'fixed', bottom: 0, left: '50%', transform: 'translateX(-50%)', width: 'min(100vw, 430px)', height: '78%', background: '#FAF7F3', borderRadius: '28px 28px 0 0', zIndex: 80, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 -8px 40px rgba(0,0,0,0.18)' }}>
         <div style={{ display: 'flex', justifyContent: 'center', paddingTop: '12px', paddingBottom: '4px' }}>
           <div style={{ width: '36px', height: '4px', background: '#EDE7DF', borderRadius: '2px' }} />
         </div>
@@ -359,7 +388,7 @@ export default function CadenceDrawer({ open, onClose, onStreamingChange, onSpee
         )}
 
         {/* ── Messages ── */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
           {messages.map((msg, i) => (
             <div key={i} style={{ display: 'flex', justifyContent: msg.role === 'rider' ? 'flex-end' : 'flex-start' }}>
               {msg.role === 'cadence' && (

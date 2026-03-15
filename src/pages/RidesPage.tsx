@@ -879,6 +879,7 @@ export default function RidesPage() {
       setFileSizeWarning('Large video — analysis may take a few minutes');
     }
 
+    reset();
     setVideoFile(file);
     setSessionSaved(false);
     setProcessingMsgIdx(0);
@@ -1461,7 +1462,7 @@ export default function RidesPage() {
               }}>
                 <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#6B7FA3' }} />
                 <span style={{ fontSize: '10px', color: 'rgba(200,215,240,0.9)', fontFamily: FONTS.mono, letterSpacing: '0.08em' }}>
-                  CADENCE AI ANALYSIS
+                  Position · Cadence
                 </span>
               </div>
               <div style={{
@@ -1489,7 +1490,7 @@ export default function RidesPage() {
                   <path d="M12 4v12M6 10l6-6 6 6" stroke={COLORS.parchment} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
                   <path d="M4 18h16" stroke={COLORS.parchment} strokeWidth="2.2" strokeLinecap="round" />
                 </svg>
-                Upload a Ride
+                Capture your ride
               </div>
             </div>
           </div>
@@ -1529,7 +1530,7 @@ export default function RidesPage() {
               fontFamily: FONTS.body, fontSize: '13px', color: '#7A6B5D',
               lineHeight: 1.55,
             }}>
-              Upload a video to begin your journey.
+              Your ride log is waiting. Capture your first session to see your progress here.
             </div>
           </div>
         )}
