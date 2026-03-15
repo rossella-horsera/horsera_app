@@ -88,7 +88,7 @@ Biomechanics trends, pattern detection, readiness signals, progress summaries. F
 
 ## Creative Direction — Brand Voice & Copy
 
-*Owned by Margot (CD). All agents must apply these principles. Full detail in `_agents/CD.md`.*
+*Owned by Daniel (CD). All agents must apply these principles. Full detail in `_agents/CD.md`.*
 
 ### The Brand Voice in One Line
 *Horsera speaks like a trusted trainer who has known you for years — not a fitness app that just met you.*
@@ -115,8 +115,8 @@ Biomechanics trends, pattern detection, readiness signals, progress summaries. F
 - Short to medium sentences; two to three per thought
 - Register: experienced trainer, not a chatbot — suggestions, not announcements
 
-### Margot Reviews Before Every Ready-for-Review
-All user-facing strings (labels, buttons, titles, empty states, errors, onboarding, microcopy) and all Cadence messages must be reviewed and approved by Margot before a card moves to Ready for Review.
+### Daniel Reviews Before Every Ready-for-Review
+All user-facing strings (labels, buttons, titles, empty states, errors, onboarding, microcopy) and all Cadence messages must be reviewed and approved by Daniel before a card moves to Ready for Review.
 
 ---
 

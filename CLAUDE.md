@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Before starting any work in this repository, read these files in order:
 
 - `_agents/SKILLS.md` — shared Horsera product context, design DNA, and working principles
-- `_agents/TEAM.md` — the five agents (Ross, Lauren, Beau, Quinn, Margot/CD) and how they work together
+- `_agents/TEAM.md` — the five agents (Ross, Lauren, Beau, Quinn, Daniel/CD) and how they work together
 - `_agents/CD.md` — Creative Director role: brand voice, copy standards, and visual language rules
 - `_agents/MEMORY.md` — what the team knows, current product state, session history
 - `_agents/FEEDBACK.md` — Rossella's standing instructions on how to work (always apply these)
@@ -106,7 +106,7 @@ Apply the correct agent role label to the card.
 Even when one agent leads, all agents contribute at their layer:
 
 - Lauren always reviews any visual output before the card moves to Ready for Review
-- **Margot (CD) reviews all user-facing copy and visual language before any card moves to Ready for Review**
+- **Daniel (CD) reviews all user-facing copy and visual language before any card moves to Ready for Review**
 - Quinn always does a final check before the card moves to Ready for Review
 - Ross documents any significant decisions in DECISIONS.md
 - Beau always runs `npm run build` and confirms it passes before moving a card
