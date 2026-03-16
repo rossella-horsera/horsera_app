@@ -12,6 +12,7 @@ interface Message {
   role: 'cadence' | 'rider';
   text: string;
   timestamp: string;
+  imageUrl?: string; // in-memory only, not persisted to localStorage
 }
 
 
@@ -159,8 +160,14 @@ export default function CadenceDrawer({ open, onClose, onStreamingChange, onSpee
   const sendMessage = useCallback(async (text: string, imageDataUrl?: string) => {
     if (!text.trim() || isStreaming) return;
     const now = new Date().toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' });
+    const riderMsg: Message = {
+      role: 'rider',
+      text,
+      timestamp: now,
+      ...(imageDataUrl ? { imageUrl: imageDataUrl } : {}),
+    };
+    // Build the text for the API (includes image context hint for fallback path)
     const riderText = imageDataUrl ? `[Image attached]\n\n${text}` : text;
-    const riderMsg: Message = { role: 'rider', text: riderText, timestamp: now };
     setMessages(prev => [...prev, riderMsg]);
     setInput('');
     setPendingImage(null);
@@ -398,7 +405,10 @@ export default function CadenceDrawer({ open, onClose, onStreamingChange, onSpee
                 </div>
               )}
               <div style={{ maxWidth: '78%', padding: '10px 14px', borderRadius: msg.role === 'rider' ? '16px 16px 4px 16px' : '4px 16px 16px 16px', background: msg.role === 'rider' ? '#8C5A3C' : '#F1F4FA', color: msg.role === 'rider' ? '#FAF7F3' : '#1A140E', fontSize: '13.5px', lineHeight: 1.55, fontFamily: "'DM Sans', sans-serif" }}>
-                <span dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.text) }} />
+                {msg.imageUrl && (
+                  <img src={msg.imageUrl} alt="Attached" style={{ display: 'block', width: 120, height: 80, objectFit: 'cover', borderRadius: 8, marginBottom: msg.text ? 8 : 0, border: '1px solid rgba(255,255,255,0.2)' }} />
+                )}
+                {msg.text && <span dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.text) }} />}
                 {isStreaming && i === messages.length - 1 && msg.role === 'cadence' && <span style={{ opacity: 0.5, animation: 'blink 1s infinite' }}>▊</span>}
               </div>
             </div>

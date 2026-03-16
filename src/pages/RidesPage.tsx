@@ -1600,6 +1600,64 @@ export default function RidesPage() {
           onClose={() => { setSelectedRide(null); setSelectedStoredRide(undefined); }}
         />
       )}
+
+      {/* ── LOG A RIDE FAB ──────────────────────────────────── */}
+      {!showLogForm && (
+        <div style={{
+          position: 'fixed',
+          bottom: '94px',
+          left: '20px',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: '6px',
+          zIndex: 60,
+        }}>
+          {/* Label pill */}
+          <div style={{
+            background: 'rgba(28,21,16,0.72)',
+            borderRadius: '8px',
+            padding: '3px 9px',
+            backdropFilter: 'blur(8px)',
+            border: '1px solid rgba(201,169,110,0.22)',
+            pointerEvents: 'none',
+          }}>
+            <span style={{
+              fontSize: '9px',
+              color: 'rgba(201,169,110,0.85)',
+              fontFamily: "'DM Sans', sans-serif",
+              fontWeight: 500,
+              letterSpacing: '0.04em',
+              whiteSpace: 'nowrap',
+            }}>
+              Log a ride
+            </span>
+          </div>
+
+          {/* FAB button */}
+          <button
+            onClick={() => setShowLogForm(true)}
+            aria-label="Log a ride"
+            style={{
+              width: '52px',
+              height: '52px',
+              borderRadius: '50%',
+              background: '#8C5A3C',
+              border: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: '0 4px 20px rgba(140,90,60,0.4)',
+            }}
+          >
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+              <line x1="9" y1="1" x2="9" y2="17" stroke="white" strokeWidth="2.2" strokeLinecap="round" />
+              <line x1="1" y1="9" x2="17" y2="9" stroke="white" strokeWidth="2.2" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

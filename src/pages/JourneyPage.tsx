@@ -175,25 +175,23 @@ export default function JourneyPage() {
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           boxShadow: '0 8px 32px rgba(140,90,60,0.1)',
         }}>
-          {/* Path / journey SVG icon */}
+          {/* Level-based progression map icon */}
           <svg width="38" height="38" viewBox="0 0 38 38" fill="none" aria-hidden="true">
-            {/* Winding path */}
-            <path
-              d="M8 30 Q10 22 16 20 Q22 18 22 12 Q22 6 19 4"
-              stroke="#C9A96E"
-              strokeWidth="2"
-              strokeLinecap="round"
-              fill="none"
-              opacity="0.5"
-            />
-            {/* Milestone dots on path */}
-            <circle cx="19" cy="4"  r="2.5" fill="#C9A96E" opacity="0.35" />
-            <circle cx="22" cy="12" r="2.5" fill="#C9A96E" opacity="0.55" />
-            <circle cx="19" cy="20" r="3"   fill="#C9A96E" opacity="0.8" />
-            <circle cx="13" cy="26" r="2"   fill="#8C5A3C" opacity="0.6" />
-            <circle cx="8"  cy="30" r="2.5" fill="#8C5A3C" />
-            {/* Rider glyph at current position */}
-            <circle cx="8" cy="30" r="5" stroke="#8C5A3C" strokeWidth="1.5" fill="rgba(140,90,60,0.1)" />
+            {/* Spine */}
+            <line x1="19" y1="34" x2="19" y2="6" stroke="#C9A96E" strokeWidth="1.5" strokeOpacity="0.22" strokeDasharray="2 3"/>
+            {/* Level 1 — completed */}
+            <circle cx="19" cy="34" r="3" fill="#8C5A3C"/>
+            {/* Level 2 — completed */}
+            <circle cx="19" cy="26" r="3" fill="#8C5A3C" opacity="0.72"/>
+            {/* Level 3 — active / you are here */}
+            <circle cx="19" cy="16" r="4.5" fill="#C9A96E"/>
+            <circle cx="19" cy="16" r="7.5" stroke="#C9A96E" strokeWidth="1.2" fill="none" strokeOpacity="0.32"/>
+            {/* White center dot — "here" marker */}
+            <circle cx="19" cy="16" r="1.6" fill="white" opacity="0.88"/>
+            {/* Level 4 — future goal */}
+            <circle cx="19" cy="6" r="2.5" stroke="#C9A96E" strokeWidth="1.2" fill="none" strokeOpacity="0.45"/>
+            {/* Small tick/upward chevron inside level 4 to signal "goal" */}
+            <path d="M17.5 6.8 L19 5.3 L20.5 6.8" stroke="#C9A96E" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" strokeOpacity="0.65"/>
           </svg>
         </div>
       </div>
