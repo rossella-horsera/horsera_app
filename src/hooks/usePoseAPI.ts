@@ -93,24 +93,44 @@ export function usePoseAPI(): {
         console.warn('[Horsera] ride_sessions insert skipped:', dbErr);
       }
 
-      // ── 2. POST video to Railway API ─────────────────────────────────────────
+      // ── 2. POST video to Railway API (XHR for upload progress + timeout) ───────
       setStatus('extracting');
       setProgress(3);
 
-      const formData = new FormData();
-      formData.append('file', file);
+      const job_id = await new Promise<string>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.timeout = 10 * 60 * 1000; // 10 min hard limit
 
-      const apiRes = await fetch(`${POSE_API}/analyze/video`, {
-        method: 'POST',
-        body: formData,
+        // Track upload bytes → map to 3%–9% progress
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            setProgress(3 + Math.round((e.loaded / e.total) * 6));
+          }
+        };
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              const data = JSON.parse(xhr.responseText);
+              if (!data.job_id) throw new Error('No job_id in response');
+              resolve(data.job_id);
+            } catch {
+              reject(new Error('Unexpected response from Pose API'));
+            }
+          } else {
+            reject(new Error(`Pose API ${xhr.status}: ${xhr.responseText || xhr.statusText}`));
+          }
+        };
+
+        xhr.onerror   = () => reject(new Error('Network error reaching the analysis server — check your connection'));
+        xhr.ontimeout = () => reject(new Error('Upload timed out after 10 minutes — try a shorter or smaller clip'));
+
+        xhr.open('POST', `${POSE_API}/analyze/video`);
+        const formData = new FormData();
+        formData.append('file', file);
+        xhr.send(formData);
       });
 
-      if (!apiRes.ok) {
-        const body = await apiRes.text().catch(() => '');
-        throw new Error(`Pose API ${apiRes.status}: ${body || apiRes.statusText}`);
-      }
-
-      const { job_id } = await apiRes.json();
       setProgress(10);
 
       // Store job_id on ride_sessions row
