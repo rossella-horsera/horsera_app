@@ -167,26 +167,21 @@ export function usePoseAPI(): {
 
     try {
       // ── 1. Create ride_sessions row (no video_url yet) ───────────────────────
-      // Only attempt if the user is authenticated — anonymous sessions return 401.
+      // Best-effort — silently skipped if unauthenticated (401) or Supabase unavailable.
+      // Auth is not required for Railway analysis; we'll add auth gating later.
       let dbSessionId: string | null = null;
       try {
-        const { data: { session: authSession } } = await supabase.auth.getSession();
-        if (authSession) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { data: sess, error: sessErr } = await (supabase as any)
-            .from('ride_sessions')
-            .insert({ status: 'processing' })
-            .select('id')
-            .single();
-          if (sessErr) throw sessErr;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: sess, error: sessErr } = await (supabase as any)
+          .from('ride_sessions')
+          .insert({ status: 'processing' })
+          .select('id')
+          .single();
+        if (!sessErr) {
           dbSessionId = sess?.id ?? null;
           setSessionId(dbSessionId);
-        } else {
-          console.info('[Horsera] Not authenticated — ride_sessions insert skipped');
         }
-      } catch (dbErr) {
-        console.warn('[Horsera] ride_sessions insert skipped:', dbErr);
-      }
+      } catch { /* non-fatal — proceed to Railway upload regardless */ }
 
       // ── 2. Compress video (0→10%) ─────────────────────────────────────────────
       let uploadBlob: Blob = file;
