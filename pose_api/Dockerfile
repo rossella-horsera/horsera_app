@@ -1,12 +1,11 @@
 FROM python:3.11-slim
 
-# Cache bust: 2026-03-17
-ARG CACHE_BUST=20260317
+# Cache bust: 2026-03-17b — force rebuild after healthcheck timeout investigation
+ARG CACHE_BUST=20260317b
 
 WORKDIR /app
 
 # Minimal system deps for opencv-python-headless
-# (libsm6/libxext6/libxrender1/ffmpeg not needed — headless OpenCV bundles FFmpeg)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     libgl1 \
@@ -27,6 +26,4 @@ COPY . .
 
 EXPOSE 8000
 
-# YOLO models download on first request to /root/.config/Ultralytics.
-# Mount a Railway volume at that path to persist across deploys.
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
