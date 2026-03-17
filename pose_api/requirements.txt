@@ -5,3 +5,4 @@ pydantic==2.7.4
 ultralytics==8.4.22
 opencv-python-headless==4.10.0.84
 numpy==1.26.4
+supabase==2.10.0

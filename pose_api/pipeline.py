@@ -63,11 +63,12 @@ class PipelineResult:
     ridingQuality: RidingQualityResult
     overallScore:  float
     detectionRate: float
-    caeIndex:      float     # Camera-Aware Expectation rotation index (0–1)
-    apsScore:      float     # APS v4 aggregate score
+    caeIndex:      float      # Camera-Aware Expectation rotation index (0–1)
+    apsScore:      float      # APS v4 aggregate score
     framesAnalyzed: int
     framesTotal:   int
     insights:      list[str]
+    frames_data:   list[dict]  # per-frame data for DB; excluded from to_dict()
 
     def to_dict(self) -> dict:
         return {
@@ -527,12 +528,23 @@ def analyze_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> PipelineResu
     aps_score  = float(np.mean(aps_scores)) if aps_scores else 0.0
 
     # Step 4: biomechanics + riding quality
-    bio     = compute_biomechanics(valid_kps, cae_per_frame=cae_norm)
+    bio     = compute_biomechanics(valid_kps, cae_indices=cae_norm)
     quality = _derive_riding_quality(bio)
     overall = round(float(np.mean([
         bio.lowerLegStability, bio.reinSteadiness, bio.reinSymmetry,
         bio.coreStability,     bio.upperBodyAlignment, bio.pelvisStability,
     ])), 3)
+
+    # Build per-frame data for Supabase pose_frames table
+    frames_data = [
+        {
+            "frame_index": i,
+            "aps_score":   round(aps_scores[i], 3) if i < len(aps_scores) else None,
+            "cae_value":   round(cae_norm[i], 3)   if i < len(cae_norm)   else None,
+            "keypoints":   valid_kps[i].tolist(),
+        }
+        for i in range(len(valid_kps))
+    ]
 
     return PipelineResult(
         biometrics     = bio,
@@ -544,6 +556,7 @@ def analyze_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> PipelineResu
         framesAnalyzed = len(valid_kps),
         framesTotal    = total_frames,
         insights       = _generate_insights(bio, det_rate),
+        frames_data    = frames_data,
     )
 
 

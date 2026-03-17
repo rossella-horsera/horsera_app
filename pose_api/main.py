@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from pipeline import analyze_video, analyze_frame
+import db as _db
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -80,20 +81,44 @@ def _update_job(job_id: str, **kwargs) -> None:
 
 # ── Background processing ────────────────────────────────────────────────────
 
-def _process_video(job_id: str, tmp_path: str) -> None:
-    _update_job(job_id, status=JobStatus.PROCESSING, started_at=time.time())
+def _process_video(job_id: str, tmp_path: str, filename: str, size_mb: float) -> None:
+    started_at = time.time()
+    _update_job(job_id, status=JobStatus.PROCESSING, started_at=started_at)
+    _db.upsert_job(job_id, {
+        "filename":   filename,
+        "size_mb":    size_mb,
+        "status":     JobStatus.PROCESSING,
+        "created_at": started_at,
+    })
     try:
-        result = analyze_video(tmp_path)
+        result      = analyze_video(tmp_path)
+        completed   = time.time()
+        result_dict = result.to_dict()
         _update_job(
             job_id,
-            status     = JobStatus.COMPLETE,
-            result     = result.to_dict(),
-            completed_at = time.time(),
+            status       = JobStatus.COMPLETE,
+            result       = result_dict,
+            completed_at = completed,
         )
+        _db.upsert_job(job_id, {
+            "status":          JobStatus.COMPLETE,
+            "overall_score":   result.overallScore,
+            "detection_rate":  result.detectionRate,
+            "cae_index":       result.caeIndex,
+            "aps_score":       result.apsScore,
+            "frames_analyzed": result.framesAnalyzed,
+            "frames_total":    result.framesTotal,
+            "biometrics":      result_dict["biometrics"],
+            "riding_quality":  result_dict["ridingQuality"],
+            "insights":        result.insights,
+            "completed_at":    completed,
+        })
+        _db.insert_frames(job_id, result.frames_data)
         logger.info(f"Job {job_id} complete — overall {result.overallScore:.2f}")
     except Exception as exc:
         logger.exception(f"Job {job_id} failed")
         _update_job(job_id, status=JobStatus.FAILED, error=str(exc))
+        _db.upsert_job(job_id, {"status": JobStatus.FAILED, "error": str(exc)})
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
@@ -156,7 +181,7 @@ async def analyze_video_endpoint(
             "error":       None,
         }
 
-    background_tasks.add_task(_process_video, job_id, tmp_path)
+    background_tasks.add_task(_process_video, job_id, tmp_path, file.filename, round(len(content) / 1024 ** 2, 1))
 
     logger.info(f"Queued job {job_id} — {file.filename} ({len(content)/1024**2:.1f} MB)")
     return JSONResponse({"job_id": job_id, "status": "pending"}, status_code=202)
