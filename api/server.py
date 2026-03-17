@@ -4,11 +4,12 @@ Provides LLM-powered chat with equestrian context, usage tracking, and rate limi
 """
 
 import json
-import time
 import os
-from datetime import datetime
+import threading
+from datetime import datetime, timezone
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -25,67 +26,127 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ─── Usage Tracking ────────────────────────────────────────────
+# ─── Rate limit constants ────────────────────────────────────────────────────
 
-USAGE_FILE = Path("/tmp/cadence_usage.json")
-DAILY_LIMIT = 50  # messages per day — generous for testing
-MONTHLY_LIMIT = 500  # messages per month
+SESSION_LIMIT    = 50   # max messages per session_id
+USER_DAILY_LIMIT = 100  # max messages per user_id per calendar day (Supabase)
 
-def load_usage() -> dict:
-    if USAGE_FILE.exists():
-        return json.loads(USAGE_FILE.read_text())
-    return {"daily": {}, "monthly": {}, "total": 0}
+SESSION_LIMIT_MSG = (
+    "You've asked Cadence a lot about this ride! "
+    "Save your session and start a new one to continue."
+)
+DAILY_LIMIT_MSG = (
+    "You've had a full day of coaching! "
+    "Come back tomorrow after your next ride."
+)
 
-def save_usage(usage: dict):
-    USAGE_FILE.write_text(json.dumps(usage))
+# ─── Session counter (in-memory, keyed by session_id) ───────────────────────
 
-def check_and_increment_usage() -> dict:
-    """Check if user is within limits. Returns usage stats. Raises HTTPException if over limit."""
-    usage = load_usage()
-    today = datetime.now().strftime("%Y-%m-%d")
-    month = datetime.now().strftime("%Y-%m")
+_session_counts: dict[str, int] = {}
+_session_lock   = threading.Lock()
 
-    daily_count = usage["daily"].get(today, 0)
-    monthly_count = usage["monthly"].get(month, 0)
+def _check_session_limit(session_id: str | None) -> None:
+    """Raise 429 if session_id has hit SESSION_LIMIT. Increments counter."""
+    if not session_id:
+        return
+    with _session_lock:
+        count = _session_counts.get(session_id, 0)
+        if count >= SESSION_LIMIT:
+            raise HTTPException(
+                status_code=429,
+                detail={"error": "session_limit", "message": SESSION_LIMIT_MSG},
+            )
+        _session_counts[session_id] = count + 1
 
-    if daily_count >= DAILY_LIMIT:
-        raise HTTPException(
-            status_code=429,
-            detail={
-                "error": "daily_limit",
-                "message": f"You've used all {DAILY_LIMIT} messages for today. Your limit resets at midnight. Great job engaging with Cadence today!",
-                "daily_used": daily_count,
-                "daily_limit": DAILY_LIMIT,
-            }
-        )
+# ─── User daily limit via Supabase cadence_conversations ────────────────────
 
-    if monthly_count >= MONTHLY_LIMIT:
-        raise HTTPException(
-            status_code=429,
-            detail={
-                "error": "monthly_limit",
-                "message": f"You've reached your monthly limit of {MONTHLY_LIMIT} messages. This resets at the start of next month.",
-                "monthly_used": monthly_count,
-                "monthly_limit": MONTHLY_LIMIT,
-            }
-        )
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 
-    # Increment
-    usage["daily"][today] = daily_count + 1
-    usage["monthly"][month] = monthly_count + 1
-    usage["total"] = usage.get("total", 0) + 1
-    save_usage(usage)
-
+def _supabase_headers() -> dict:
     return {
-        "daily_used": daily_count + 1,
-        "daily_limit": DAILY_LIMIT,
-        "monthly_used": monthly_count + 1,
-        "monthly_limit": MONTHLY_LIMIT,
-        "total": usage["total"],
+        "apikey":        SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type":  "application/json",
     }
 
+async def _check_user_daily_limit(user_id: str | None, session_id: str | None) -> None:
+    """
+    Count today's messages for user_id in cadence_conversations.
+    Raises 429 if at or above USER_DAILY_LIMIT.
+    Inserts a row to record this message (called only after the limit passes).
+    Falls back silently if Supabase is not configured or unreachable.
+    """
+    if not user_id or not SUPABASE_URL or not SUPABASE_KEY:
+        return
 
-# ─── Cadence System Prompt ─────────────────────────────────────────
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    base  = f"{SUPABASE_URL}/rest/v1/cadence_conversations"
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            # Count today's rows for this user — fetch at most USER_DAILY_LIMIT+1
+            resp = await client.get(
+                base,
+                headers={**_supabase_headers(), "Prefer": "count=exact"},
+                params={
+                    "user_id":    f"eq.{user_id}",
+                    "created_at": f"gte.{today}T00:00:00Z",
+                    "select":     "id",
+                    "limit":      str(USER_DAILY_LIMIT + 1),
+                },
+            )
+            if resp.status_code == 200:
+                rows = resp.json()
+                if len(rows) >= USER_DAILY_LIMIT:
+                    raise HTTPException(
+                        status_code=429,
+                        detail={"error": "daily_limit", "message": DAILY_LIMIT_MSG},
+                    )
+
+            # Record this message
+            await client.post(
+                base,
+                headers=_supabase_headers(),
+                json={
+                    "user_id":    user_id,
+                    "session_id": session_id,
+                },
+            )
+    except HTTPException:
+        raise  # re-raise rate-limit errors
+    except Exception as exc:
+        # Non-fatal — don't block the user if Supabase is unreachable
+        import logging
+        logging.getLogger(__name__).warning(f"[Cadence] Supabase usage check failed: {exc}")
+
+# ─── Legacy anonymous file-based fallback ───────────────────────────────────
+# Used when no user_id is present (pre-auth MVP).
+
+USAGE_FILE     = Path("/tmp/cadence_usage.json")
+ANON_DAILY_LIMIT = 100
+
+def _load_usage() -> dict:
+    if USAGE_FILE.exists():
+        return json.loads(USAGE_FILE.read_text())
+    return {"daily": {}, "total": 0}
+
+def _check_anon_daily_limit() -> dict:
+    usage = _load_usage()
+    today = datetime.now().strftime("%Y-%m-%d")
+    count = usage["daily"].get(today, 0)
+    if count >= ANON_DAILY_LIMIT:
+        raise HTTPException(
+            status_code=429,
+            detail={"error": "daily_limit", "message": DAILY_LIMIT_MSG},
+        )
+    usage["daily"][today] = count + 1
+    usage["total"]        = usage.get("total", 0) + 1
+    USAGE_FILE.write_text(json.dumps(usage))
+    return {"daily_used": count + 1, "daily_limit": ANON_DAILY_LIMIT, "total": usage["total"]}
+
+
+# ─── Cadence System Prompt ───────────────────────────────────────────────────
 
 CADENCE_SYSTEM = """You are Cadence — the intelligent riding advisor inside Horsera, an AI-powered equestrian development platform. You are the equivalent of a world-class equestrian coach with deep expertise in biomechanics, classical training, and rider psychology.
 
@@ -144,50 +205,55 @@ Horse: warm, forward, sensitive. Prefers consistent, soft contact.
 This is a luxury brand. Your language should feel like fine craftsmanship — precise, warm, refined. Never clinical. Never generic. The rider should feel like they have access to the best coach in the world."""
 
 
-# ─── API Models ────────────────────────────────────────────────
+# ─── API Models ─────────────────────────────────────────────────────────────
 
 class ChatMessage(BaseModel):
-    role: str  # "user" or "assistant"
+    role: str       # "user" or "assistant"
     content: str
 
 class ChatRequest(BaseModel):
-    messages: list[ChatMessage]
-    riderName: str | None = None
+    messages:   list[ChatMessage]
+    riderName:  str | None = None
+    session_id: str | None = None  # tracks per-session limit (50 msgs)
+    user_id:    str | None = None  # tracks per-user daily limit (100 msgs)
 
 class UsageResponse(BaseModel):
-    daily_used: int
+    daily_used:  int
     daily_limit: int
-    monthly_used: int
-    monthly_limit: int
-    total: int
+    total:       int
 
 
-# ─── Endpoints ────────────────────────────────────────────────
+# ─── Endpoints ──────────────────────────────────────────────────────────────
 
 client = Anthropic()
 
 @app.post("/api/cadence/chat")
 async def cadence_chat(request: ChatRequest):
     """Stream a Cadence response."""
-    # Check usage limits
-    usage_stats = check_and_increment_usage()
+    # ① Session limit (in-memory, synchronous)
+    _check_session_limit(request.session_id)
+
+    # ② User daily limit (Supabase) — or anonymous fallback
+    if request.user_id:
+        await _check_user_daily_limit(request.user_id, request.session_id)
+        usage_stats: dict = {}
+    else:
+        usage_stats = _check_anon_daily_limit()
 
     # Convert messages to Anthropic format
-    api_messages = []
-    for msg in request.messages:
-        role = "user" if msg.role == "user" else "assistant"
-        api_messages.append({"role": role, "content": msg.content})
+    api_messages = [
+        {"role": "user" if m.role == "user" else "assistant", "content": m.content}
+        for m in request.messages
+    ]
 
-    # Build system prompt, optionally with rider name
     system_prompt = CADENCE_SYSTEM
     if request.riderName:
         system_prompt += f"\n\nThe rider's name is {request.riderName}."
 
-    # Stream the response
     def generate():
         try:
             with client.messages.stream(
-                model="claude_haiku_4_5",
+                model="claude-haiku-4-5-20251001",
                 max_tokens=512,
                 system=system_prompt,
                 messages=api_messages,
@@ -195,8 +261,8 @@ async def cadence_chat(request: ChatRequest):
                 for text in stream.text_stream:
                     yield f"data: {json.dumps({'type': 'text', 'text': text})}\n\n"
 
-            # Send usage stats at the end
-            yield f"data: {json.dumps({'type': 'usage', **usage_stats})}\n\n"
+            if usage_stats:
+                yield f"data: {json.dumps({'type': 'usage', **usage_stats})}\n\n"
             yield "data: [DONE]\n\n"
 
         except Exception as e:
@@ -206,25 +272,18 @@ async def cadence_chat(request: ChatRequest):
     return StreamingResponse(
         generate(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        }
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 @app.get("/api/cadence/usage")
 async def get_usage():
-    """Get current usage stats."""
-    usage = load_usage()
+    """Get current anonymous usage stats."""
+    usage = _load_usage()
     today = datetime.now().strftime("%Y-%m-%d")
-    month = datetime.now().strftime("%Y-%m")
-
     return {
-        "daily_used": usage["daily"].get(today, 0),
-        "daily_limit": DAILY_LIMIT,
-        "monthly_used": usage["monthly"].get(month, 0),
-        "monthly_limit": MONTHLY_LIMIT,
-        "total": usage.get("total", 0),
+        "daily_used":  usage["daily"].get(today, 0),
+        "daily_limit": ANON_DAILY_LIMIT,
+        "total":       usage.get("total", 0),
     }
 
 @app.get("/api/health")
