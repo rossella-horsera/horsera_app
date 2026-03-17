@@ -4,8 +4,8 @@ dockerfilePath = "pose_api/Dockerfile"
 
 [deploy]
 startCommand = "uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1"
-healthcheckPath = "/health"
-healthcheckTimeout = 300
+# healthcheckPath = "/health"     # re-enable after first successful deploy
+# healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
 
