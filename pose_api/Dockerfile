@@ -1,18 +1,21 @@
-FROM python:3.11-slim-bullseye
+FROM python:3.11-slim
 
 WORKDIR /app
 
-# System deps for OpenCV + FFmpeg
+# Minimal system deps for opencv-python-headless
+# (libsm6/libxext6/libxrender1/ffmpeg not needed — headless OpenCV bundles FFmpeg)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender1 \
     libgl1 \
-    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Python deps
+# Install CPU-only PyTorch FIRST to prevent ultralytics from pulling CUDA wheels.
+# CPU torch ~190 MB vs CUDA torch ~2.5 GB.
+RUN pip install --no-cache-dir \
+    torch==2.3.1 torchvision==0.18.1 \
+    --index-url https://download.pytorch.org/whl/cpu
+
+# App dependencies (ultralytics will reuse the torch already installed above)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -20,8 +23,6 @@ COPY . .
 
 EXPOSE 8000
 
-# YOLO models (yolov8n.pt, yolov8s-pose.pt) are NOT baked into the image.
-# They download automatically on first startup via ultralytics and are
-# cached to /root/.config/Ultralytics — mount a Railway volume there
-# to persist across deploys and avoid re-downloading on every restart.
+# YOLO models download on first request to /root/.config/Ultralytics.
+# Mount a Railway volume at that path to persist across deploys.
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
