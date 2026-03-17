@@ -1,5 +1,8 @@
 FROM python:3.11-slim
 
+# Cache bust: 2026-03-17
+ARG CACHE_BUST=20260317
+
 WORKDIR /app
 
 # Minimal system deps for opencv-python-headless
