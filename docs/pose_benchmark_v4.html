@@ -1,0 +1,77 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<title>Horsera Benchmark v4 — rossella_ride</title>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:1150px;margin:40px auto;padding:0 20px;color:#1a1a1a}
+h1{font-size:22px;font-weight:600}h2{font-size:16px;font-weight:600;margin:28px 0 10px;border-bottom:1px solid #eee;padding-bottom:6px}
+table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px}
+th{text-align:left;padding:7px 10px;background:#f8f8f8;border-bottom:1px solid #ddd;font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#555}
+td{padding:7px 10px;border-bottom:1px solid #eee}tr:last-child td{border-bottom:none}
+.meta{font-size:13px;color:#666;margin-bottom:20px}
+.note{font-size:12px;color:#888;font-style:italic;margin:-6px 0 14px}
+.pill{background:#e8f5e9;border:1px solid #a5d6a7;border-radius:6px;padding:8px 14px;font-size:12px;color:#2e7d32;margin-bottom:20px;line-height:1.6}
+.legend{display:flex;gap:20px;font-size:12px;margin-bottom:16px;flex-wrap:wrap}
+.leg-item{display:flex;align-items:center;gap:6px}
+.leg-dot{width:12px;height:12px;border-radius:50%;flex-shrink:0}
+</style></head><body>
+<h1>Horsera Pose Benchmark v4</h1>
+<div class="meta">Video: <b>rossella_ride</b> · v4: continuous rotation-aware landmark expectations</div>
+<div class="pill">
+<b>New in v4 — Camera-Aware Expectation (CAE):</b><br>
+Rotation index (0=pure side, 1=front-facing) computed from shoulder width vs calibrated max.<br>
+Per-landmark expected visibility interpolated continuously — no discrete bins.<br>
+Verdicts: <b>ok</b> (detected as expected) · <b>occluded_ok</b> (not detected, occlusion expected at this angle) · <b>missing</b> (should have been found) · <b>hallucination</b> (detected with high confidence where it shouldn't be visible).<br>
+Landmark dots on frames are now colored by verdict.
+</div>
+
+<div class="legend">
+  <div class="leg-item"><div class="leg-dot" style="background:#50d250"></div>ok — detected as expected</div>
+  <div class="leg-item"><div class="leg-dot" style="background:#b4b43c"></div>occluded_ok — missing but expected</div>
+  <div class="leg-item"><div class="leg-dot" style="background:#3c3cdc"></div>missing — should have been found</div>
+  <div class="leg-item"><div class="leg-dot" style="background:#ff1e1e"></div>hallucination — confident but wrong</div>
+</div>
+
+<h2>1. Detection, Filtering &amp; Quality</h2>
+<table><tr><th>Model</th><th>Detection rate</th><th>Valid frames</th><th>Filtered</th>
+<th>APS mean</th><th>CAE mean</th><th>Rider-on-horse %</th><th>Hallucination %</th><th>Inference</th></tr>
+<tr>
+            <td><b>yolov8s_pose</b></td>
+            <td style="color:#854F0B;font-weight:500">58%</td>
+            <td style="color:inherit;font-weight:500">2828</td>
+            <td style="color:inherit;font-weight:500">2016 skipped</td>
+            <td style="color:#854F0B;font-weight:500">0.642</td>
+            <td style="color:#854F0B;font-weight:500">0.797</td>
+            <td style="color:inherit;font-weight:500">52.7%</td>
+            <td style="color:#A32D2D;font-weight:500">94.8%</td>
+            <td style="color:inherit;font-weight:500">32.1ms</td>
+        </tr></table>
+
+<h2>2. Camera-Aware Expectation — Verdict Averages per Frame</h2>
+<p class="note">Average landmark verdicts per valid frame. Occluded_ok = model correctly not finding hidden landmarks. Hallucination = model finding landmarks that shouldn't be visible at this angle.</p>
+<table><tr><th>Model</th><th>Avg rotation</th><th>ok ✓</th><th>occluded_ok ~</th><th>missing ✕</th><th>hallucination ⚠</th><th>Rotation distribution</th></tr>
+<tr>
+            <td><b>yolov8s_pose</b></td>
+            <td style="color:inherit;font-weight:500">rot̄=0.083</td>
+            <td style="color:#3B6D11;font-weight:500">10.7</td>
+            <td style="color:#854F0B;font-weight:500">17.0</td>
+            <td style="color:inherit;font-weight:500">0.7</td>
+            <td style="color:#A32D2D;font-weight:500">4.61</td>
+            <td style="font-size:11px;color:#888">pure side:2684 / mostly side:137 / angled:3 / mostly front:1 / front facing:3</td>
+        </tr></table>
+
+<h2>3. Confidence by Body Region (valid frames only)</h2>
+<p class="note">Green ≥0.60 · Amber ≥0.35 · Red &lt;0.35</p>
+<table><tr><th>Model</th><th>head</th><th>shoulders</th><th>arms</th><th>wrists</th><th>hips</th><th>knees</th><th>ankles</th><th>feet</th></tr><tr><td><b>yolov8s_pose</b></td><td style="color:#854F0B;font-weight:500">0.49</td><td style="color:#3B6D11;font-weight:500">0.95</td><td style="color:#3B6D11;font-weight:500">0.79</td><td style="color:#3B6D11;font-weight:500">0.69</td><td style="color:#3B6D11;font-weight:500">0.95</td><td style="color:#3B6D11;font-weight:500">0.88</td><td style="color:#3B6D11;font-weight:500">0.80</td><td style="color:#A32D2D;font-weight:500">0.00</td></tr></table>
+
+<h2>4. Metric Agreement (mean ± std)</h2>
+<p class="note">Lower std = more stable metric. YOLO target: trunk ±4° or less.</p>
+<table><tr><th>Model</th><th>Trunk °</th><th>Elbow mean °</th><th>Rein symmetry</th><th>Knee L °</th></tr><tr><td><b>yolov8s_pose</b></td><td>4.36 <span style="color:#aaa;font-size:11px">±3.75</span></td><td>152.01 <span style="color:#aaa;font-size:11px">±12.87</span></td><td>0.16 <span style="color:#aaa;font-size:11px">±0.2</span></td><td>161.64 <span style="color:#aaa;font-size:11px">±16.32</span></td></tr></table>
+
+<h2>5. Best &amp; Worst Frames by APS (landmark dots colored by CAE verdict)</h2>
+<div style="margin-bottom:24px"><h3 style="font-size:14px;font-weight:600;margin-bottom:8px">yolov8s_pose</h3><div style="display:flex;gap:12px"><div style="flex:1">
+                <div style="font-size:12px;color:#3B6D11;margin-bottom:4px;">Best APS · 1.0</div>
+                <img src="yolov8s_pose_best_aps1.00.jpg" style="width:100%;border-radius:8px;border:1px solid #ddd">
+            </div><div style="flex:1">
+                <div style="font-size:12px;color:#A32D2D;margin-bottom:4px;">Worst APS · 0.35</div>
+                <img src="yolov8s_pose_worst_aps0.35.jpg" style="width:100%;border-radius:8px;border:1px solid #ddd">
+            </div></div></div>
+</body></html>

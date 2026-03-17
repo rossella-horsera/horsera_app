@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: horsera-pose-api
+    runtime: docker
+    dockerfilePath: ./pose_api/Dockerfile
+    plan: standard          # 1 GB RAM — required for YOLO model loading
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: "8000"
+      - key: CORS_ORIGINS
+        value: "https://horsera.app"
+        # Override in Render dashboard for staging/preview environments
