@@ -3,7 +3,7 @@ builder = "DOCKERFILE"
 dockerfilePath = "pose_api/Dockerfile"
 
 [deploy]
-startCommand = "uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1"
+startCommand = "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"
 healthcheckPath = "/health"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
@@ -11,5 +11,7 @@ restartPolicyMaxRetries = 3
 
 [environments.production.variables]
 PYTHON_VERSION = "3.11"
-# Set CORS_ORIGINS to your frontend domain, e.g.:
+PORT = "8000"
+SUPABASE_URL = "https://tgtomkkhenclkgzdyane.supabase.co"
+SUPABASE_KEY = "sb_publishable_R95K5siGi979rflXTzSYSg_xB7ZBgWG"
 # CORS_ORIGINS = "https://horsera.app"
