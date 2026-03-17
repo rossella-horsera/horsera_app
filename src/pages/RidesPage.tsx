@@ -2,12 +2,13 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { mockRides, mockGoal } from '../data/mock';
 import type { Ride, BiometricsSnapshot } from '../data/mock';
-import { useVideoAnalysis } from '../hooks/useVideoAnalysis';
+import { usePoseAPI } from '../hooks/usePoseAPI';
 import { computeRidingQualities, generateInsights } from '../lib/poseAnalysis';
 import type { MovementInsight } from '../lib/poseAnalysis';
 import { saveRide, getRides } from '../lib/storage';
 import type { StoredRide } from '../lib/storage';
 import { getUserProfile } from '../lib/userProfile';
+import { supabase } from '../integrations/supabase/client';
 import VideoSilhouetteOverlay from '../components/VideoSilhouetteOverlay';
 
 // ─────────────────────────────────────────────────────────
@@ -805,7 +806,7 @@ export default function RidesPage() {
   // Video analysis
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [videoFile, setVideoFile] = useState<File | null>(null);
-  const { status, progress, result, error, analyzeVideo, reset } = useVideoAnalysis();
+  const { status, progress, result, error, sessionId, analyzeVideo, reset } = usePoseAPI();
 
   // Saved ride state
   const [sessionSaved, setSessionSaved] = useState(false);
@@ -890,19 +891,22 @@ export default function RidesPage() {
     handleReset();
   };
 
-  const handleSaveSession = () => {
+  const handleSaveSession = async () => {
     if (!result || !videoFile) return;
     const bio = result.biometrics;
     const qualities = computeRidingQualities(bio);
     const overall = Object.values(bio).reduce((a, b) => a + b, 0) / Object.values(bio).length;
+    const horse = getUserProfile().horseName || 'Your Horse';
+    const duration = parseInt(logDuration, 10) || 45;
 
     const ride: StoredRide = {
-      id: `stored-${Date.now()}`,
+      id: sessionId ?? `stored-${Date.now()}`,
       date: new Date().toISOString().split('T')[0],
-      horse: getUserProfile().horseName || 'Your Horse',
+      horse,
       type: logType,
-      duration: parseInt(logDuration, 10) || 45,
+      duration,
       videoFileName: videoFile.name,
+      videoUrl: result.videoPlaybackUrl,
       biometrics: { ...bio },
       ridingQuality: {
         rhythm:       qualities[0].score,
@@ -916,8 +920,23 @@ export default function RidesPage() {
       insights: result.insights.map(i => i.text),
     };
 
+    // Persist to localStorage (always)
     saveRide(ride);
     setStoredRides(getRides());
+
+    // Persist metadata back to Supabase ride_sessions row (non-fatal)
+    if (sessionId) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (supabase as any)
+          .from('ride_sessions')
+          .update({ horse, ride_type: logType, duration_minutes: duration })
+          .eq('id', sessionId);
+      } catch (dbErr) {
+        console.warn('[Horsera] ride_sessions metadata update skipped:', dbErr);
+      }
+    }
+
     setSessionSaved(true);
   };
 

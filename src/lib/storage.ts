@@ -10,6 +10,7 @@ export interface StoredRide {
   type: 'training' | 'lesson' | 'hack' | 'mock-test';
   duration: number;
   videoFileName: string;
+  videoUrl?: string;       // Supabase Storage public URL (set when uploaded)
   biometrics: {
     lowerLegStability: number;
     reinSteadiness: number;
