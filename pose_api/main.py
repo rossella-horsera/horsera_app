@@ -160,30 +160,49 @@ async def analyze_video_endpoint(
     if ext not in {".mp4", ".mov", ".avi", ".m4v"}:
         raise HTTPException(400, f"Unsupported format {ext!r}. Use MP4, MOV, or AVI.")
 
-    content = await file.read()
-    if len(content) > 2 * 1024 ** 3:
-        raise HTTPException(413, "File too large — max 2 GB")
-
     job_id   = str(uuid.uuid4())
     tmp_path = f"/tmp/horsera_{job_id}{ext}"
 
-    with open(tmp_path, "wb") as f:
-        f.write(content)
+    # Stream upload directly to disk — never hold the whole file in RAM.
+    # Railway Hobby has 512 MB total; reading large files into memory causes OOM.
+    MAX_SIZE  = 2 * 1024 ** 3  # 2 GB hard limit
+    CHUNK     = 1024 * 1024    # 1 MB read chunks
+    file_size = 0
+    try:
+        with open(tmp_path, "wb") as tmp_f:
+            while True:
+                chunk = await file.read(CHUNK)
+                if not chunk:
+                    break
+                file_size += len(chunk)
+                if file_size > MAX_SIZE:
+                    raise HTTPException(413, "File too large — max 2 GB")
+                tmp_f.write(chunk)
+    except HTTPException:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
+    except Exception as exc:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise HTTPException(500, f"Failed to receive upload: {exc}") from exc
+
+    size_mb = round(file_size / 1024 ** 2, 1)
 
     with _jobs_lock:
         _jobs[job_id] = {
             "job_id":      job_id,
             "filename":    file.filename,
-            "size_mb":     round(len(content) / 1024 ** 2, 1),
+            "size_mb":     size_mb,
             "status":      JobStatus.PENDING,
             "created_at":  time.time(),
             "result":      None,
             "error":       None,
         }
 
-    background_tasks.add_task(_process_video, job_id, tmp_path, file.filename, round(len(content) / 1024 ** 2, 1))
+    background_tasks.add_task(_process_video, job_id, tmp_path, file.filename, size_mb)
 
-    logger.info(f"Queued job {job_id} — {file.filename} ({len(content)/1024**2:.1f} MB)")
+    logger.info(f"Queued job {job_id} — {file.filename} ({size_mb:.1f} MB)")
     return JSONResponse({"job_id": job_id, "status": "pending"}, status_code=202)
 
 
