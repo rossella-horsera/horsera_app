@@ -157,8 +157,8 @@ async def analyze_video_endpoint(
         raise HTTPException(400, "No file provided")
 
     ext = os.path.splitext(file.filename)[1].lower()
-    if ext not in {".mp4", ".mov", ".avi", ".m4v"}:
-        raise HTTPException(400, f"Unsupported format {ext!r}. Use MP4, MOV, or AVI.")
+    if ext not in {".mp4", ".mov", ".avi", ".m4v", ".webm"}:
+        raise HTTPException(400, f"Unsupported format {ext!r}. Use MP4, MOV, AVI, or WebM.")
 
     job_id   = str(uuid.uuid4())
     tmp_path = f"/tmp/horsera_{job_id}{ext}"
