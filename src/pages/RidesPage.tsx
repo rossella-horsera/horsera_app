@@ -828,7 +828,7 @@ export default function RidesPage() {
   }, []);
 
   const isDone = status === 'done' && result !== null;
-  const isAnalyzing = status === 'loading-model' || status === 'extracting' || status === 'processing';
+  const isAnalyzing = status === 'loading-model' || status === 'compressing' || status === 'extracting' || status === 'processing';
 
   // Card #59 — cycle processing messages every 2s
   useEffect(() => {
@@ -997,8 +997,11 @@ export default function RidesPage() {
     return acc;
   }, {} as Record<string, Ride[]>);
 
-  // Status message for analysis progress — now cycling via PROCESSING_MESSAGES (#59)
-  const statusMessage = PROCESSING_MESSAGES[processingMsgIdx];
+  // Status message for analysis progress — compression phase shows a fixed label,
+  // all other phases cycle through PROCESSING_MESSAGES (#59)
+  const statusMessage = status === 'compressing'
+    ? 'Compressing video...'
+    : PROCESSING_MESSAGES[processingMsgIdx];
 
   return (
     <div style={{ background: COLORS.parchment, minHeight: '100%' }}>

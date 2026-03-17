@@ -38,6 +38,7 @@ export interface VideoAnalysisResult {
 export type AnalysisStatus =
   | 'idle'
   | 'loading-model'
+  | 'compressing'
   | 'extracting'
   | 'processing'
   | 'done'

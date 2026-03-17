@@ -4,9 +4,12 @@
 // Flow:
 //   1. Create blob URL immediately → video plays while analysis runs
 //   2. Create ride_sessions row (no video_url yet)
-//   3. POST video to Railway /analyze/video → job_id  [progress 0→10%]
-//   4. Poll GET /jobs/{job_id} every 3s              [progress 10→95%]
-//   5. On complete: store result, mark done          [progress 100%]
+//   3. Compress video in-browser (720p / 2 Mbps) via canvas+MediaRecorder
+//      [progress 0→10%] — skipped for small files or unsupported browsers
+//   4. POST compressed (or original) blob to Railway /analyze/video
+//      [progress 10→18%]
+//   5. Poll GET /jobs/{job_id} every 3s              [progress 18→95%]
+//   6. On complete: store result, mark done          [progress 100%]
 //
 // Storage upload is deferred to handleSaveSession in RidesPage.tsx —
 // the user only pays the upload cost when they explicitly save the ride.
@@ -22,6 +25,9 @@ import type { MovementInsight } from '../lib/poseAnalysis';
 const POSE_API  = 'https://horseraapp-production.up.railway.app';
 const POLL_MS   = 3000;
 const MAX_POLL  = 200; // 200 × 3s = 10 min max
+
+// Only attempt compression for files above this threshold (smaller files upload fast as-is)
+const COMPRESS_THRESHOLD_BYTES = 50 * 1024 * 1024; // 50 MB
 
 // ── Convert plain-text insight strings → MovementInsight objects ──────────────
 function toMovementInsights(texts: string[]): MovementInsight[] {
@@ -41,6 +47,89 @@ function toMovementInsights(texts: string[]): MovementInsight[] {
     const metricMatch = text.match(/^([A-Z][a-z]+(?: [a-z]+)?)/);
     const metric = metricMatch ? metricMatch[1] : 'Analysis';
     return { metric, quality: slot === 0 ? 'good' : slot === 2 ? 'poor' : 'moderate', icon, iconColor, trend, trendColor, text };
+  });
+}
+
+// ── Client-side video compression via canvas + MediaRecorder ─────────────────
+// Scales to 720p max, re-encodes at ~2 Mbps.
+// Throws if the browser doesn't support MediaRecorder or no codec is available.
+// onProgress receives 0-100 as the source video plays through.
+function compressVideo(
+  file: File,
+  onProgress: (pct: number) => void,
+): Promise<{ blob: Blob; filename: string }> {
+  return new Promise((resolve, reject) => {
+    if (typeof MediaRecorder === 'undefined') {
+      return reject(new Error('MediaRecorder not supported'));
+    }
+
+    // Pick the best supported output codec
+    const mimeType = (
+      ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/mp4'] as const
+    ).find(t => MediaRecorder.isTypeSupported(t));
+    if (!mimeType) {
+      return reject(new Error('No supported MediaRecorder codec'));
+    }
+
+    const ext      = mimeType.startsWith('video/mp4') ? '.mp4' : '.webm';
+    const srcUrl   = URL.createObjectURL(file);
+    const video    = document.createElement('video');
+    video.src      = srcUrl;
+    video.muted    = true;
+    video.playsInline = true;
+    video.preload  = 'metadata';
+
+    const cleanup = () => URL.revokeObjectURL(srcUrl);
+
+    video.onerror = () => { cleanup(); reject(new Error('Failed to decode video for compression')); };
+
+    video.onloadedmetadata = () => {
+      const { videoWidth: w, videoHeight: h, duration } = video;
+
+      // Scale to 1280×720 max — never upscale
+      const scale = Math.min(1, 1280 / w, 720 / h);
+      // Force even dimensions (required by most codecs)
+      const outW  = Math.floor(w * scale / 2) * 2 || 2;
+      const outH  = Math.floor(h * scale / 2) * 2 || 2;
+
+      const canvas   = document.createElement('canvas');
+      canvas.width   = outW;
+      canvas.height  = outH;
+      const ctx      = canvas.getContext('2d')!;
+
+      const stream   = canvas.captureStream(25);
+      const recorder = new MediaRecorder(stream, {
+        mimeType,
+        videoBitsPerSecond: 2_000_000,
+      });
+
+      const chunks: Blob[] = [];
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+
+      recorder.onstop = () => {
+        cleanup();
+        const baseName = file.name.replace(/\.[^.]+$/, '');
+        resolve({ blob: new Blob(chunks, { type: mimeType }), filename: `${baseName}${ext}` });
+      };
+
+      recorder.onerror = () => { cleanup(); reject(new Error('MediaRecorder error during compression')); };
+
+      // Draw the current video frame to canvas whenever the time advances
+      video.ontimeupdate = () => {
+        ctx.drawImage(video, 0, 0, outW, outH);
+        if (duration > 0) {
+          onProgress(Math.min(99, Math.round((video.currentTime / duration) * 100)));
+        }
+      };
+
+      video.onended = () => {
+        ctx.drawImage(video, 0, 0, outW, outH); // flush last frame
+        recorder.stop();
+      };
+
+      recorder.start(200); // emit data chunks every 200 ms
+      video.play().catch(() => { cleanup(); reject(new Error('Video.play() failed during compression')); });
+    };
   });
 }
 
@@ -78,33 +167,66 @@ export function usePoseAPI(): {
 
     try {
       // ── 1. Create ride_sessions row (no video_url yet) ───────────────────────
+      // Only attempt if the user is authenticated — anonymous sessions return 401.
       let dbSessionId: string | null = null;
       try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: sess, error: sessErr } = await (supabase as any)
-          .from('ride_sessions')
-          .insert({ status: 'processing' })
-          .select('id')
-          .single();
-        if (sessErr) throw sessErr;
-        dbSessionId = sess?.id ?? null;
-        setSessionId(dbSessionId);
+        const { data: { session: authSession } } = await supabase.auth.getSession();
+        if (authSession) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: sess, error: sessErr } = await (supabase as any)
+            .from('ride_sessions')
+            .insert({ status: 'processing' })
+            .select('id')
+            .single();
+          if (sessErr) throw sessErr;
+          dbSessionId = sess?.id ?? null;
+          setSessionId(dbSessionId);
+        } else {
+          console.info('[Horsera] Not authenticated — ride_sessions insert skipped');
+        }
       } catch (dbErr) {
         console.warn('[Horsera] ride_sessions insert skipped:', dbErr);
       }
 
-      // ── 2. POST video to Railway API (XHR for upload progress + timeout) ───────
+      // ── 2. Compress video (0→10%) ─────────────────────────────────────────────
+      let uploadBlob: Blob = file;
+      let uploadFilename   = file.name;
+
+      if (file.size >= COMPRESS_THRESHOLD_BYTES) {
+        setStatus('compressing');
+        setProgress(0);
+        try {
+          const { blob, filename } = await compressVideo(file, (videoPct) => {
+            // Map video's 0–100% playthrough → our 0–10% progress band
+            setProgress(Math.round(videoPct / 10));
+          });
+          uploadBlob     = blob;
+          uploadFilename = filename;
+          console.info(
+            `[Horsera] Compressed ${(file.size / 1024 ** 2).toFixed(1)} MB → ` +
+            `${(blob.size / 1024 ** 2).toFixed(1)} MB (${filename})`
+          );
+        } catch (compressErr) {
+          // Non-fatal — fall back to the original file
+          console.warn('[Horsera] Compression skipped (falling back to original):', compressErr);
+          uploadBlob     = file;
+          uploadFilename = file.name;
+        }
+      }
+
+      setProgress(10);
+
+      // ── 3. POST to Railway API (XHR for upload progress + timeout) ───────────
       setStatus('extracting');
-      setProgress(3);
 
       const job_id = await new Promise<string>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.timeout = 10 * 60 * 1000; // 10 min hard limit
 
-        // Track upload bytes → map to 3%–9% progress
+        // Track upload bytes → map to 10%–18% progress
         xhr.upload.onprogress = (e) => {
           if (e.lengthComputable) {
-            setProgress(3 + Math.round((e.loaded / e.total) * 6));
+            setProgress(10 + Math.round((e.loaded / e.total) * 8));
           }
         };
 
@@ -127,11 +249,11 @@ export function usePoseAPI(): {
 
         xhr.open('POST', `${POSE_API}/analyze/video`);
         const formData = new FormData();
-        formData.append('file', file);
+        formData.append('file', uploadBlob, uploadFilename);
         xhr.send(formData);
       });
 
-      setProgress(10);
+      setProgress(20);
 
       // Store job_id on ride_sessions row
       if (dbSessionId) {
@@ -144,7 +266,7 @@ export function usePoseAPI(): {
         } catch { /* non-fatal */ }
       }
 
-      // ── 3. Poll for results ──────────────────────────────────────────────────
+      // ── 4. Poll for results (20→95%) ──────────────────────────────────────────
       setStatus('processing');
       let attempts = 0;
 
@@ -164,8 +286,8 @@ export function usePoseAPI(): {
           const job = await pollRes.json();
 
           if (job.status === 'pending' || job.status === 'processing') {
-            // Progress: 10% → 95% over ~80 poll cycles (~4 min)
-            setProgress(Math.min(95, 10 + Math.round((attempts / 80) * 85)));
+            // Progress: 20% → 95% over ~80 poll cycles (~4 min)
+            setProgress(Math.min(95, 20 + Math.round((attempts / 80) * 75)));
             return;
           }
 
