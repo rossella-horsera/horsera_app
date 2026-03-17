@@ -84,12 +84,17 @@ def _update_job(job_id: str, **kwargs) -> None:
 def _process_video(job_id: str, tmp_path: str, filename: str, size_mb: float) -> None:
     started_at = time.time()
     _update_job(job_id, status=JobStatus.PROCESSING, started_at=started_at)
-    _db.upsert_job(job_id, {
-        "filename":   filename,
-        "size_mb":    size_mb,
-        "status":     JobStatus.PROCESSING,
-        "created_at": started_at,
-    })
+    # DB writes are best-effort — a Supabase error must never block pose analysis.
+    try:
+        _db.upsert_job(job_id, {
+            "filename":   filename,
+            "size_mb":    size_mb,
+            "status":     JobStatus.PROCESSING,
+            "created_at": started_at,
+        })
+    except Exception as db_exc:
+        logger.warning(f"[db] upsert_job(processing) failed — continuing: {db_exc}")
+
     try:
         result      = analyze_video(tmp_path)
         completed   = time.time()
@@ -100,25 +105,31 @@ def _process_video(job_id: str, tmp_path: str, filename: str, size_mb: float) ->
             result       = result_dict,
             completed_at = completed,
         )
-        _db.upsert_job(job_id, {
-            "status":          JobStatus.COMPLETE,
-            "overall_score":   result.overallScore,
-            "detection_rate":  result.detectionRate,
-            "cae_index":       result.caeIndex,
-            "aps_score":       result.apsScore,
-            "frames_analyzed": result.framesAnalyzed,
-            "frames_total":    result.framesTotal,
-            "biometrics":      result_dict["biometrics"],
-            "riding_quality":  result_dict["ridingQuality"],
-            "insights":        result.insights,
-            "completed_at":    completed,
-        })
-        _db.insert_frames(job_id, result.frames_data)
+        try:
+            _db.upsert_job(job_id, {
+                "status":          JobStatus.COMPLETE,
+                "overall_score":   result.overallScore,
+                "detection_rate":  result.detectionRate,
+                "cae_index":       result.caeIndex,
+                "aps_score":       result.apsScore,
+                "frames_analyzed": result.framesAnalyzed,
+                "frames_total":    result.framesTotal,
+                "biometrics":      result_dict["biometrics"],
+                "riding_quality":  result_dict["ridingQuality"],
+                "insights":        result.insights,
+                "completed_at":    completed,
+            })
+            _db.insert_frames(job_id, result.frames_data)
+        except Exception as db_exc:
+            logger.warning(f"[db] upsert_job(complete) failed — results still returned: {db_exc}")
         logger.info(f"Job {job_id} complete — overall {result.overallScore:.2f}")
     except Exception as exc:
         logger.exception(f"Job {job_id} failed")
         _update_job(job_id, status=JobStatus.FAILED, error=str(exc))
-        _db.upsert_job(job_id, {"status": JobStatus.FAILED, "error": str(exc)})
+        try:
+            _db.upsert_job(job_id, {"status": JobStatus.FAILED, "error": str(exc)})
+        except Exception as db_exc:
+            logger.warning(f"[db] upsert_job(failed) failed: {db_exc}")
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
@@ -256,3 +267,4 @@ def analyze_frame_endpoint(req: FrameRequest) -> JSONResponse:
 
     result = analyze_frame(frame)
     return JSONResponse(result)
+
