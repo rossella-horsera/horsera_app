@@ -920,20 +920,41 @@ export default function RidesPage() {
       insights: result.insights.map(i => i.text),
     };
 
+    // ── Upload video to Supabase Storage now (deferred from analysis time) ──────
+    let permanentVideoUrl = ride.videoUrl ?? ''; // starts as blob URL
+    try {
+      const safeName = `${Date.now()}_${videoFile.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+      const { data: up, error: upErr } = await supabase.storage
+        .from('ride-videos')
+        .upload(safeName, videoFile, { cacheControl: '3600', upsert: false });
+      if (!upErr && up) {
+        const { data: { publicUrl } } = supabase.storage.from('ride-videos').getPublicUrl(up.path);
+        permanentVideoUrl = publicUrl;
+        ride.videoUrl = publicUrl;
+      }
+    } catch (storageErr) {
+      console.warn('[Horsera] Storage upload skipped on save:', storageErr);
+    }
+
     // Persist to localStorage (always)
     saveRide(ride);
     setStoredRides(getRides());
 
-    // Persist metadata back to Supabase ride_sessions row (non-fatal)
+    // Update Supabase ride_sessions with video_url + user metadata (non-fatal)
     if (sessionId) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await (supabase as any)
           .from('ride_sessions')
-          .update({ horse, ride_type: logType, duration_minutes: duration })
+          .update({
+            video_url:        permanentVideoUrl,
+            horse,
+            ride_type:        logType,
+            duration_minutes: duration,
+          })
           .eq('id', sessionId);
       } catch (dbErr) {
-        console.warn('[Horsera] ride_sessions metadata update skipped:', dbErr);
+        console.warn('[Horsera] ride_sessions save update skipped:', dbErr);
       }
     }
 
