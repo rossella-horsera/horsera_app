@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# YOLO model weights (downloaded at runtime, not baked into image)
+*.pt
+*.onnx
+runs/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Dev/test artefacts
+*.mp4
+*.avi
+*.mov
+*.m4v
