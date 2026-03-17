@@ -69,6 +69,32 @@ const navItems = [
       </svg>
     ),
   },
+  {
+    path: '/analysis',
+    label: 'Analysis',
+    icon: (active: boolean) => (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+        <polygon
+          points="5,19 5,9 9,9 9,19"
+          stroke={active ? '#8C5A3C' : '#C4B8AC'}
+          strokeWidth="1.7"
+          fill={active ? 'rgba(140,90,60,0.08)' : 'none'}
+        />
+        <polygon
+          points="10,19 10,5 14,5 14,19"
+          stroke={active ? '#8C5A3C' : '#C4B8AC'}
+          strokeWidth="1.7"
+          fill={active ? 'rgba(140,90,60,0.08)' : 'none'}
+        />
+        <polygon
+          points="15,19 15,12 19,12 19,19"
+          stroke={active ? '#8C5A3C' : '#C4B8AC'}
+          strokeWidth="1.7"
+          fill={active ? 'rgba(140,90,60,0.08)' : 'none'}
+        />
+      </svg>
+    ),
+  },
 ];
 
 export default function BottomNav() {
@@ -98,6 +124,8 @@ export default function BottomNav() {
         // Rides tab is active for both / and /rides
         const active = item.path === '/'
           ? location.pathname === '/' || location.pathname === '/rides' || location.pathname.startsWith('/rides/')
+          : item.path === '/analysis'
+          ? location.pathname.startsWith('/analysis')
           : location.pathname === item.path;
         return (
           <button
