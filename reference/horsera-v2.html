@@ -1,0 +1,948 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Horsera — Rider Analysis v2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', sans-serif; background: #E8E3DB; color: #1C1C1E; -webkit-font-smoothing: antialiased; min-height: 100vh; display: flex; align-items: flex-start; justify-content: center; padding: 24px 12px; }
+:root {
+  --pa: #F5EFE6; --nk: #1C1C1E; --cg: #C17F4A; --na: #2C3E50;
+  --ch: #D4AF76; --am: #E8A857; --gr: #5B9E56; --gr-lt: #8FC48A;
+  --te: #C14A2A; --vi: #07000A; --sky: rgba(170,205,240,0.6);
+  /* Clear semantic color system */
+  --col-ideal: #5B9E56;  /* green — on ideal */
+  --col-good:  #E8A857;  /* amber — working */
+  --col-focus: #C14A2A;  /* terracotta — needs attention */
+}
+.app { width: 100%; max-width: 820px; background: var(--pa); border-radius: 18px; overflow: hidden; box-shadow: 0 6px 48px rgba(0,0,0,0.14); }
+
+/* ══ TOP NAV ══ */
+.snav { display: flex; background: #161412; border-bottom: 1px solid rgba(193,127,74,0.25); }
+.stab { flex: 1; padding: 13px 0 11px; border: none; background: transparent; color: rgba(255,255,255,0.32); font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.stab.active { color: var(--ch); border-bottom-color: var(--ch); }
+.stab:hover:not(.active) { color: rgba(255,255,255,0.55); }
+
+/* ══ SCREENS ══ */
+.scr { display: none; } .scr.active { display: block; }
+
+/* ══ RIDE HEADER ══ */
+.ride-hdr { display: flex; align-items: center; justify-content: space-between; padding: 10px 18px; background: #fff; border-bottom: 0.5px solid rgba(28,28,30,0.08); }
+.ride-name { font-family: 'Playfair Display', serif; font-size: 15px; font-weight: 600; color: var(--ch); }
+.ride-meta { font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase; color: rgba(28,28,30,0.38); margin-top: 1px; }
+
+/* ══ VIDEO AREA ══ */
+.vid-wrap { position: relative; width: 100%; aspect-ratio: 16/9; background: var(--vi); overflow: visible; }
+.vid-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+/* ══ OVERLAYS ══ */
+.legend-strip { position: absolute; top: 11px; left: 13px; background: rgba(7,0,10,0.8); border-radius: 22px; padding: 5px 14px; display: flex; gap: 14px; font-size: 10px; font-weight: 500; z-index: 5; pointer-events: none; }
+.leg-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+.ghost-btn { position: absolute; bottom: 52px; left: 13px; display: flex; align-items: center; gap: 7px; background: rgba(7,0,10,0.7); border: 1px solid rgba(255,255,255,0.18); border-radius: 22px; padding: 5px 13px 5px 9px; color: rgba(255,255,255,0.45); font-size: 10.5px; font-weight: 500; letter-spacing: 0.3px; cursor: pointer; z-index: 5; transition: all 0.2s; font-family: 'Inter', sans-serif; }
+.ghost-btn.on { background: rgba(170,205,240,0.15); border-color: rgba(170,205,240,0.6); color: rgba(200,225,250,0.9); }
+
+/* ══ METRIC PILL ══ */
+.mpill-pop { position: absolute; background: #fff; border-radius: 12px; padding: 12px 15px 10px; min-width: 190px; z-index: 20; pointer-events: none; display: none; box-shadow: 0 6px 24px rgba(0,0,0,0.18); transform: translateY(-112%); }
+.mpill-metric-name { font-size: 9.5px; text-transform: uppercase; letter-spacing: 1.1px; color: rgba(28,28,30,0.36); margin-bottom: 10px; }
+/* Two-column you/ideal row */
+.mpill-compare { display: grid; grid-template-columns: 1fr 1px 1fr; gap: 0; margin-bottom: 10px; }
+.mpill-col { text-align: center; padding: 0 10px; }
+.mpill-col:first-child { padding-left: 0; }
+.mpill-col:last-child { padding-right: 0; }
+.mpill-divider { background: rgba(28,28,30,0.1); align-self: stretch; }
+.mpill-col-lbl { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; color: rgba(28,28,30,0.3); margin-bottom: 3px; }
+.mpill-col-val { font-size: 19px; font-weight: 700; line-height: 1; margin-bottom: 1px; }
+.mpill-col-unit { font-size: 9.5px; color: rgba(28,28,30,0.38); }
+/* Distance bar */
+.mpill-bar-wrap { margin-bottom: 8px; }
+.mpill-bar-track { height: 5px; border-radius: 3px; background: rgba(28,28,30,0.09); position: relative; }
+.mpill-bar-fill { position: absolute; top: 0; left: 0; height: 100%; border-radius: 3px; }
+.mpill-bar-ideal { position: absolute; top: -3px; right: 0; width: 2px; height: 11px; background: rgba(28,28,30,0.22); border-radius: 1px; }
+.mpill-bar-lbl { display: flex; justify-content: space-between; margin-top: 3px; }
+.mpill-bar-lbl span { font-size: 8.5px; color: rgba(28,28,30,0.3); }
+/* Trend row */
+.mpill-trend { font-size: 10.5px; font-weight: 500; padding-top: 7px; border-top: 0.5px solid rgba(28,28,30,0.07); }
+.mpill-arrow { position: absolute; bottom: -6px; left: 16px; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid #fff; }
+
+/* ══ CONTROLS ══ */
+.ctrl-bar { position: absolute; bottom: 0; left: 0; right: 0; height: 44px; background: rgba(0,0,0,0.65); display: flex; align-items: center; padding: 0 13px; gap: 10px; z-index: 6; }
+.play-btn { width: 27px; height: 27px; border-radius: 50%; background: var(--ch); border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.time-lbl { font-size: 11px; color: rgba(255,255,255,0.45); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.scrub { flex: 1; position: relative; height: 4px; cursor: pointer; }
+.scrub-bg { position: absolute; inset: 0; background: rgba(255,255,255,0.14); border-radius: 2px; }
+.scrub-fill { position: absolute; top: 0; left: 0; height: 100%; border-radius: 2px; background: var(--ch); transition: width 0.09s linear; }
+.scrub-knob { position: absolute; top: 50%; width: 13px; height: 13px; background: #fff; border: 2px solid var(--ch); border-radius: 50%; transform: translate(-50%, -50%); transition: left 0.09s linear; }
+
+/* ══ SESSION TIMELINE ══ */
+.tl-section { background: var(--pa); padding: 12px 17px 15px; border-top: 0.5px solid rgba(28,28,30,0.07); }
+.tl-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.tl-label { font-size: 10px; font-weight: 600; letter-spacing: 1.4px; text-transform: uppercase; color: rgba(28,28,30,0.35); }
+.ribbon-area { position: relative; padding-top: 20px; margin-bottom: 13px; cursor: pointer; }
+.ribbon { height: 8px; border-radius: 4px; background: linear-gradient(to right, var(--col-ideal) 0% 14%, var(--col-good) 14% 28%, var(--col-focus) 28% 48%, var(--col-good) 48% 65%, var(--col-good) 65% 78%, var(--col-ideal) 78% 88%, var(--col-good) 88% 100%); opacity: 0.8; position: relative; }
+.ribbon-knob { position: absolute; top: 50%; width: 14px; height: 14px; background: #fff; border: 2px solid var(--ch); border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 1px 5px rgba(0,0,0,0.4); z-index: 2; transition: left 0.09s linear; }
+.flag-marker { position: absolute; top: 0; cursor: pointer; transform: translateX(-50%); }
+.flag-label { font-size: 9px; font-weight: 600; color: rgba(255,255,255,0.9); white-space: nowrap; background: rgba(0,0,0,0.72); padding: 2px 6px; border-radius: 4px; position: absolute; top: -20px; left: 50%; transform: translateX(-50%); letter-spacing: 0.3px; opacity: 0; transition: opacity 0.15s; pointer-events: none; }
+.flag-marker:hover .flag-label { opacity: 1; }
+.sparks-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.spark-item { text-align: center; }
+.spark-name { font-size: 9.5px; font-weight: 600; letter-spacing: 0.8px; text-transform: uppercase; color: rgba(28,28,30,0.36); margin-bottom: 2px; }
+
+/* ══ CADENCE STRIP ══ */
+.cad-strip { border-top: 0.5px solid rgba(28,28,30,0.07); padding: 9px 17px; display: flex; align-items: flex-start; gap: 9px; background: #fff; }
+.cad-pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--cg); margin-top: 5px; flex-shrink: 0; animation: cadPulse 2.4s ease-in-out infinite; }
+
+/* ══ RIDE REPORT (scroll) ══ */
+.rr-scroll { overflow-y: auto; max-height: 680px; background: var(--pa); }
+
+/* SECTION DIVIDERS */
+.rr-section { padding: 28px 22px; border-bottom: 0.5px solid rgba(28,28,30,0.07); }
+.rr-section:last-child { border-bottom: none; }
+.rr-sec-label { font-size: 10px; font-weight: 600; letter-spacing: 2px; text-transform: uppercase; color: var(--cg); margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+.rr-sec-label::after { content: ''; flex: 1; height: 1px; background: rgba(193,127,74,0.2); }
+
+/* DEBRIEF */
+.debrief-body { max-width: 520px; margin: 0 auto; text-align: center; }
+.mono-c { width: 40px; height: 40px; border-radius: 50%; background: var(--cg); color: #fff; font-family: 'Playfair Display', serif; font-size: 20px; font-weight: 700; display: flex; align-items: center; justify-content: center; margin: 0 auto 18px; }
+.debrief-para { font-family: 'Playfair Display', serif; font-style: italic; font-size: 14px; color: var(--na); line-height: 1.92; margin-bottom: 20px; }
+.d-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-bottom: 20px; }
+.d-chip { font-size: 11px; font-weight: 500; padding: 5px 13px; border-radius: 6px; }
+.cad-inp { width: 100%; height: 42px; border: 1px solid rgba(193,127,74,0.5); border-radius: 21px; padding: 0 18px; font-size: 12.5px; font-family: 'Inter', sans-serif; color: #aaa; background: rgba(255,255,255,0.6); outline: none; }
+.cad-inp:focus { border-color: var(--ch); color: var(--nk); }
+
+/* FRAMES */
+.frames-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.mframe { border-radius: 10px; overflow: hidden; background: #fff; box-shadow: 0 2px 12px rgba(0,0,0,0.07); }
+.mframe-vid { position: relative; aspect-ratio: 16/9; background: #0A0608; }
+.mframe-hdr { padding: 9px 13px; font-size: 11.5px; font-weight: 600; }
+.mframe-pills { display: flex; gap: 6px; flex-wrap: wrap; padding: 6px 13px 10px; }
+.fpill { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; background: var(--na); color: #fff; font-size: 10px; font-weight: 500; border-radius: 10px; }
+.jump-link { display: block; padding: 9px 13px; font-size: 11px; color: var(--cg); font-weight: 500; cursor: pointer; background: none; border: none; font-family: 'Inter', sans-serif; width: 100%; text-align: left; border-top: 0.5px solid rgba(28,28,30,0.07); }
+.jump-link:hover { text-decoration: underline; }
+
+/* COMPENSATION CHAIN — 3 layers */
+.chain-container { display: flex; flex-direction: column; gap: 0; }
+.chain-layer { display: flex; align-items: stretch; gap: 0; position: relative; }
+.chain-layer::before { content: ''; position: absolute; left: 28px; top: 100%; width: 2px; height: 20px; background: rgba(28,28,30,0.12); z-index: 1; }
+.chain-layer:last-child::before { display: none; }
+.chain-num { width: 56px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; padding-top: 16px; }
+.chain-circle { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-family: 'Inter', sans-serif; font-size: 12px; font-weight: 700; color: #fff; flex-shrink: 0; }
+.chain-connector { width: 2px; flex: 1; background: rgba(28,28,30,0.1); margin: 4px 0; }
+.chain-body { flex: 1; padding: 14px 0 14px 0; border-bottom: 0.5px solid rgba(28,28,30,0.06); }
+.chain-layer:last-child .chain-body { border-bottom: none; }
+.chain-title { font-size: 12.5px; font-weight: 600; color: var(--nk); margin-bottom: 4px; }
+.chain-sub { font-size: 11.5px; color: rgba(28,28,30,0.5); margin-bottom: 10px; line-height: 1.5; }
+.chain-rq { display: flex; flex-wrap: wrap; gap: 6px; }
+.rq-tag { font-size: 10px; font-weight: 500; padding: 3px 10px; border-radius: 12px; border: 1px solid; display: flex; align-items: center; gap: 5px; }
+.chain-arrow { position: absolute; left: 28px; bottom: -12px; transform: translateX(-50%); font-size: 11px; color: rgba(28,28,30,0.3); z-index: 2; }
+.chain-insight { background: rgba(44,62,80,0.04); border: 1px solid rgba(44,62,80,0.12); border-radius: 10px; padding: 14px 16px; margin-top: 18px; }
+
+/* ══ INSIGHTS ══ */
+.ins-wrap { padding: 20px 18px 28px; }
+.ins-sec { margin-bottom: 22px; }
+.ins-sec-hdr { font-size: 10px; font-weight: 600; letter-spacing: 2px; text-transform: uppercase; color: var(--cg); margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+.ins-sec-hdr::after { content: ''; flex: 1; height: 1px; background: rgba(193,127,74,0.2); }
+
+/* CADENCE AGGREGATE */
+.cad-agg { background: #fff; border-radius: 12px; padding: 18px 20px; border-left: 3px solid var(--cg); box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
+.cad-agg-ttl { font-size: 10px; font-weight: 600; letter-spacing: 1.3px; text-transform: uppercase; color: var(--cg); margin-bottom: 9px; display: flex; align-items: center; gap: 7px; }
+.cad-agg-txt { font-family: 'Playfair Display', serif; font-style: italic; font-size: 13.5px; color: var(--na); line-height: 1.88; }
+
+/* RIDE SCORE CHART */
+.chart-card { background: #fff; border-radius: 12px; padding: 17px 19px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
+.chart-hdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.chart-ttl { font-size: 13px; font-weight: 600; color: var(--nk); }
+.trend-badge { font-size: 10px; font-weight: 600; padding: 3px 10px; border-radius: 9px; background: rgba(193,127,74,0.11); color: var(--cg); }
+
+/* BIOMECHANICS MINI BARS */
+.mbar-row { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; }
+.mbar-lbl { width: 88px; font-size: 10px; font-weight: 600; letter-spacing: 0.9px; text-transform: uppercase; color: var(--na); text-align: right; flex-shrink: 0; }
+.mbars { display: flex; gap: 3px; align-items: flex-end; height: 28px; flex: 1; }
+.mbar { width: 14px; border-radius: 2px; }
+.mbar.g { background: var(--col-ideal); } .mbar.a { background: var(--col-good); } .mbar.r { background: var(--col-focus); }
+.bar-legend { display: flex; gap: 12px; margin-top: 10px; padding-top: 10px; border-top: 0.5px solid rgba(28,28,30,0.07); }
+.bl-item { font-size: 10px; color: #888; display: flex; align-items: center; gap: 5px; }
+.bl-swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+
+/* RIDING QUALITY */
+.rq-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.rq-card { background: #fff; border-radius: 10px; padding: 13px 14px; box-shadow: 0 1px 8px rgba(0,0,0,0.06); }
+.rq-name { font-size: 11.5px; font-weight: 600; color: var(--na); margin-bottom: 5px; }
+.rq-stage { font-size: 10px; font-weight: 500; letter-spacing: 0.5px; padding: 3px 9px; border-radius: 8px; display: inline-block; margin-bottom: 8px; }
+.rq-bar-bg { height: 4px; border-radius: 2px; background: rgba(28,28,30,0.09); }
+.rq-bar-fill { height: 100%; border-radius: 2px; }
+.rq-note { font-size: 10.5px; color: rgba(28,28,30,0.42); margin-top: 6px; line-height: 1.5; }
+/* Stage colors */
+.stage-e { background: rgba(193,127,74,0.12); color: #8B5E36; }
+.stage-i { background: rgba(232,168,87,0.18); color: #7A5814; }
+.stage-d { background: rgba(91,158,86,0.14); color: #3A6B37; }
+.stage-c { background: rgba(91,158,86,0.25); color: #2A5228; }
+.stage-m { background: rgba(44,62,80,0.14); color: var(--na); }
+
+/* READINESS */
+.ready-card { background: var(--na); border-radius: 12px; padding: 20px 22px; }
+.ready-fill { height: 100%; border-radius: 3px; background: linear-gradient(to right, var(--cg), var(--ch)); }
+
+/* ══ ANIMATIONS ══ */
+@keyframes cadPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.28; } }
+@keyframes pulseRing { 0%, 100% { r: 10; opacity: 0.5; } 50% { r: 17; opacity: 0.08; } }
+@keyframes ghostIn { from { opacity: 0; } to { opacity: 1; } }
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- ══ NAV ══ -->
+<nav class="snav">
+  <button class="stab active" data-s="playback" onclick="goScreen('playback')">
+    <svg width="11" height="11" viewBox="0 0 11 11"><polygon points="2,1 10,5.5 2,10" fill="currentColor"/></svg>Ride
+  </button>
+  <button class="stab" data-s="report" onclick="goScreen('report')">
+    <svg width="11" height="11" viewBox="0 0 11 11"><rect x="1" y="4" width="9" height="1.2" rx=".6" fill="currentColor"/><rect x="1" y="6.5" width="7" height="1.2" rx=".6" fill="currentColor"/><rect x="1" y="1.5" width="9" height="1.2" rx=".6" fill="currentColor"/></svg>Ride Report
+  </button>
+  <button class="stab" data-s="insights" onclick="goScreen('insights')">
+    <svg width="11" height="11" viewBox="0 0 11 11"><polyline points="1,8 4,4.5 6.5,6 10,1.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>Insights
+  </button>
+</nav>
+
+<!-- ══════════════════════════
+     SCREEN 1 — RIDE / PLAYBACK
+══════════════════════════ -->
+<div id="scr-playback" class="scr active">
+  <div class="ride-hdr">
+    <div>
+      <div class="ride-name">Allegra · Dressage</div>
+      <div class="ride-meta">March 16 · 3:10 min · Analysed</div>
+    </div>
+    <svg width="46" height="46" viewBox="0 0 46 46">
+      <circle cx="23" cy="23" r="18" fill="none" stroke="rgba(193,127,74,0.15)" stroke-width="3"/>
+      <circle cx="23" cy="23" r="18" fill="none" stroke="#C17F4A" stroke-width="3"
+        stroke-dasharray="84.8 113.1" stroke-linecap="round" transform="rotate(-90 23 23)"/>
+      <text x="23" y="27.5" text-anchor="middle" fill="#D4AF76" font-family="'Playfair Display',serif" font-size="12" font-weight="600">74</text>
+    </svg>
+  </div>
+
+  <!-- VIDEO -->
+  <div class="vid-wrap" id="vid-wrap">
+
+    <!-- Arena perspective lines -->
+    <svg class="vid-svg" viewBox="0 0 800 450" style="opacity:.05"><line x1="400" y1="200" x2="0" y2="450" stroke="#fff" stroke-width="1"/><line x1="400" y1="200" x2="800" y2="450" stroke="#fff" stroke-width="1"/><line x1="0" y1="340" x2="800" y2="340" stroke="#fff" stroke-width="0.8"/></svg>
+
+    <!-- Horse silhouette -->
+    <svg class="vid-svg" viewBox="0 0 800 450" style="opacity:.07"><ellipse cx="440" cy="312" rx="115" ry="44" fill="#fff"/><path d="M548,268 Q568,238 570,216 Q572,196 559,187 Q546,179 534,192 Q525,206 530,229 Q536,253 548,268Z" fill="#fff"/><rect x="358" y="348" width="11" height="60" rx="4" fill="#fff"/><rect x="402" y="352" width="11" height="56" rx="4" fill="#fff"/><rect x="478" y="348" width="11" height="60" rx="4" fill="#fff"/><rect x="520" y="352" width="11" height="56" rx="4" fill="#fff"/><path d="M260,278 Q234,306 240,336 Q245,360 228,374" fill="none" stroke="#fff" stroke-width="11" stroke-linecap="round"/></svg>
+
+    <!-- SKELETON SVG -->
+    <svg id="skel" class="vid-svg" viewBox="0 0 800 450" style="overflow:visible">
+
+      <!-- GHOST layer (hidden) -->
+      <g id="ghost" style="display:none; animation:ghostIn .25s ease">
+        <line x1="458" y1="76" x2="452" y2="138" stroke="rgba(180,215,250,.6)" stroke-width="2.5" stroke-dasharray="7,4" stroke-linecap="round"/>
+        <line x1="452" y1="138" x2="449" y2="238" stroke="rgba(180,215,250,.6)" stroke-width="2.5" stroke-dasharray="7,4" stroke-linecap="round"/>
+        <line x1="452" y1="138" x2="475" y2="182" stroke="rgba(180,215,250,.6)" stroke-width="2.5" stroke-dasharray="7,4" stroke-linecap="round"/>
+        <line x1="475" y1="182" x2="508" y2="202" stroke="rgba(180,215,250,.6)" stroke-width="2.5" stroke-dasharray="7,4" stroke-linecap="round"/>
+        <line x1="449" y1="238" x2="420" y2="316" stroke="rgba(180,215,250,.6)" stroke-width="2.5" stroke-dasharray="7,4" stroke-linecap="round"/>
+        <line x1="420" y1="316" x2="400" y2="384" stroke="rgba(180,215,250,.6)" stroke-width="2.5" stroke-dasharray="7,4" stroke-linecap="round"/>
+        <line x1="400" y1="384" x2="390" y2="400" stroke="rgba(180,215,250,.6)" stroke-width="2.5" stroke-dasharray="7,4" stroke-linecap="round"/>
+        <!-- Gap annotation -->
+        <path d="M449,224 Q455,211 464,224" fill="none" stroke="rgba(255,255,255,.7)" stroke-width="1.5"/>
+        <rect x="466" y="211" width="28" height="15" rx="7.5" fill="rgba(255,255,255,.95)"/>
+        <text x="480" y="222" text-anchor="middle" fill="#1C1C1E" font-family="Inter,sans-serif" font-size="8.5" font-weight="700">+3°</text>
+      </g>
+
+      <!-- AURA skeleton — 3-color semantic system -->
+      <!-- Head–shoulder: ideal (green) -->
+      <line x1="462" y1="76" x2="456" y2="138" stroke="var(--col-ideal)" stroke-width="4" stroke-linecap="round"/>
+      <!-- Shoulder–core: working (amber) — slight forward lean -->
+      <line x1="456" y1="138" x2="453" y2="242" stroke="var(--col-good)" stroke-width="4" stroke-linecap="round"/>
+      <!-- Shoulder–elbow: ideal -->
+      <line x1="456" y1="138" x2="479" y2="184" stroke="var(--col-ideal)" stroke-width="4" stroke-linecap="round"/>
+      <!-- Elbow–wrist: focus (rein asymmetry) -->
+      <line x1="479" y1="184" x2="514" y2="206" stroke="var(--col-focus)" stroke-width="4" stroke-linecap="round"/>
+      <!-- Core–knee: working -->
+      <line x1="453" y1="242" x2="424" y2="320" stroke="var(--col-good)" stroke-width="4" stroke-linecap="round"/>
+      <!-- Knee–heel: working -->
+      <line x1="424" y1="320" x2="404" y2="388" stroke="var(--col-good)" stroke-width="4" stroke-linecap="round"/>
+      <!-- Heel: ideal -->
+      <line x1="404" y1="388" x2="394" y2="402" stroke="var(--col-ideal)" stroke-width="4" stroke-linecap="round"/>
+
+      <!-- Joints -->
+      <g class="joint" data-id="head" data-px="57.5" data-py="14" onclick="tapJoint(this)" style="cursor:pointer">
+        <circle cx="462" cy="76" r="8" fill="none" stroke="var(--col-ideal)" stroke-width="1.5" opacity=".5"/>
+        <circle cx="462" cy="76" r="4.5" fill="#fff"/>
+      </g>
+      <g class="joint" data-id="shoulder" data-px="57" data-py="30.7" onclick="tapJoint(this)" style="cursor:pointer">
+        <circle cx="456" cy="138" r="8" fill="none" stroke="var(--col-ideal)" stroke-width="1.5" opacity=".5"/>
+        <circle cx="456" cy="138" r="4.5" fill="#fff"/>
+      </g>
+      <g class="joint" data-id="core" data-px="56.6" data-py="53.8" onclick="tapJoint(this)" style="cursor:pointer">
+        <!-- Pulse ring for flagged joint -->
+        <circle cx="453" cy="242" r="8" fill="none" stroke="var(--col-good)" stroke-width="1.5" opacity=".5"/>
+        <circle cx="453" cy="242" r="4.5" fill="#fff"/>
+        <!-- Animated ring -->
+        <circle cx="453" cy="242" r="13" fill="none" stroke="var(--col-good)" stroke-width="1" opacity=".35">
+          <animate attributeName="r" values="9;16;9" dur="2.2s" repeatCount="indefinite"/>
+          <animate attributeName="opacity" values=".4;0;.4" dur="2.2s" repeatCount="indefinite"/>
+        </circle>
+      </g>
+      <g class="joint" data-id="elbow" data-px="59.9" data-py="40.9" onclick="tapJoint(this)" style="cursor:pointer">
+        <circle cx="479" cy="184" r="8" fill="none" stroke="var(--col-ideal)" stroke-width="1.5" opacity=".5"/>
+        <circle cx="479" cy="184" r="4.5" fill="#fff"/>
+      </g>
+      <g class="joint" data-id="reins" data-px="64.3" data-py="45.8" onclick="tapJoint(this)" style="cursor:pointer">
+        <circle cx="514" cy="206" r="8" fill="none" stroke="var(--col-focus)" stroke-width="1.5" opacity=".5"/>
+        <circle cx="514" cy="206" r="4.5" fill="#fff"/>
+        <circle cx="514" cy="206" r="13" fill="none" stroke="var(--col-focus)" stroke-width="1" opacity=".35">
+          <animate attributeName="r" values="9;16;9" dur="1.8s" repeatCount="indefinite"/>
+          <animate attributeName="opacity" values=".5;0;.5" dur="1.8s" repeatCount="indefinite"/>
+        </circle>
+      </g>
+      <g class="joint" data-id="knee" data-px="53" data-py="71.1" onclick="tapJoint(this)" style="cursor:pointer">
+        <circle cx="424" cy="320" r="8" fill="none" stroke="var(--col-good)" stroke-width="1.5" opacity=".5"/>
+        <circle cx="424" cy="320" r="4.5" fill="#fff"/>
+      </g>
+      <g class="joint" data-id="heel" data-px="50.5" data-py="86.2" onclick="tapJoint(this)" style="cursor:pointer">
+        <circle cx="404" cy="388" r="8" fill="none" stroke="var(--col-ideal)" stroke-width="1.5" opacity=".5"/>
+        <circle cx="404" cy="388" r="4.5" fill="#fff"/>
+      </g>
+    </svg>
+
+    <!-- Legend (improved) -->
+    <div class="legend-strip">
+      <span><span class="leg-dot" style="background:var(--col-ideal)"></span><span style="color:rgba(255,255,255,.78)">On target</span></span>
+      <span><span class="leg-dot" style="background:var(--col-good)"></span><span style="color:rgba(255,255,255,.78)">Working</span></span>
+      <span><span class="leg-dot" style="background:var(--col-focus)"></span><span style="color:rgba(255,255,255,.78)">Needs focus</span></span>
+    </div>
+
+    <!-- Ghost toggle -->
+    <button id="gbtn" class="ghost-btn" onclick="toggleGhost()">
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1.4" stroke-dasharray="3,2.2"/><circle cx="6" cy="6" r="1.6" fill="currentColor"/></svg>
+      <span id="gtxt">Ghost Rider</span>
+    </button>
+
+    <!-- Metric pill popup -->
+    <div id="mpill" class="mpill-pop">
+      <div class="mpill-metric-name" id="p-name"></div>
+      <div class="mpill-compare">
+        <div class="mpill-col">
+          <div class="mpill-col-lbl">You</div>
+          <div class="mpill-col-val" id="p-you"></div>
+          <div class="mpill-col-unit" id="p-you-unit"></div>
+        </div>
+        <div class="mpill-divider"></div>
+        <div class="mpill-col">
+          <div class="mpill-col-lbl">Ideal</div>
+          <div class="mpill-col-val" id="p-ideal" style="color:rgba(28,28,30,0.32)"></div>
+          <div class="mpill-col-unit" id="p-ideal-unit" style="color:rgba(28,28,30,0.28)"></div>
+        </div>
+      </div>
+      <div class="mpill-bar-wrap">
+        <div class="mpill-bar-track">
+          <div class="mpill-bar-fill" id="p-fill"></div>
+          <div class="mpill-bar-ideal" id="p-ideal-marker" style="display:none"></div>
+        </div>
+        <div class="mpill-bar-lbl"><span id="p-bar-lo"></span><span id="p-bar-hi"></span></div>
+      </div>
+      <div class="mpill-trend" id="p-trend"></div>
+      <div class="mpill-arrow"></div>
+    </div>
+
+    <!-- Playback controls -->
+    <div class="ctrl-bar" onclick="event.stopPropagation()">
+      <button class="play-btn" id="pbtn" onclick="togglePlay()">
+        <svg id="pico" width="8" height="10" viewBox="0 0 8 10"><path d="M0,0L8,5L0,10Z" fill="#161412"/></svg>
+        <svg id="paico" style="display:none" width="8" height="10" viewBox="0 0 8 10"><rect x="0" y="0" width="2.5" height="10" fill="#161412"/><rect x="5.5" y="0" width="2.5" height="10" fill="#161412"/></svg>
+      </button>
+      <span class="time-lbl" id="tlbl">1:24 / 3:10</span>
+      <div class="scrub" id="scrub" onclick="scrubClick(event)">
+        <div class="scrub-bg"></div>
+        <div class="scrub-fill" id="sfill" style="width:44%"></div>
+        <div class="scrub-knob" id="sknob" style="left:44%"></div>
+      </div>
+    </div>
+  </div><!-- /vid-wrap -->
+
+  <!-- Session timeline -->
+  <div class="tl-section">
+    <div class="tl-top">
+      <span class="tl-label">Session arc</span>
+      <span style="font-size:10.5px;color:#aaa">4 flagged moments</span>
+    </div>
+    <div class="ribbon-area" id="rib-area" onclick="ribClick(event)">
+      <!-- Flag 1: Best posture 0:30 = 16% -->
+      <div class="flag-marker" style="left:16%" onclick="seekTo(16,$event)" id="f1">
+        <svg width="10" height="14" viewBox="0 0 10 14"><polygon points="5,0 10,5 5,10 0,5" fill="var(--col-ideal)"/></svg>
+        <div class="flag-label" style="background:var(--col-ideal)">✓ Best posture</div>
+      </div>
+      <!-- Flag 2: Rein asymmetry 1:24 = 44% -->
+      <div class="flag-marker" style="left:44%" onclick="seekTo(44,$event)" id="f2">
+        <svg width="10" height="14" viewBox="0 0 10 14"><polygon points="5,0 10,5 5,10 0,5" fill="var(--col-focus)"/></svg>
+        <div class="flag-label" style="background:var(--col-focus)">⚠ Rein +5°</div>
+      </div>
+      <!-- Flag 3: Core lean 2:18 = 74% -->
+      <div class="flag-marker" style="left:74%" onclick="seekTo(74,$event)" id="f3">
+        <svg width="10" height="14" viewBox="0 0 10 14"><polygon points="5,0 10,5 5,10 0,5" fill="var(--col-good)"/></svg>
+        <div class="flag-label" style="background:var(--col-good)">→ Core +3° lean</div>
+      </div>
+      <!-- Flag 4: Recovery 2:45 = 87% -->
+      <div class="flag-marker" style="left:87%" onclick="seekTo(87,$event)" id="f4">
+        <svg width="10" height="14" viewBox="0 0 10 14"><polygon points="5,0 10,5 5,10 0,5" fill="var(--col-ideal)"/></svg>
+        <div class="flag-label" style="background:var(--col-ideal)">✓ Recovery</div>
+      </div>
+      <div class="ribbon">
+        <div class="ribbon-knob" id="rknob" style="left:44%"></div>
+      </div>
+    </div>
+    <div class="sparks-row">
+      <div class="spark-item"><div class="spark-name">Core</div><svg viewBox="0 0 80 26" style="width:100%;height:18px" preserveAspectRatio="none"><path d="M0,21 L10,19 L20,16 L30,17 L40,14 L50,15 L60,13 L70,14 L80,13" fill="none" stroke="var(--col-good)" stroke-width="1.5"/></svg></div>
+      <div class="spark-item"><div class="spark-name">Leg</div><svg viewBox="0 0 80 26" style="width:100%;height:18px" preserveAspectRatio="none"><path d="M0,23 L10,21 L20,17 L30,12 L40,9 L50,7 L60,7 L70,6 L80,5" fill="none" stroke="var(--col-ideal)" stroke-width="1.5"/></svg></div>
+      <div class="spark-item"><div class="spark-name">Reins</div><svg viewBox="0 0 80 26" style="width:100%;height:18px" preserveAspectRatio="none"><path d="M0,10 L10,13 L20,9 L30,17 L40,19 L50,15 L60,21 L70,17 L80,18" fill="none" stroke="var(--col-focus)" stroke-width="1.5"/></svg></div>
+      <div class="spark-item"><div class="spark-name">Pelvis</div><svg viewBox="0 0 80 26" style="width:100%;height:18px" preserveAspectRatio="none"><path d="M0,19 L10,17 L20,13 L30,10 L40,8 L50,6 L60,6 L70,4 L80,4" fill="none" stroke="var(--col-ideal)" stroke-width="1.5"/></svg></div>
+      <div class="spark-item"><div class="spark-name">Shoulder</div><svg viewBox="0 0 80 26" style="width:100%;height:18px" preserveAspectRatio="none"><path d="M0,15 L10,15 L20,14 L30,15 L40,13 L50,15 L60,13 L70,14 L80,13" fill="none" stroke="var(--col-good)" stroke-width="1.5"/></svg></div>
+    </div>
+  </div>
+
+  <!-- Cadence hint -->
+  <div class="cad-strip">
+    <span class="cad-pulse"></span>
+    <p style="font-size:12px;font-style:italic;color:rgba(28,28,30,0.48);line-height:1.62;margin:0">
+      <span style="color:#C17F4A;font-style:normal;font-weight:600">Cadence</span> — Tap a joint for metrics. Hover a flag to see why it was marked. Toggle Ghost Rider to compare against ideal alignment.
+    </p>
+  </div>
+</div><!-- /playback -->
+
+<!-- ══════════════════════════
+     SCREEN 2 — RIDE REPORT
+══════════════════════════ -->
+<div id="scr-report" class="scr">
+  <div class="ride-hdr">
+    <div>
+      <div class="ride-name">Allegra · March 16</div>
+      <div class="ride-meta">Ride Score 74 · ↑ +3 from last ride</div>
+    </div>
+    <button onclick="goScreen('playback')" style="font-size:11px;color:var(--cg);background:none;border:1px solid rgba(193,127,74,.4);border-radius:12px;padding:5px 12px;cursor:pointer;font-family:'Inter',sans-serif;font-weight:500;">← Video</button>
+  </div>
+  <div class="rr-scroll" id="rr-scroll">
+
+    <!-- ① CADENCE DEBRIEF -->
+    <div class="rr-section">
+      <div class="rr-sec-label">① Cadence Debrief</div>
+      <div class="debrief-body">
+        <div class="mono-c">C</div>
+        <p class="debrief-para">Your pelvis follow reached a personal best today — 91 points. Core alignment improved 2° since last week and your lower leg is on a clear upward arc. The main opportunity is your right rein: a 5° hand asymmetry is affecting contact quality and creating tension through your transitions. Softening the right elbow in your next session should produce quick results.</p>
+        <div class="d-chips">
+          <span class="d-chip" style="background:#D4AF76">🏆 Pelvis 91 · PB</span>
+          <span class="d-chip" style="background:var(--gr-lt)">↑ Core improving</span>
+          <span class="d-chip" style="background:#E8A857">→ Right rein: focus area</span>
+        </div>
+        <input class="cad-inp" type="text" placeholder="Ask Cadence about this ride…">
+      </div>
+    </div>
+
+    <!-- ② BEST & WORST FRAMES -->
+    <div class="rr-section">
+      <div class="rr-sec-label">② Best &amp; Worst Frames</div>
+      <div class="frames-2col">
+        <!-- Best: 2:18 -->
+        <div class="mframe">
+          <div class="mframe-vid">
+            <svg style="position:absolute;inset:0;width:100%;height:100%;opacity:.07" viewBox="0 0 400 225" preserveAspectRatio="xMidYMid slice"><ellipse cx="215" cy="160" rx="58" ry="22" fill="#fff"/><path d="M270,137 Q282,121 283,111 Q284,101 277,96 Q270,92 263,99 Q258,107 260,119 Q264,131 270,137Z" fill="#fff"/></svg>
+            <svg style="position:absolute;inset:0;width:100%;height:100%;overflow:visible" viewBox="0 0 400 225">
+              <line x1="230" y1="38" x2="228" y2="68" stroke="var(--col-ideal)" stroke-width="3" stroke-linecap="round"/>
+              <line x1="228" y1="68" x2="226" y2="118" stroke="var(--col-ideal)" stroke-width="3" stroke-linecap="round"/>
+              <line x1="228" y1="68" x2="238" y2="90" stroke="var(--col-ideal)" stroke-width="3" stroke-linecap="round"/>
+              <line x1="238" y1="90" x2="253" y2="100" stroke="var(--col-ideal)" stroke-width="3" stroke-linecap="round"/>
+              <line x1="226" y1="118" x2="210" y2="158" stroke="var(--col-ideal)" stroke-width="3" stroke-linecap="round"/>
+              <line x1="210" y1="158" x2="200" y2="193" stroke="var(--col-ideal)" stroke-width="3" stroke-linecap="round"/>
+              <circle cx="228" cy="68" r="3.5" fill="#fff"/><circle cx="226" cy="118" r="3.5" fill="#fff"/>
+              <circle cx="253" cy="100" r="3.5" fill="#fff"/><circle cx="210" cy="158" r="3.5" fill="#fff"/>
+            </svg>
+            <div style="position:absolute;top:7px;right:9px;background:rgba(0,0,0,.62);color:rgba(255,255,255,.7);font-size:9.5px;font-weight:500;padding:2px 7px;border-radius:6px">2:18</div>
+          </div>
+          <div class="mframe-hdr" style="color:var(--col-ideal);background:rgba(91,158,86,.08)">✦ Best moment</div>
+          <div class="mframe-pills">
+            <span class="fpill"><span style="width:5px;height:5px;border-radius:50%;background:var(--col-ideal);flex-shrink:0"></span>All joints on target</span>
+          </div>
+          <button class="jump-link" onclick="jumpTo(70)">Watch in playback →</button>
+        </div>
+        <!-- Focus: 1:24 -->
+        <div class="mframe">
+          <div class="mframe-vid">
+            <svg style="position:absolute;inset:0;width:100%;height:100%;opacity:.07" viewBox="0 0 400 225" preserveAspectRatio="xMidYMid slice"><ellipse cx="215" cy="160" rx="58" ry="22" fill="#fff"/><path d="M270,137 Q282,121 283,111 Q284,101 277,96 Q270,92 263,99 Q258,107 260,119 Q264,131 270,137Z" fill="#fff"/></svg>
+            <svg style="position:absolute;inset:0;width:100%;height:100%;overflow:visible" viewBox="0 0 400 225">
+              <line x1="230" y1="38" x2="228" y2="68" stroke="var(--col-ideal)" stroke-width="3" stroke-linecap="round"/>
+              <line x1="228" y1="68" x2="236" y2="118" stroke="var(--col-good)" stroke-width="3" stroke-linecap="round"/>
+              <line x1="228" y1="68" x2="242" y2="90" stroke="var(--col-ideal)" stroke-width="3" stroke-linecap="round"/>
+              <line x1="242" y1="90" x2="270" y2="104" stroke="var(--col-focus)" stroke-width="3" stroke-linecap="round"/>
+              <line x1="236" y1="118" x2="226" y2="158" stroke="var(--col-good)" stroke-width="3" stroke-linecap="round"/>
+              <line x1="226" y1="158" x2="222" y2="193" stroke="var(--col-good)" stroke-width="3" stroke-linecap="round"/>
+              <circle cx="270" cy="104" r="3.5" fill="#fff"/>
+              <circle cx="270" cy="104" r="9" fill="none" stroke="var(--col-focus)" stroke-width="1">
+                <animate attributeName="r" values="5;12;5" dur="1.6s" repeatCount="indefinite"/>
+                <animate attributeName="opacity" values=".6;0;.6" dur="1.6s" repeatCount="indefinite"/>
+              </circle>
+            </svg>
+            <div style="position:absolute;top:7px;right:9px;background:rgba(0,0,0,.62);color:rgba(255,255,255,.7);font-size:9.5px;font-weight:500;padding:2px 7px;border-radius:6px">1:24</div>
+          </div>
+          <div class="mframe-hdr" style="color:var(--col-focus);background:rgba(193,74,42,.07)">◎ Focus moment</div>
+          <div class="mframe-pills">
+            <span class="fpill"><span style="width:5px;height:5px;border-radius:50%;background:var(--col-focus);flex-shrink:0"></span>Rein +5° asymmetry</span>
+          </div>
+          <button class="jump-link" onclick="jumpTo(44)">Watch in playback →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ③ COMPENSATION CHAIN with RidingQuality -->
+    <div class="rr-section">
+      <div class="rr-sec-label">③ Compensation Chain</div>
+
+      <div class="chain-container">
+
+        <!-- LAYER 1: Biomechanics (root cause) -->
+        <div class="chain-layer">
+          <div class="chain-num">
+            <div class="chain-circle" style="background:var(--col-focus)">1</div>
+            <div class="chain-connector"></div>
+          </div>
+          <div class="chain-body">
+            <div style="font-size:9.5px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:rgba(28,28,30,.35);margin-bottom:5px">Biomechanics · Root cause</div>
+            <div class="chain-title">Lower leg bracing</div>
+            <div class="chain-sub">Rein Steadiness: 0.12 · Lower Leg Stability: 0.11 (above ideal)</div>
+            <div style="font-size:11px;color:rgba(28,28,30,.44);line-height:1.55;margin-bottom:10px">The lower leg pushes against the stirrup instead of absorbing the horse's movement. This propagates tension upward through the body.</div>
+            <div class="chain-rq">
+              <span class="rq-tag" style="border-color:rgba(193,74,42,.3);color:var(--col-focus);background:rgba(193,74,42,.06)">
+                <svg width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3.5" fill="var(--col-focus)"/></svg>
+                Contact ↓
+              </span>
+              <span class="rq-tag" style="border-color:rgba(232,168,87,.4);color:#8B5E14;background:rgba(232,168,87,.1)">
+                <svg width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3.5" fill="var(--col-good)"/></svg>
+                Rhythm — affected
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Arrow -->
+        <div style="display:flex;align-items:center;gap:0;margin:0 0 0 27px;padding:6px 0 6px 0">
+          <div style="width:2px;height:22px;background:rgba(28,28,30,.1)"></div>
+          <span style="color:rgba(28,28,30,.28);font-size:10px;margin-left:6px">propagates to →</span>
+        </div>
+
+        <!-- LAYER 2: Biomechanics (consequence) -->
+        <div class="chain-layer">
+          <div class="chain-num">
+            <div class="chain-circle" style="background:var(--col-good)">2</div>
+            <div class="chain-connector"></div>
+          </div>
+          <div class="chain-body">
+            <div style="font-size:9.5px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:rgba(28,28,30,.35);margin-bottom:5px">Biomechanics · Consequence</div>
+            <div class="chain-title">Hip stiffens — seat loses follow</div>
+            <div class="chain-sub">Pelvis Vertical Stability: 0.07 (bouncing vs absorbing)</div>
+            <div style="font-size:11px;color:rgba(28,28,30,.44);line-height:1.55;margin-bottom:10px">As the lower leg locks, the hip compensates by tightening rather than following the horse's swing. The seat becomes a blocker instead of a follower.</div>
+            <div class="chain-rq">
+              <span class="rq-tag" style="border-color:rgba(193,74,42,.3);color:var(--col-focus);background:rgba(193,74,42,.06)">
+                <svg width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3.5" fill="var(--col-focus)"/></svg>
+                Relaxation ↓
+              </span>
+              <span class="rq-tag" style="border-color:rgba(193,74,42,.3);color:var(--col-focus);background:rgba(193,74,42,.06)">
+                <svg width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3.5" fill="var(--col-focus)"/></svg>
+                Balance ↓
+              </span>
+              <span class="rq-tag" style="border-color:rgba(232,168,87,.4);color:#8B5E14;background:rgba(232,168,87,.1)">
+                <svg width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3.5" fill="var(--col-good)"/></svg>
+                Rhythm — affected
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Arrow -->
+        <div style="display:flex;align-items:center;gap:0;margin:0 0 0 27px;padding:6px 0 6px 0">
+          <div style="width:2px;height:22px;background:rgba(28,28,30,.1)"></div>
+          <span style="color:rgba(28,28,30,.28);font-size:10px;margin-left:6px">travels up to →</span>
+        </div>
+
+        <!-- LAYER 3: Downstream -->
+        <div class="chain-layer">
+          <div class="chain-num">
+            <div class="chain-circle" style="background:#D4AF76">3</div>
+          </div>
+          <div class="chain-body">
+            <div style="font-size:9.5px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:rgba(28,28,30,.35);margin-bottom:5px">Biomechanics · Downstream</div>
+            <div class="chain-title">Right shoulder drops +4°</div>
+            <div class="chain-sub">Shoulder Levelness: 0.06 · Upper Body Alignment: +4° lateral</div>
+            <div style="font-size:11px;color:rgba(28,28,30,.44);line-height:1.55;margin-bottom:10px">The torso tilts to compensate for asymmetric hip pressure, causing the shoulder to drop. This creates visible crookedness across the whole body.</div>
+            <div class="chain-rq">
+              <span class="rq-tag" style="border-color:rgba(193,74,42,.3);color:var(--col-focus);background:rgba(193,74,42,.06)">
+                <svg width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3.5" fill="var(--col-focus)"/></svg>
+                Straightness ↓
+              </span>
+              <span class="rq-tag" style="border-color:rgba(193,74,42,.3);color:var(--col-focus);background:rgba(193,74,42,.06)">
+                <svg width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3.5" fill="var(--col-focus)"/></svg>
+                Contact ↓
+              </span>
+              <span class="rq-tag" style="border-color:rgba(212,175,118,.5);color:#7A6020;background:rgba(212,175,118,.12)">
+                <svg width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3.5" fill="#D4AF76"/></svg>
+                Balance — held
+              </span>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /chain-container -->
+
+      <!-- Cadence chain insight -->
+      <div class="chain-insight">
+        <div style="font-size:9.5px;font-weight:600;letter-spacing:1.3px;text-transform:uppercase;color:var(--cg);margin-bottom:8px">Cadence · What to address first</div>
+        <p style="font-family:'Playfair Display',serif;font-style:italic;font-size:13px;color:var(--na);line-height:1.82">"One habit, three effects. Release the lower leg and the chain unwinds: the hip can follow again, the shoulder levels, and straightness returns. Start with a few minutes of two-point in your next warm-up to reset the lower leg."</p>
+        <div style="font-size:10px;color:rgba(28,28,30,.38);margin-top:8px;font-weight:500">— Cadence AI · Biomechanics → RidingQuality analysis</div>
+      </div>
+    </div>
+
+  </div><!-- /rr-scroll -->
+</div><!-- /report -->
+
+<!-- ══════════════════════════
+     SCREEN 3 — INSIGHTS
+══════════════════════════ -->
+<div id="scr-insights" class="scr">
+  <div class="ride-hdr">
+    <div>
+      <div class="ride-name">Your Progress</div>
+      <div class="ride-meta">Last 8 rides · Feb 17 – Mar 16</div>
+    </div>
+    <div style="text-align:right">
+      <div style="font-family:'Playfair Display',serif;font-size:20px;font-weight:600;color:var(--cg)">74</div>
+      <div style="font-size:9.5px;color:#aaa;letter-spacing:1px;text-transform:uppercase">Latest</div>
+    </div>
+  </div>
+
+  <div class="ins-wrap">
+
+    <!-- Cadence aggregate -->
+    <div class="ins-sec">
+      <div class="ins-sec-hdr">Cadence · Pattern insight</div>
+      <div class="cad-agg">
+        <div class="cad-agg-ttl"><span class="cad-pulse"></span>8 rides · Feb–Mar 2026</div>
+        <p class="cad-agg-txt">Your overall ride score has improved 8 points over 8 sessions — a consistent upward trajectory. Pelvis follow and lower leg are your strongest and most improving areas. Rein symmetry is your primary limiter: it has moved from consistently red to mostly amber, but Contact and Straightness cannot fully reach Consistent while the right rein asymmetry persists. Three focused sessions on right elbow softness could unlock a meaningful jump in both your score and your RidingQuality profile.</p>
+      </div>
+    </div>
+
+    <!-- Ride score trend -->
+    <div class="ins-sec">
+      <div class="ins-sec-hdr">Ride score</div>
+      <div class="chart-card">
+        <div class="chart-hdr">
+          <span class="chart-ttl">Score over 8 sessions</span>
+          <span class="trend-badge">↑ +8 pts total</span>
+        </div>
+        <svg viewBox="0 0 600 195" style="width:100%;height:auto;display:block" preserveAspectRatio="none">
+          <line x1="30" y1="20" x2="588" y2="20" stroke="rgba(0,0,0,.05)" stroke-dasharray="4,4"/>
+          <text x="24" y="24" text-anchor="end" font-size="9" fill="#ccc" font-family="Inter,sans-serif">100</text>
+          <line x1="30" y1="60" x2="588" y2="60" stroke="rgba(0,0,0,.05)" stroke-dasharray="4,4"/>
+          <text x="24" y="64" text-anchor="end" font-size="9" fill="#ccc" font-family="Inter,sans-serif">90</text>
+          <line x1="30" y1="100" x2="588" y2="100" stroke="rgba(0,0,0,.05)" stroke-dasharray="4,4"/>
+          <text x="24" y="104" text-anchor="end" font-size="9" fill="#ccc" font-family="Inter,sans-serif">80</text>
+          <line x1="30" y1="140" x2="588" y2="140" stroke="rgba(0,0,0,.05)" stroke-dasharray="4,4"/>
+          <text x="24" y="144" text-anchor="end" font-size="9" fill="#ccc" font-family="Inter,sans-serif">70</text>
+          <line x1="30" y1="180" x2="588" y2="180" stroke="rgba(0,0,0,.07)"/>
+          <text x="24" y="184" text-anchor="end" font-size="9" fill="#ccc" font-family="Inter,sans-serif">60</text>
+          <path d="M50,156 C75,148 98,139 120,144 C145,138 168,134 190,136 C214,140 236,145 260,148 C295,140 318,132 340,132 C364,126 388,123 410,123 C438,124 463,126 490,127 C516,124 542,122 568,122 L568,180 L50,180Z" fill="rgba(212,175,118,.07)"/>
+          <path d="M50,156 C75,148 98,139 120,144 C145,138 168,134 190,136 C214,140 236,145 260,148 C295,140 318,132 340,132 C364,126 388,123 410,123 C438,124 463,126 490,127 C516,124 542,122 568,122" fill="none" stroke="#D4AF76" stroke-width="2.5" stroke-linecap="round"/>
+          <line x1="50" y1="155" x2="568" y2="118" stroke="#C17F4A" stroke-width="1.5" stroke-dasharray="5,4" opacity=".45"/>
+          <circle cx="50" cy="156" r="3.5" fill="#D4AF76"/>
+          <circle cx="120" cy="144" r="3.5" fill="#D4AF76"/>
+          <circle cx="190" cy="136" r="3.5" fill="#D4AF76"/>
+          <circle cx="260" cy="148" r="3.5" fill="#D4AF76"/>
+          <circle cx="340" cy="132" r="3.5" fill="#D4AF76"/>
+          <circle cx="410" cy="123" r="3.5" fill="#D4AF76"/>
+          <circle cx="490" cy="127" r="3.5" fill="#D4AF76"/>
+          <circle cx="568" cy="122" r="7" fill="#C17F4A" stroke="#fff" stroke-width="2"/>
+          <text x="568" y="112" text-anchor="middle" font-size="12" font-weight="700" fill="#C17F4A" font-family="'Playfair Display',serif">74</text>
+          <text x="50" y="194" text-anchor="middle" font-size="8" fill="#bbb" font-family="Inter,sans-serif">Feb 17</text>
+          <text x="190" y="194" text-anchor="middle" font-size="8" fill="#bbb" font-family="Inter,sans-serif">Feb 25</text>
+          <text x="340" y="194" text-anchor="middle" font-size="8" fill="#bbb" font-family="Inter,sans-serif">Mar 5</text>
+          <text x="490" y="194" text-anchor="middle" font-size="8" fill="#bbb" font-family="Inter,sans-serif">Mar 13</text>
+          <text x="568" y="194" text-anchor="middle" font-size="8" fill="#C17F4A" font-family="Inter,sans-serif" font-weight="600">Mar 16</text>
+          <rect x="388" y="38" width="115" height="20" rx="10" fill="rgba(193,127,74,.11)"/>
+          <text x="445" y="52" text-anchor="middle" font-size="9.5" font-weight="600" fill="#C17F4A" font-family="Inter,sans-serif">↑ +1 pt / session</text>
+        </svg>
+      </div>
+    </div>
+
+    <!-- Biomechanics mini bars -->
+    <div class="ins-sec">
+      <div class="ins-sec-hdr">Biomechanics trends</div>
+      <div class="chart-card">
+        <div class="chart-hdr">
+          <span class="chart-ttl">Per-metric · 8 sessions</span>
+          <span style="font-size:10px;color:#aaa">each bar = 1 ride</span>
+        </div>
+        <div class="mbar-row"><span class="mbar-lbl">Core</span><div class="mbars"><div class="mbar a" style="height:10px"></div><div class="mbar a" style="height:13px"></div><div class="mbar a" style="height:16px"></div><div class="mbar a" style="height:11px"></div><div class="mbar a" style="height:18px"></div><div class="mbar g" style="height:22px"></div><div class="mbar g" style="height:20px"></div><div class="mbar g" style="height:25px"></div></div></div>
+        <div class="mbar-row"><span class="mbar-lbl">Lower Leg</span><div class="mbars"><div class="mbar a" style="height:15px"></div><div class="mbar a" style="height:17px"></div><div class="mbar g" style="height:20px"></div><div class="mbar a" style="height:16px"></div><div class="mbar g" style="height:20px"></div><div class="mbar g" style="height:22px"></div><div class="mbar a" style="height:18px"></div><div class="mbar g" style="height:22px"></div></div></div>
+        <div class="mbar-row"><span class="mbar-lbl">Reins</span><div class="mbars"><div class="mbar r" style="height:8px"></div><div class="mbar r" style="height:10px"></div><div class="mbar a" style="height:13px"></div><div class="mbar r" style="height:8px"></div><div class="mbar a" style="height:13px"></div><div class="mbar a" style="height:15px"></div><div class="mbar a" style="height:13px"></div><div class="mbar a" style="height:15px"></div></div></div>
+        <div class="mbar-row"><span class="mbar-lbl">Pelvis</span><div class="mbars"><div class="mbar g" style="height:20px"></div><div class="mbar g" style="height:22px"></div><div class="mbar g" style="height:24px"></div><div class="mbar g" style="height:22px"></div><div class="mbar g" style="height:24px"></div><div class="mbar g" style="height:26px"></div><div class="mbar g" style="height:24px"></div><div class="mbar g" style="height:26px"></div></div></div>
+        <div class="mbar-row" style="margin-bottom:0"><span class="mbar-lbl">Shoulder</span><div class="mbars"><div class="mbar r" style="height:9px"></div><div class="mbar a" style="height:13px"></div><div class="mbar a" style="height:15px"></div><div class="mbar a" style="height:13px"></div><div class="mbar a" style="height:16px"></div><div class="mbar g" style="height:18px"></div><div class="mbar a" style="height:16px"></div><div class="mbar g" style="height:20px"></div></div></div>
+        <div class="bar-legend">
+          <span class="bl-item"><span class="bl-swatch" style="background:var(--col-ideal)"></span>On target</span>
+          <span class="bl-item"><span class="bl-swatch" style="background:var(--col-good)"></span>Working</span>
+          <span class="bl-item"><span class="bl-swatch" style="background:var(--col-focus)"></span>Needs focus</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Riding Quality assessment -->
+    <div class="ins-sec">
+      <div class="ins-sec-hdr">Riding Quality</div>
+      <p style="font-size:12px;color:rgba(28,28,30,.45);margin-bottom:14px;line-height:1.6">How your riding looks from the outside — the dimensions a judge or trainer evaluates. Derived from your biomechanics data and trainer feedback.</p>
+      <div class="rq-grid">
+
+        <div class="rq-card">
+          <div class="rq-name">Rhythm</div>
+          <span class="rq-stage stage-d">Developing</span>
+          <div class="rq-bar-bg"><div class="rq-bar-fill" style="width:60%;background:var(--col-ideal)"></div></div>
+          <div class="rq-note">Trot tempo mostly consistent; slight irregularity at transitions linked to lower leg bracing.</div>
+        </div>
+
+        <div class="rq-card">
+          <div class="rq-name">Relaxation</div>
+          <span class="rq-stage stage-i">Inconsistent</span>
+          <div class="rq-bar-bg"><div class="rq-bar-fill" style="width:38%;background:var(--col-good)"></div></div>
+          <div class="rq-note">Hip stiffness in canter is reducing throughness. Improving with each session.</div>
+        </div>
+
+        <div class="rq-card">
+          <div class="rq-name">Contact</div>
+          <span class="rq-stage stage-i">Inconsistent</span>
+          <div class="rq-bar-bg"><div class="rq-bar-fill" style="width:42%;background:var(--col-good)"></div></div>
+          <div class="rq-note">Right rein asymmetry (5°) is the primary limiter. Left rein contact notably steadier.</div>
+        </div>
+
+        <div class="rq-card">
+          <div class="rq-name">Straightness</div>
+          <span class="rq-stage stage-i">Inconsistent</span>
+          <div class="rq-bar-bg"><div class="rq-bar-fill" style="width:35%;background:var(--col-focus)"></div></div>
+          <div class="rq-note">Shoulder drop (+4°) and rein asymmetry affecting straightness. Downstream from lower leg chain.</div>
+        </div>
+
+        <div class="rq-card">
+          <div class="rq-name">Balance</div>
+          <span class="rq-stage stage-d">Developing</span>
+          <div class="rq-bar-bg"><div class="rq-bar-fill" style="width:58%;background:var(--col-ideal)"></div></div>
+          <div class="rq-note">Overall balance improving steadily. Pelvis follow PB today contributed meaningfully.</div>
+        </div>
+
+        <div class="rq-card">
+          <div class="rq-name">Impulsion</div>
+          <span class="rq-stage stage-e">Emerging</span>
+          <div class="rq-bar-bg"><div class="rq-bar-fill" style="width:22%;background:var(--col-good)"></div></div>
+          <div class="rq-note">Too early to assess reliably without trainer rubric scores. More data needed.</div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Readiness -->
+    <div class="ins-sec" style="margin-bottom:0">
+      <div class="ins-sec-hdr">Progression signal</div>
+      <div class="ready-card">
+        <div style="font-size:10px;font-weight:600;letter-spacing:1.4px;text-transform:uppercase;color:rgba(255,255,255,.35);margin-bottom:5px">Dressage · Current Path</div>
+        <div style="font-family:'Playfair Display',serif;font-size:17px;font-weight:600;color:#fff;margin-bottom:4px">Intro Level → Training Level</div>
+        <div style="font-size:12px;color:rgba(255,255,255,.42);margin-bottom:16px">Intro Level complete · Next milestone: Training Level Test 1</div>
+        <div style="height:5px;border-radius:3px;background:rgba(255,255,255,.13);margin-bottom:5px">
+          <div class="ready-fill" style="width:68%"></div>
+        </div>
+        <div style="font-size:10px;color:rgba(255,255,255,.3);text-align:right;margin-bottom:16px">68% of milestone tasks at Consistent or above</div>
+        <p style="font-family:'Playfair Display',serif;font-style:italic;font-size:13px;color:rgba(212,175,118,.82);padding-top:14px;border-top:1px solid rgba(255,255,255,.1);line-height:1.78">"You are building the foundations well. Contact and Straightness are the two RidingQuality dimensions standing between you and Training Level readiness. Both trace back to the same root cause: rein symmetry. Address that and the readiness signal will shift meaningfully — likely within 4–6 sessions."</p>
+        <div style="font-size:10px;font-family:'Inter',sans-serif;color:rgba(212,175,118,.35);margin-top:8px;font-weight:500">— Cadence AI</div>
+      </div>
+    </div>
+
+  </div>
+</div><!-- /insights -->
+
+</div><!-- /.app -->
+
+<script>
+// ══ STATE ══
+let pct = 44, playing = false, raf = null, lastT = null, pillTimer = null;
+const TOTAL = 190;
+const fmt = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`;
+
+// ══ JOINTS DATA ══
+// type: 'score' → you/ideal shown as numbers out of 100
+//       'angle' → you shown as degrees, ideal shown as 0° (or target band)
+//       'deviation' → raw deviation metric, lower = better
+const JOINTS = {
+  head: {
+    name: 'Head Stability',
+    type: 'score',
+    youVal: '94', youUnit: '/ 100', idealVal: '100', idealUnit: '/ 100',
+    fillPct: 94, idealPct: 100, fillCol: '#5B9E56',
+    barLo: '0', barHi: '100',
+    trend: '→ Steady', trendCol: '#8B8B8B',
+  },
+  shoulder: {
+    name: 'Shoulder Levelness',
+    type: 'angle',
+    youVal: '+4°', youUnit: 'right drop', idealVal: '0°', idealUnit: 'level',
+    fillPct: 62, idealPct: 100, fillCol: '#E8A857',
+    barLo: 'Off', barHi: 'Ideal',
+    trend: '↑ Improving', trendCol: '#5B9E56',
+  },
+  core: {
+    name: 'Core Stability',
+    type: 'angle',
+    youVal: '+3°', youUnit: 'forward lean', idealVal: '0°', idealUnit: 'upright',
+    fillPct: 70, idealPct: 100, fillCol: '#E8A857',
+    barLo: 'Off', barHi: 'Ideal',
+    trend: '↑ +2° better since last ride', trendCol: '#5B9E56',
+  },
+  elbow: {
+    name: 'Elbow Symmetry',
+    type: 'score',
+    youVal: '88', youUnit: '/ 100', idealVal: '100', idealUnit: '/ 100',
+    fillPct: 88, idealPct: 100, fillCol: '#5B9E56',
+    barLo: '0', barHi: '100',
+    trend: '↑ +2 from last ride', trendCol: '#5B9E56',
+  },
+  reins: {
+    name: 'Rein Symmetry',
+    type: 'angle',
+    youVal: '+5°', youUnit: 'right higher', idealVal: '0°', idealUnit: 'even',
+    fillPct: 38, idealPct: 100, fillCol: '#C14A2A',
+    barLo: 'Off', barHi: 'Ideal (0°)',
+    trend: '↓ Main focus area this ride', trendCol: '#C14A2A',
+  },
+  knee: {
+    name: 'Knee Angle Stability',
+    type: 'score',
+    youVal: '80', youUnit: '/ 100', idealVal: '100', idealUnit: '/ 100',
+    fillPct: 80, idealPct: 100, fillCol: '#E8A857',
+    barLo: '0', barHi: '100',
+    trend: '↑ Steadily improving', trendCol: '#5B9E56',
+  },
+  heel: {
+    name: 'Pelvis Follow',
+    type: 'score',
+    youVal: '91', youUnit: '/ 100', idealVal: '~85–95', idealUnit: 'target band',
+    fillPct: 91, idealPct: 90, fillCol: '#5B9E56',
+    barLo: '0', barHi: '100',
+    trend: '↑ Personal best this session 🏆', trendCol: '#5B9E56',
+  },
+};
+
+// ══ SCREEN SWITCHING ══
+function goScreen(id) {
+  document.querySelectorAll('.scr').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.stab').forEach(b => b.classList.remove('active'));
+  document.getElementById('scr-' + id).classList.add('active');
+  document.querySelector(`.stab[data-s="${id}"]`).classList.add('active');
+  if (id !== 'playback') stopPlay();
+}
+
+// ══ PLAYBACK ══
+function togglePlay() { playing ? stopPlay() : startPlay(); }
+function startPlay() {
+  playing = true; lastT = null;
+  document.getElementById('pico').style.display = 'none';
+  document.getElementById('paico').style.display = 'block';
+  raf = requestAnimationFrame(tick);
+}
+function stopPlay() {
+  playing = false;
+  document.getElementById('pico').style.display = 'block';
+  document.getElementById('paico').style.display = 'none';
+  if (raf) { cancelAnimationFrame(raf); raf = null; lastT = null; }
+}
+function tick(t) {
+  if (!lastT) lastT = t;
+  pct = Math.min(100, pct + (t - lastT) / 1000 * 3.15);
+  lastT = t; syncUI();
+  if (pct >= 100) { stopPlay(); return; }
+  raf = requestAnimationFrame(tick);
+}
+function syncUI() {
+  const s = pct / 100 * TOTAL;
+  document.getElementById('tlbl').textContent = fmt(s) + ' / 3:10';
+  document.getElementById('sfill').style.width = pct + '%';
+  document.getElementById('sknob').style.left = pct + '%';
+  document.getElementById('rknob').style.left = pct + '%';
+}
+function scrubClick(e) {
+  e.stopPropagation();
+  const r = e.currentTarget.getBoundingClientRect();
+  pct = Math.max(0, Math.min(100, (e.clientX - r.left) / r.width * 100));
+  stopPlay(); syncUI();
+}
+function ribClick(e) {
+  const r = e.currentTarget.getBoundingClientRect();
+  pct = Math.max(0, Math.min(100, (e.clientX - r.left) / r.width * 100));
+  stopPlay(); syncUI();
+}
+function seekTo(v, e) { if (e) e.stopPropagation(); pct = v; stopPlay(); syncUI(); }
+function jumpTo(v) { pct = v; stopPlay(); syncUI(); goScreen('playback'); }
+
+// ══ GHOST ══
+function toggleGhost() {
+  const btn = document.getElementById('gbtn');
+  const layer = document.getElementById('ghost');
+  const on = btn.classList.toggle('on');
+  layer.style.display = on ? 'block' : 'none';
+  document.getElementById('gtxt').textContent = on ? 'Ghost On ✓' : 'Ghost Rider';
+}
+
+// ══ JOINT TAP ══
+function tapJoint(el) {
+  const j = JOINTS[el.dataset.id];
+  if (!j) return;
+  const pill = document.getElementById('mpill');
+
+  // Metric name
+  document.getElementById('p-name').textContent = j.name;
+
+  // You column
+  document.getElementById('p-you').textContent = j.youVal;
+  document.getElementById('p-you').style.color = j.fillCol;
+  document.getElementById('p-you-unit').textContent = j.youUnit;
+
+  // Ideal column
+  document.getElementById('p-ideal').textContent = j.idealVal;
+  document.getElementById('p-ideal-unit').textContent = j.idealUnit;
+
+  // Bar
+  document.getElementById('p-fill').style.width = j.fillPct + '%';
+  document.getElementById('p-fill').style.background = j.fillCol;
+  document.getElementById('p-bar-lo').textContent = j.barLo;
+  document.getElementById('p-bar-hi').textContent = j.barHi;
+
+  // Trend
+  const tr = document.getElementById('p-trend');
+  tr.textContent = j.trend; tr.style.color = j.trendCol;
+
+  // Border accent
+  pill.style.borderTop = '3px solid ' + j.fillCol;
+  pill.style.border = '1px solid rgba(28,28,30,0.1)';
+  pill.style.borderTopColor = j.fillCol;
+  pill.style.borderTopWidth = '3px';
+
+  // Position
+  const px = Math.min(parseFloat(el.dataset.px), 52);
+  const py = parseFloat(el.dataset.py);
+  pill.style.left = px + '%';
+  pill.style.top = py + '%';
+  pill.style.display = 'block';
+  clearTimeout(pillTimer);
+  pillTimer = setTimeout(() => pill.style.display = 'none', 4200);
+}
+
+// Dismiss pill on click outside
+document.getElementById('vid-wrap').addEventListener('click', e => {
+  if (!e.target.closest('.joint') && !e.target.closest('#gbtn') && !e.target.closest('.ctrl-bar'))
+    document.getElementById('mpill').style.display = 'none';
+});
+</script>
+</body>
+</html>
