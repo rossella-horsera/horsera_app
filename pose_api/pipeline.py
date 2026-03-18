@@ -137,18 +137,36 @@ def sample_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> tuple[list, i
 # ── Image helpers ─────────────────────────────────────────────────────────────
 
 def _yolo_infer(model, frame: np.ndarray, **kwargs):
-    """Run YOLO inference on a BGR numpy frame via a temp JPEG file.
+    """Run YOLO inference on a BGR numpy frame.
 
-    Ultralytics check_source() reliably accepts string/Path inputs across
-    all versions. Numpy arrays and PIL images both fail on this Railway
-    build with 'Unsupported image type' — writing to a temp file bypasses
-    the type check entirely. Overhead is ~5-15 ms per frame (negligible
-    at our 1 FPS sampling rate).
+    Strategy (three attempts, fastest first):
+      1. Pass the numpy array directly — works in ultralytics ≥8.3 and is
+         zero-overhead. This is the normal path.
+      2. Write to a temp PNG via cv2.imencode (in-memory encode, no silent
+         failure) and pass the file path — bypasses check_source type checks.
+      3. If imencode itself fails, raise immediately with a clear message.
+
+    Overhead for path 2 is ~5-15 ms per frame (negligible at 1 FPS).
     """
-    fd, tmp_path = tempfile.mkstemp(suffix='.jpg')
+    # Attempt 1: numpy array directly
+    try:
+        return model(np.ascontiguousarray(frame, dtype=np.uint8), **kwargs)
+    except TypeError as exc:
+        logger.warning(f"[yolo] numpy array rejected ({exc}) — falling back to PNG file")
+
+    # Attempt 2: encode to PNG bytes in memory, then write to temp file
+    ok, buf = cv2.imencode('.png', frame)
+    if not ok:
+        raise RuntimeError(
+            f"cv2.imencode failed — frame shape={frame.shape} dtype={frame.dtype}. "
+            "Check that OpenCV is correctly installed."
+        )
+    fd, tmp_path = tempfile.mkstemp(suffix='.png')
     try:
         os.close(fd)
-        cv2.imwrite(tmp_path, frame)
+        with open(tmp_path, 'wb') as fh:
+            fh.write(buf.tobytes())
+        logger.debug(f"[yolo] wrote {os.path.getsize(tmp_path)}B PNG → {tmp_path}")
         return model(tmp_path, **kwargs)
     finally:
         try:
