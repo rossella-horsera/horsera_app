@@ -1,17 +1,15 @@
 """
-Horsera Pose Pipeline — v4
-YOLOv8s-pose inference with horse detection, CAE preprocessing,
-APS v4 scoring, and Horsera biomechanics metrics.
+Horsera Pose Pipeline — v5 (ONNX Runtime)
+YOLOv8s-pose inference via ONNX Runtime — no PyTorch at runtime.
+Horse-aware detection, CAE preprocessing, APS v4 scoring.
 
-Phase 2 hybrid model merging stub is included as commented-out code
-at the bottom of this file.
+Memory budget: ~200 MB peak (vs ~500 MB with torch on Railway Hobby 512 MB).
 """
 from __future__ import annotations
 
 import logging
 import math
 import os
-import tempfile
 from dataclasses import dataclass, asdict
 from typing import Optional
 
@@ -20,7 +18,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# ── COCO keypoint indices ────────────────────────────────────────────────────
+# ── COCO keypoint indices ─────────────────────────────────────────────────────
 KP = {
     "nose": 0, "left_eye": 1, "right_eye": 2,
     "left_ear": 3, "right_ear": 4,
@@ -34,15 +32,14 @@ KP = {
 
 HORSE_CLASS_ID = 17      # COCO class 17 = horse
 CONF_THRESH    = 0.35    # minimum keypoint confidence accepted
+DET_CONF       = 0.40    # minimum horse detection confidence
 SAMPLE_FPS     = 1       # default sampling rate for full-video analysis
+INPUT_SIZE     = 640     # YOLO input resolution
 
-# Absolute path to the directory this file lives in — used to locate .pt weights
-# baked into the Docker image at build time.  Relative paths break if the
-# process is started from a different working directory.
 _MODEL_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-# ── Data classes ─────────────────────────────────────────────────────────────
+# ── Data classes ──────────────────────────────────────────────────────────────
 
 @dataclass
 class BiometricsResult:
@@ -70,12 +67,12 @@ class PipelineResult:
     ridingQuality: RidingQualityResult
     overallScore:  float
     detectionRate: float
-    caeIndex:      float      # Camera-Aware Expectation rotation index (0–1)
-    apsScore:      float      # APS v4 aggregate score
+    caeIndex:      float
+    apsScore:      float
     framesAnalyzed: int
     framesTotal:   int
     insights:      list[str]
-    frames_data:   list[dict]  # per-frame data for DB; excluded from to_dict()
+    frames_data:   list[dict]
 
     def to_dict(self) -> dict:
         return {
@@ -91,227 +88,228 @@ class PipelineResult:
         }
 
 
-# ── Lazy model loading ───────────────────────────────────────────────────────
+# ── ONNX Session Loading ──────────────────────────────────────────────────────
+# onnxruntime is imported lazily so the module loads quickly.
+# Sessions are singletons — loaded once, reused for every inference call.
 
-_horse_detector = None
-_pose_model     = None
+_horse_sess = None
+_pose_sess  = None
 
 
-def _get_models():
-    global _horse_detector, _pose_model
-    from ultralytics import YOLO
+def _get_sessions():
+    global _horse_sess, _pose_sess
+    import onnxruntime as ort  # lazy — ~100 MB, loaded on first analysis request
 
-    horse_path = os.path.join(_MODEL_DIR, "yolov8n.pt")
-    pose_path  = os.path.join(_MODEL_DIR, "yolov8s-pose.pt")
+    horse_path = os.path.join(_MODEL_DIR, "yolov8n.onnx")
+    pose_path  = os.path.join(_MODEL_DIR, "yolov8s-pose.onnx")
 
-    if _horse_detector is None:
+    opts = ort.SessionOptions()
+    opts.intra_op_num_threads  = 2
+    opts.inter_op_num_threads  = 1
+    opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    providers = ["CPUExecutionProvider"]
+
+    if _horse_sess is None:
         if os.path.exists(horse_path):
-            logger.info(f"[models] Loading horse detector from {horse_path}")
+            logger.info(f"[models] Loading horse detector: {horse_path}")
         else:
-            logger.warning(
-                f"[models] yolov8n.pt not found at {horse_path} — "
-                "ultralytics will download it (needs internet access)"
-            )
-        _horse_detector = YOLO(horse_path)
+            logger.error(f"[models] yolov8n.onnx NOT FOUND at {horse_path}")
+        _horse_sess = ort.InferenceSession(horse_path, opts, providers=providers)
+        for o in _horse_sess.get_outputs():
+            logger.info(f"[models] horse output: {o.name} {o.shape}")
 
-    if _pose_model is None:
+    if _pose_sess is None:
         if os.path.exists(pose_path):
-            logger.info(f"[models] Loading pose model from {pose_path}")
+            logger.info(f"[models] Loading pose model: {pose_path}")
         else:
-            logger.warning(
-                f"[models] yolov8s-pose.pt not found at {pose_path} — "
-                "ultralytics will download it (needs internet access)"
-            )
-        _pose_model = YOLO(pose_path)
+            logger.error(f"[models] yolov8s-pose.onnx NOT FOUND at {pose_path}")
+        _pose_sess = ort.InferenceSession(pose_path, opts, providers=providers)
+        for o in _pose_sess.get_outputs():
+            logger.info(f"[models] pose output: {o.name} {o.shape}")
 
-    return _horse_detector, _pose_model
-
-
-# ── Video frame streaming ─────────────────────────────────────────────────────
-# IMPORTANT: do NOT buffer all frames into a list.
-# A 1080p BGR frame is ~6 MB; 300 frames = 1.8 GB which OOM-kills on 512 MB.
-# analyze_video() streams frames one at a time and processes each immediately.
-
-def _video_meta(video_path: str, sample_fps: int = SAMPLE_FPS) -> tuple[float, int, int]:
-    """Return (native_fps, total_frames, step) without reading any frame data."""
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        raise IOError(f"Cannot open video: {video_path}")
-    native_fps   = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    cap.release()
-    step = max(1, int(native_fps / sample_fps))
-    return native_fps, total_frames, step
+    return _horse_sess, _pose_sess
 
 
-# ── Image helpers ─────────────────────────────────────────────────────────────
+# ── Preprocessing ─────────────────────────────────────────────────────────────
 
-def _yolo_infer(model, frame: np.ndarray, **kwargs):
-    """Run YOLO inference on a BGR numpy frame.
+def _letterbox(img: np.ndarray, size: int = INPUT_SIZE):
+    """Resize + pad with grey to a square of `size` pixels."""
+    h, w = img.shape[:2]
+    r    = min(size / h, size / w)
+    nh, nw = int(round(h * r)), int(round(w * r))
+    img  = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_LINEAR)
+    dh   = (size - nh) / 2
+    dw   = (size - nw) / 2
+    top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
+    left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
+    img  = cv2.copyMakeBorder(
+        img, top, bottom, left, right,
+        cv2.BORDER_CONSTANT, value=(114, 114, 114)
+    )
+    return img, r, dw, dh
 
-    Strategy (three attempts, fastest first):
-      1. Pass the numpy array directly — works in ultralytics ≥8.3 and is
-         zero-overhead. This is the normal path.
-      2. Write to a temp PNG via cv2.imencode (in-memory encode, no silent
-         failure) and pass the file path — bypasses check_source type checks.
-      3. If imencode itself fails, raise immediately with a clear message.
 
-    Overhead for path 2 is ~5-15 ms per frame (negligible at 1 FPS).
+def _preprocess(frame: np.ndarray):
+    """BGR frame → (NCHW float32, ratio, pad_dw, pad_dh)."""
+    img, ratio, dw, dh = _letterbox(frame)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+    img = np.ascontiguousarray(img.transpose(2, 0, 1)[np.newaxis])  # NCHW
+    return img, ratio, dw, dh
+
+
+# ── NMS ───────────────────────────────────────────────────────────────────────
+
+def _xywh2xyxy(b: np.ndarray) -> np.ndarray:
+    out = b.copy()
+    out[:, 0] = b[:, 0] - b[:, 2] / 2
+    out[:, 1] = b[:, 1] - b[:, 3] / 2
+    out[:, 2] = b[:, 0] + b[:, 2] / 2
+    out[:, 3] = b[:, 1] + b[:, 3] / 2
+    return out
+
+
+def _nms(boxes: np.ndarray, scores: np.ndarray, iou_thresh: float = 0.45) -> list[int]:
+    x1, y1 = boxes[:, 0], boxes[:, 1]
+    x2, y2 = boxes[:, 2], boxes[:, 3]
+    areas  = np.maximum(0, x2 - x1) * np.maximum(0, y2 - y1)
+    order  = scores.argsort()[::-1]
+    keep: list[int] = []
+    while order.size > 0:
+        i = order[0]; keep.append(int(i))
+        if order.size == 1:
+            break
+        xx1 = np.maximum(x1[i], x1[order[1:]])
+        yy1 = np.maximum(y1[i], y1[order[1:]])
+        xx2 = np.minimum(x2[i], x2[order[1:]])
+        yy2 = np.minimum(y2[i], y2[order[1:]])
+        inter = np.maximum(0.0, xx2 - xx1) * np.maximum(0.0, yy2 - yy1)
+        iou   = inter / (areas[i] + areas[order[1:]] - inter + 1e-7)
+        order = order[1:][iou <= iou_thresh]
+    return keep
+
+
+def _scale_back(coords_x, coords_y, ratio, dw, dh, W, H):
+    """Shift letterbox padding and scale back to original image coordinates."""
+    x = np.clip((coords_x - dw) / ratio, 0, W)
+    y = np.clip((coords_y - dh) / ratio, 0, H)
+    return x, y
+
+
+# ── Horse Detection ───────────────────────────────────────────────────────────
+
+def _horse_bboxes(frame: np.ndarray, sess) -> list[np.ndarray]:
+    """Return [x1,y1,x2,y2] horse bounding boxes in original pixel coords."""
+    H, W = frame.shape[:2]
+    inp, ratio, dw, dh = _preprocess(frame)
+
+    # YOLOv8n ONNX output: [1, 84, 8400]  →  [8400, 84]
+    raw  = sess.run(None, {sess.get_inputs()[0].name: inp})[0][0]
+    pred = raw.T  # [8400, 84]
+
+    horse_scores = pred[:, 4 + HORSE_CLASS_ID]
+    mask = horse_scores > DET_CONF
+    if not mask.any():
+        return []
+
+    pred_f  = pred[mask]
+    scores_f = horse_scores[mask]
+    boxes_xyxy = _xywh2xyxy(pred_f[:, :4])
+    keep = _nms(boxes_xyxy, scores_f)
+
+    result = []
+    for i in keep:
+        b = boxes_xyxy[i].copy()
+        b[[0, 2]], b[[1, 3]] = _scale_back(b[[0, 2]], b[[1, 3]], ratio, dw, dh, W, H)
+        result.append(b)
+    return result
+
+
+# ── Pose Estimation ───────────────────────────────────────────────────────────
+
+def _run_pose(frame: np.ndarray, sess) -> list[np.ndarray]:
     """
-    # Attempt 1: numpy array directly
-    try:
-        return model(np.ascontiguousarray(frame, dtype=np.uint8), **kwargs)
-    except TypeError as exc:
-        logger.warning(f"[yolo] numpy array rejected ({exc}) — falling back to PNG file")
+    Run YOLOv8s-pose ONNX inference.
+    Returns list of (17, 3) arrays [x, y, conf] in original image coordinates.
 
-    # Attempt 2: encode to PNG bytes in memory, then write to temp file
-    ok, buf = cv2.imencode('.png', frame)
-    if not ok:
-        raise RuntimeError(
-            f"cv2.imencode failed — frame shape={frame.shape} dtype={frame.dtype}. "
-            "Check that OpenCV is correctly installed."
-        )
-    fd, tmp_path = tempfile.mkstemp(suffix='.png')
-    try:
-        os.close(fd)
-        with open(tmp_path, 'wb') as fh:
-            fh.write(buf.tobytes())
-        logger.debug(f"[yolo] wrote {os.path.getsize(tmp_path)}B PNG → {tmp_path}")
-        return model(tmp_path, **kwargs)
-    finally:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+    YOLOv8s-pose ONNX output: [1, 56, 8400]
+      56 = 4 (bbox xywh) + 1 (person confidence) + 51 (17 keypoints × 3)
+    """
+    H, W = frame.shape[:2]
+    inp, ratio, dw, dh = _preprocess(frame)
 
+    raw  = sess.run(None, {sess.get_inputs()[0].name: inp})[0][0]  # [56, 8400]
+    pred = raw.T  # [8400, 56]
 
-# ── Horse detection & rider isolation ────────────────────────────────────────
+    conf = pred[:, 4]
+    mask = conf > CONF_THRESH
+    if not mask.any():
+        return []
 
-def _has_horse(frame: np.ndarray, detector, conf: float = 0.40) -> bool:
-    """Return True if at least one horse is detected in the frame."""
-    results = _yolo_infer(detector, frame, verbose=False, conf=conf, classes=[HORSE_CLASS_ID])
-    for r in results:
-        if r.boxes and len(r.boxes) > 0:
-            return True
-    return False
+    pred_f   = pred[mask]
+    scores_f = conf[mask]
+    boxes_xyxy = _xywh2xyxy(pred_f[:, :4])
+    keep = _nms(boxes_xyxy, scores_f)
+
+    results = []
+    for i in keep:
+        kp = pred_f[i, 5:].reshape(17, 3).copy()
+        kp[:, 0], kp[:, 1] = _scale_back(kp[:, 0], kp[:, 1], ratio, dw, dh, W, H)
+        results.append(kp)
+    return results
 
 
-def _horse_bboxes(frame: np.ndarray, detector, conf: float = 0.40) -> list[np.ndarray]:
-    """Return list of [x1,y1,x2,y2] horse bounding boxes."""
-    bboxes = []
-    results = _yolo_infer(detector, frame, verbose=False, conf=conf, classes=[HORSE_CLASS_ID])
-    for r in results:
-        if r.boxes is None:
-            continue
-        for box in r.boxes.xyxy.cpu().numpy():
-            bboxes.append(box[:4])
-    return bboxes
-
+# ── Horse/rider isolation ─────────────────────────────────────────────────────
 
 def _rider_overlaps_horse(kps: np.ndarray, horse_bboxes: list[np.ndarray]) -> bool:
-    """
-    Confirm the detected rider skeleton overlaps a horse bounding box.
-    Uses the hip midpoint as the rider's anchor (seat position).
-    """
     lh = kps[KP["left_hip"]]
     rh = kps[KP["right_hip"]]
     if lh[2] < CONF_THRESH or rh[2] < CONF_THRESH:
-        return True  # can't verify — don't discard
+        return True
     hip_x = (lh[0] + rh[0]) / 2
     hip_y = (lh[1] + rh[1]) / 2
     for bbox in horse_bboxes:
         x1, y1, x2, y2 = bbox
-        # Expand bbox 20% to account for rider sitting above horse centre
         pad_y = (y2 - y1) * 0.20
         if x1 <= hip_x <= x2 and (y1 - pad_y) <= hip_y <= (y2 + pad_y):
             return True
     return False
 
 
-# ── CAE — Camera-Aware Expectation ───────────────────────────────────────────
+# ── CAE — Camera-Aware Expectation ────────────────────────────────────────────
 
 def compute_cae_index(all_kps: list[np.ndarray]) -> float:
-    """
-    Camera-Aware Expectation (CAE) rotation index.
-
-    As the horse-rider pair moves around the arena the apparent shoulder
-    width varies continuously with viewing angle:
-      - shoulder width ≈ max_width  →  rider facing camera  (0°, index ≈ 1.0)
-      - shoulder width ≈ 0          →  rider side-on        (90°, index ≈ 0.0)
-
-    This gives a continuous rotation index ∈ [0, 1] for each frame.
-    We use this to:
-      1. Weight metric contributions (side-on frames have unreliable wrist data)
-      2. Report the mean CAE index as a session-level quality indicator
-
-    Returns: mean CAE index across all frames with valid shoulder data.
-    """
     widths = []
     for kps in all_kps:
-        ls = kps[KP["left_shoulder"]]
-        rs = kps[KP["right_shoulder"]]
+        ls = kps[KP["left_shoulder"]]; rs = kps[KP["right_shoulder"]]
         if ls[2] >= CONF_THRESH and rs[2] >= CONF_THRESH:
             widths.append(abs(ls[0] - rs[0]))
-
     if not widths:
-        return 0.5  # unknown
-
-    max_w  = float(np.percentile(widths, 95))  # use 95th to avoid outliers
+        return 0.5
+    max_w = float(np.percentile(widths, 95))
     if max_w < 1.0:
         return 0.5
-
-    indices = [min(w / max_w, 1.0) for w in widths]
-    return float(np.mean(indices))
+    return float(np.mean([min(w / max_w, 1.0) for w in widths]))
 
 
-# ── APS v4 — Articulated Pose Score ──────────────────────────────────────────
+# ── APS v4 ───────────────────────────────────────────────────────────────────
 
 def aps_v4(kps: np.ndarray) -> tuple[float, bool]:
-    """
-    APS v4: 6-check articulated pose score for a single frame.
-
-    Checks:
-      1. Both shoulders confident
-      2. Both hips confident
-      3. At least one knee confident
-      4. Geometric sanity: shoulders above hips (y_shoulder < y_hip in image coords)
-      5. Torso height > torso width (rider is upright, not lying flat)
-      6. At least one ankle visible
-
-    Returns (score ∈ [0,1], is_valid: bool).
-    is_valid = True only when checks 1, 2, and 4 all pass.
-    """
     ls = kps[KP["left_shoulder"]];  rs = kps[KP["right_shoulder"]]
     lh = kps[KP["left_hip"]];       rh = kps[KP["right_hip"]]
     lk = kps[KP["left_knee"]];      rk = kps[KP["right_knee"]]
     la = kps[KP["left_ankle"]];     ra = kps[KP["right_ankle"]]
-
     checks = [False] * 6
-
-    # 1. Shoulder confidence
     checks[0] = ls[2] >= CONF_THRESH and rs[2] >= CONF_THRESH
-
-    # 2. Hip confidence
     checks[1] = lh[2] >= CONF_THRESH and rh[2] >= CONF_THRESH
-
-    # 3. Knee confidence (either side)
-    checks[2] = lk[2] >= CONF_THRESH or rk[2] >= CONF_THRESH
-
+    checks[2] = lk[2] >= CONF_THRESH or  rk[2] >= CONF_THRESH
     if checks[0] and checks[1]:
         s_mid_y = (ls[1] + rs[1]) / 2
         h_mid_y = (lh[1] + rh[1]) / 2
-
-        # 4. Shoulders above hips (image y increases downward)
         checks[3] = s_mid_y < h_mid_y
-
-        # 5. Torso height > torso width
-        torso_h = abs(h_mid_y - s_mid_y)
-        torso_w = abs(ls[0] - rs[0])
-        checks[4] = torso_h > torso_w * 0.4  # lenient — side-on views compress width
-
-    # 6. Ankle visibility
+        torso_h  = abs(h_mid_y - s_mid_y)
+        torso_w  = abs(ls[0] - rs[0])
+        checks[4] = torso_h > torso_w * 0.4
     checks[5] = la[2] >= CONF_THRESH or ra[2] >= CONF_THRESH
-
     score    = sum(checks) / len(checks)
     is_valid = checks[0] and checks[1] and checks[3]
     return float(score), is_valid
@@ -319,33 +317,19 @@ def aps_v4(kps: np.ndarray) -> tuple[float, bool]:
 
 # ── Keypoint extraction ───────────────────────────────────────────────────────
 
-def extract_keypoints(pose_result) -> Optional[np.ndarray]:
-    """
-    Return (17, 3) array [x, y, conf] for the best detection,
-    or None if no detection passes APS v4 validity check.
-    """
+def extract_keypoints(kps_list: list[np.ndarray]) -> Optional[np.ndarray]:
+    """Select the best valid (17,3) detection by APS v4 score."""
     candidates = []
-    for r in pose_result:
-        if r.keypoints is None:
-            continue
-        kps_tensor = r.keypoints.data
-        if kps_tensor is None or len(kps_tensor) == 0:
-            continue
-        for i in range(len(kps_tensor)):
-            kp = kps_tensor[i].cpu().numpy()
-            score, valid = aps_v4(kp)
-            if valid:
-                candidates.append((score, kp))
-
+    for kp in kps_list:
+        score, valid = aps_v4(kp)
+        if valid:
+            candidates.append((score, kp))
     if not candidates:
         return None
-    # Take the detection with the highest APS v4 score
-    candidates.sort(key=lambda x: x[0], reverse=True)
-    return candidates[0][1]
+    return max(candidates, key=lambda x: x[0])[1]
 
 
 def _pt(kps: np.ndarray, name: str) -> Optional[np.ndarray]:
-    """Return keypoint (x, y, conf) or None if below confidence threshold."""
     pt = kps[KP[name]]
     return pt if pt[2] >= CONF_THRESH else None
 
@@ -353,7 +337,6 @@ def _pt(kps: np.ndarray, name: str) -> Optional[np.ndarray]:
 # ── Biomechanics computation ──────────────────────────────────────────────────
 
 def _stability_score(series: list[float], scale: float, worst_std: float = 0.25) -> float:
-    """Normalise std-dev of a position series into a 0–1 score (1 = most stable)."""
     if len(series) < 3:
         return 0.6
     std = float(np.std(series)) / max(scale, 1.0)
@@ -364,17 +347,9 @@ def compute_biomechanics(
     all_kps: list[np.ndarray],
     cae_indices: Optional[list[float]] = None,
 ) -> BiometricsResult:
-    """
-    Compute 6 Horsera biomechanics metrics from per-frame keypoint arrays.
-    Scores are in [0, 1] — 1.0 = best.
-
-    When cae_indices is provided, frames with low CAE (side-on views) are
-    down-weighted for metrics that are unreliable at those angles (wrists).
-    """
     if not all_kps:
         return BiometricsResult(0.5, 0.5, 0.5, 0.5, 0.5, 0.5)
 
-    # Body-scale calibration: median shoulder width across all frames
     shoulder_widths = []
     for kps in all_kps:
         ls = _pt(kps, "left_shoulder"); rs = _pt(kps, "right_shoulder")
@@ -383,23 +358,20 @@ def compute_biomechanics(
     scale = float(np.median(shoulder_widths)) if shoulder_widths else 100.0
     scale = max(scale, 20.0)
 
-    # Per-metric series
-    ankle_y:          list[float] = []
-    wrist_y:          list[float] = []
-    wrist_y_weights:  list[float] = []
-    wrist_asymm:      list[float] = []
-    hip_mid:          list[np.ndarray] = []
-    sh_angle:         list[float] = []
+    ankle_y: list[float] = []
+    wrist_y: list[float] = []
+    wrist_y_weights: list[float] = []
+    wrist_asymm: list[float] = []
+    hip_mid: list[np.ndarray] = []
+    sh_angle: list[float] = []
 
     for i, kps in enumerate(all_kps):
         cae_w = cae_indices[i] if cae_indices and i < len(cae_indices) else 1.0
-
         la = _pt(kps, "left_ankle");    ra = _pt(kps, "right_ankle")
         lw = _pt(kps, "left_wrist");    rw = _pt(kps, "right_wrist")
         lh = _pt(kps, "left_hip");      rh = _pt(kps, "right_hip")
         ls = _pt(kps, "left_shoulder"); rs = _pt(kps, "right_shoulder")
 
-        # Lower leg: mean ankle y
         if la is not None and ra is not None:
             ankle_y.append((la[1] + ra[1]) / 2)
         elif la is not None:
@@ -407,33 +379,25 @@ def compute_biomechanics(
         elif ra is not None:
             ankle_y.append(ra[1])
 
-        # Rein steadiness: mean wrist y, weighted by CAE
         if lw is not None and rw is not None:
-            wrist_y.append((lw[1] + rw[1]) / 2)
-            wrist_y_weights.append(cae_w)
+            wrist_y.append((lw[1] + rw[1]) / 2);  wrist_y_weights.append(cae_w)
             wrist_asymm.append(abs(lw[1] - rw[1]) / scale)
         elif lw is not None:
             wrist_y.append(lw[1]);  wrist_y_weights.append(cae_w * 0.6)
         elif rw is not None:
             wrist_y.append(rw[1]);  wrist_y_weights.append(cae_w * 0.6)
 
-        # Pelvis / core: hip midpoint
         if lh is not None and rh is not None:
             hip_mid.append(np.array([(lh[0] + rh[0]) / 2, (lh[1] + rh[1]) / 2]))
 
-        # Upper body alignment: torso angle from vertical
         if ls is not None and rs is not None and lh is not None and rh is not None:
-            smid = np.array([(ls[0] + rs[0]) / 2, (ls[1] + rs[1]) / 2])
-            hmid = np.array([(lh[0] + rh[0]) / 2, (lh[1] + rh[1]) / 2])
+            smid  = np.array([(ls[0] + rs[0]) / 2, (ls[1] + rs[1]) / 2])
+            hmid  = np.array([(lh[0] + rh[0]) / 2, (lh[1] + rh[1]) / 2])
             delta = smid - hmid
-            angle = abs(math.degrees(math.atan2(delta[0], -delta[1])))
-            sh_angle.append(angle)
-
-    # ── Metric scores ────────────────────────────────────────────────────────
+            sh_angle.append(abs(math.degrees(math.atan2(delta[0], -delta[1]))))
 
     lower_leg = _stability_score(ankle_y, scale, worst_std=0.25)
 
-    # Weighted rein steadiness
     if len(wrist_y) >= 3:
         w   = np.array(wrist_y_weights)
         mu  = float(np.average(wrist_y, weights=w))
@@ -443,32 +407,20 @@ def compute_biomechanics(
     else:
         rein_steadiness = 0.6
 
-    # Rein symmetry: mean left/right height difference
     if wrist_asymm:
-        mean_asymm = float(np.mean(wrist_asymm))
-        rein_symmetry = float(np.clip(1.0 - mean_asymm / 0.30, 0.0, 1.0))
+        rein_symmetry = float(np.clip(1.0 - float(np.mean(wrist_asymm)) / 0.30, 0.0, 1.0))
     else:
         rein_symmetry = 0.6
 
-    # Core stability: 2D hip midpoint variance
     if len(hip_mid) >= 3:
-        hips  = np.array(hip_mid)
-        std2d = math.sqrt(float(np.var(hips[:, 0])) + float(np.var(hips[:, 1]))) / scale
+        hips   = np.array(hip_mid)
+        std2d  = math.sqrt(float(np.var(hips[:, 0])) + float(np.var(hips[:, 1]))) / scale
         core_stability = float(np.clip(1.0 - std2d / 0.20, 0.0, 1.0))
     else:
         core_stability = 0.6
 
-    # Upper body alignment: degrees from vertical
-    if sh_angle:
-        mean_angle    = float(np.mean(sh_angle))
-        upper_body    = float(np.clip(1.0 - mean_angle / 15.0, 0.0, 1.0))
-    else:
-        upper_body = 0.6
-
-    # Pelvis stability: hip midpoint y only
-    pelvis = _stability_score(
-        [float(h[1]) for h in hip_mid], scale, worst_std=0.15
-    )
+    upper_body = float(np.clip(1.0 - float(np.mean(sh_angle)) / 15.0, 0.0, 1.0)) if sh_angle else 0.6
+    pelvis     = _stability_score([float(h[1]) for h in hip_mid], scale, worst_std=0.15)
 
     return BiometricsResult(
         lowerLegStability  = round(lower_leg,        3),
@@ -481,10 +433,6 @@ def compute_biomechanics(
 
 
 def _derive_riding_quality(bio: BiometricsResult) -> RidingQualityResult:
-    """
-    Derive the 6 Training Scale riding quality metrics from biomechanics scores.
-    These are heuristic mappings — replace with ML when labelled data is available.
-    """
     return RidingQualityResult(
         rhythm       = round((bio.lowerLegStability + bio.pelvisStability) / 2, 3),
         relaxation   = round((bio.coreStability + bio.pelvisStability) / 2, 3),
@@ -499,45 +447,49 @@ def _derive_riding_quality(bio: BiometricsResult) -> RidingQualityResult:
 
 def _generate_insights(bio: BiometricsResult, det_rate: float) -> list[str]:
     scores = {
-        "Lower leg stability":   bio.lowerLegStability,
-        "Rein steadiness":       bio.reinSteadiness,
-        "Rein symmetry":         bio.reinSymmetry,
-        "Core stability":        bio.coreStability,
-        "Upper body alignment":  bio.upperBodyAlignment,
-        "Pelvis stability":      bio.pelvisStability,
+        "Lower leg stability":  bio.lowerLegStability,
+        "Rein steadiness":      bio.reinSteadiness,
+        "Rein symmetry":        bio.reinSymmetry,
+        "Core stability":       bio.coreStability,
+        "Upper body alignment": bio.upperBodyAlignment,
+        "Pelvis stability":     bio.pelvisStability,
     }
     insights = []
     strengths  = [(k, v) for k, v in scores.items() if v >= 0.75]
     needs_work = [(k, v) for k, v in scores.items() if v <  0.55]
-
     if strengths:
         best = max(strengths, key=lambda x: x[1])
-        insights.append(
-            f"{best[0]} is your strongest area this session ({best[1]:.0%}) — build on it."
-        )
+        insights.append(f"{best[0]} is your strongest area this session ({best[1]:.0%}) — build on it.")
     if needs_work:
         worst = min(needs_work, key=lambda x: x[1])
-        insights.append(
-            f"{worst[0]} needs the most attention ({worst[1]:.0%}) — focus here next ride."
-        )
+        insights.append(f"{worst[0]} needs the most attention ({worst[1]:.0%}) — focus here next ride.")
     if det_rate < 0.40:
         insights.append(
             "Video angle or lighting reduced tracking confidence in some sections "
             "— results may be approximate."
         )
     if not insights:
-        insights.append(
-            "Solid session overall. Keep building consistency across all metrics."
-        )
+        insights.append("Solid session overall. Keep building consistency across all metrics.")
     return insights
+
+
+# ── Video metadata ────────────────────────────────────────────────────────────
+
+def _video_meta(video_path: str, sample_fps: int = SAMPLE_FPS) -> tuple[float, int, int]:
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise IOError(f"Cannot open video: {video_path}")
+    native_fps   = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.release()
+    step = max(1, int(native_fps / sample_fps))
+    return native_fps, total_frames, step
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 def analyze_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> PipelineResult:
-    import torch
-
-    horse_det, pose_mdl = _get_models()
+    horse_sess, pose_sess = _get_sessions()
 
     native_fps, total_frames, step = _video_meta(video_path, sample_fps)
     logger.info(
@@ -545,11 +497,7 @@ def analyze_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> PipelineResu
         f"sampling every {step} frames (~{sample_fps} fps effective)"
     )
 
-    # ── Stream frames one at a time — never buffer the full list ─────────────
-    # Peak RAM per frame at 1080p ≈ 6 MB.  Buffering 300 frames = 1.8 GB which
-    # immediately OOM-kills a 512 MB Railway container.  We read → infer → discard
-    # each frame before reading the next, keeping peak frame RAM to ~6 MB at a time.
-
+    # Stream frames one at a time — never buffer the full list in RAM.
     valid_kps:     list[np.ndarray] = []
     cae_per_frame: list[float]      = []
     sampled_count  = 0
@@ -568,27 +516,18 @@ def analyze_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> PipelineResu
 
             if idx % step == 0:
                 sampled_count += 1
-                # Ensure contiguous BGR uint8 — some OpenCV builds return views
                 frame = np.ascontiguousarray(raw_frame, dtype=np.uint8)
-                del raw_frame  # free the OpenCV buffer immediately
+                del raw_frame
 
-                # Horse detection (yolov8n — fast)
-                with torch.no_grad():
-                    horse_boxes = _horse_bboxes(frame, horse_det)
+                horse_boxes = _horse_bboxes(frame, horse_sess)
                 if horse_boxes:
                     horse_count += 1
 
-                # Pose estimation (yolov8s-pose)
-                with torch.no_grad():
-                    pose_result = _yolo_infer(
-                        pose_mdl, frame, verbose=False, conf=CONF_THRESH
-                    )
-                kps = extract_keypoints(pose_result)
-                del pose_result  # release inference tensors immediately
-                del frame        # release frame buffer immediately
+                kps_list = _run_pose(frame, pose_sess)
+                del frame
 
+                kps = extract_keypoints(kps_list)
                 if kps is not None:
-                    # Validate: rider skeleton must overlap a horse when horses are visible
                     if not horse_boxes or _rider_overlaps_horse(kps, horse_boxes):
                         valid_kps.append(kps)
                         ls = _pt(kps, "left_shoulder")
@@ -599,7 +538,7 @@ def analyze_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> PipelineResu
                             else 0.0
                         )
             else:
-                del raw_frame  # skip frame — free immediately
+                del raw_frame
 
             idx += 1
     finally:
@@ -611,16 +550,13 @@ def analyze_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> PipelineResu
         f"valid_poses={len(valid_kps)} det_rate={det_rate:.1%}"
     )
 
-    # Normalise per-frame CAE widths to [0, 1]
     max_cae_w = max(cae_per_frame) if cae_per_frame else 1.0
     cae_norm  = [w / max(max_cae_w, 1.0) for w in cae_per_frame]
     cae_index = compute_cae_index(valid_kps)
 
-    # APS v4 aggregate
     aps_scores = [aps_v4(kps)[0] for kps in valid_kps]
     aps_score  = float(np.mean(aps_scores)) if aps_scores else 0.0
 
-    # Biomechanics + riding quality
     bio     = compute_biomechanics(valid_kps, cae_indices=cae_norm)
     quality = _derive_riding_quality(bio)
     overall = round(float(np.mean([
@@ -628,7 +564,6 @@ def analyze_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> PipelineResu
         bio.coreStability,     bio.upperBodyAlignment, bio.pelvisStability,
     ])), 3)
 
-    # Per-frame data for Supabase pose_frames table
     frames_data = [
         {
             "frame_index": i,
@@ -654,20 +589,12 @@ def analyze_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> PipelineResu
 
 
 def analyze_frame(frame_bgr: np.ndarray) -> dict:
-    """
-    Synchronous single-frame analysis.
-    Returns raw keypoints + per-frame APS score.
-    Used by POST /analyze/frame.
-    """
-    import torch
+    """Synchronous single-frame analysis. Used by POST /analyze/frame."""
+    horse_sess, pose_sess = _get_sessions()
 
-    horse_det, pose_mdl = _get_models()
-
-    with torch.no_grad():
-        horse_boxes = _horse_bboxes(frame_bgr, horse_det)
-        result      = _yolo_infer(pose_mdl, frame_bgr, verbose=False, conf=CONF_THRESH)
-    kps = extract_keypoints(result)
-    del result
+    horse_boxes = _horse_bboxes(frame_bgr, horse_sess)
+    kps_list    = _run_pose(frame_bgr, pose_sess)
+    kps         = extract_keypoints(kps_list)
 
     if kps is None:
         return {"detected": False, "keypoints": None, "apsScore": 0.0}
@@ -681,69 +608,5 @@ def analyze_frame(frame_bgr: np.ndarray) -> dict:
         "detected":  True,
         "valid":     valid,
         "apsScore":  round(aps, 3),
-        "keypoints": kps.tolist(),  # (17, 3) — [x, y, conf] per joint
+        "keypoints": kps.tolist(),
     }
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# PHASE 2 STUB — Hybrid model merging (MediaPipe + YOLOv8s ensemble)
-# Activate by setting HORSERA_PHASE2=1 in environment.
-#
-# Rationale: on frames where YOLO confidence is low (CAE index < 0.35,
-# i.e. rider nearly side-on), MediaPipe upper-body keypoints (shoulders,
-# elbows, wrists) can supplement YOLO's output because MediaPipe handles
-# frontal/profile torsos more robustly than full-body occlusion scenarios.
-#
-# Expected gain: +4–6% detection rate on arena corner frames.
-# Cost: +180ms/frame inference latency (CPU), +60ms (GPU).
-#
-# To activate:
-#   1. Uncomment the block below
-#   2. pip install mediapipe>=0.10
-#   3. Set HORSERA_PHASE2=1
-# ─────────────────────────────────────────────────────────────────────────────
-
-# import os as _os
-# _PHASE2 = _os.environ.get("HORSERA_PHASE2", "0") == "1"
-#
-# _mp_model = None
-#
-# def _get_mp_model():
-#     global _mp_model
-#     if _mp_model is None:
-#         import mediapipe as mp
-#         _mp_model = mp.solutions.pose.Pose(
-#             static_image_mode=True,
-#             model_complexity=1,
-#             min_detection_confidence=0.5,
-#         )
-#     return _mp_model
-#
-# def _merge_kps(yolo_kps: np.ndarray, frame_bgr: np.ndarray) -> np.ndarray:
-#     """
-#     Replace YOLO upper-body keypoints with MediaPipe equivalents
-#     when YOLO confidence on those joints is below CONF_THRESH.
-#     Only merges: shoulders (5,6), elbows (7,8), wrists (9,10).
-#     """
-#     import mediapipe as mp
-#     mp_model = _get_mp_model()
-#     rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-#     res = mp_model.process(rgb)
-#     if not res.pose_landmarks:
-#         return yolo_kps
-#
-#     lm = res.pose_landmarks.landmark
-#     h, w = frame_bgr.shape[:2]
-#
-#     # MediaPipe → COCO index mapping for upper body
-#     MP_TO_COCO = {
-#         11: KP["left_shoulder"],  12: KP["right_shoulder"],
-#         13: KP["left_elbow"],     14: KP["right_elbow"],
-#         15: KP["left_wrist"],     16: KP["right_wrist"],
-#     }
-#     merged = yolo_kps.copy()
-#     for mp_idx, coco_idx in MP_TO_COCO.items():
-#         if merged[coco_idx, 2] < CONF_THRESH:
-#             pt = lm[mp_idx]
-#             merged[coco_idx] = [pt.x * w, pt.y * h, pt.visibility]
-#     return merged
