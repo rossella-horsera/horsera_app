@@ -36,6 +36,11 @@ HORSE_CLASS_ID = 17      # COCO class 17 = horse
 CONF_THRESH    = 0.35    # minimum keypoint confidence accepted
 SAMPLE_FPS     = 1       # default sampling rate for full-video analysis
 
+# Absolute path to the directory this file lives in — used to locate .pt weights
+# baked into the Docker image at build time.  Relative paths break if the
+# process is started from a different working directory.
+_MODEL_DIR = os.path.dirname(os.path.abspath(__file__))
+
 
 # ── Data classes ─────────────────────────────────────────────────────────────
 
@@ -95,43 +100,48 @@ _pose_model     = None
 def _get_models():
     global _horse_detector, _pose_model
     from ultralytics import YOLO
+
+    horse_path = os.path.join(_MODEL_DIR, "yolov8n.pt")
+    pose_path  = os.path.join(_MODEL_DIR, "yolov8s-pose.pt")
+
     if _horse_detector is None:
-        logger.info("Loading horse detector (yolov8n)…")
-        _horse_detector = YOLO("yolov8n.pt")
+        if os.path.exists(horse_path):
+            logger.info(f"[models] Loading horse detector from {horse_path}")
+        else:
+            logger.warning(
+                f"[models] yolov8n.pt not found at {horse_path} — "
+                "ultralytics will download it (needs internet access)"
+            )
+        _horse_detector = YOLO(horse_path)
+
     if _pose_model is None:
-        logger.info("Loading pose model (yolov8s-pose)…")
-        _pose_model = YOLO("yolov8s-pose.pt")
+        if os.path.exists(pose_path):
+            logger.info(f"[models] Loading pose model from {pose_path}")
+        else:
+            logger.warning(
+                f"[models] yolov8s-pose.pt not found at {pose_path} — "
+                "ultralytics will download it (needs internet access)"
+            )
+        _pose_model = YOLO(pose_path)
+
     return _horse_detector, _pose_model
 
 
-# ── Video sampling ───────────────────────────────────────────────────────────
+# ── Video frame streaming ─────────────────────────────────────────────────────
+# IMPORTANT: do NOT buffer all frames into a list.
+# A 1080p BGR frame is ~6 MB; 300 frames = 1.8 GB which OOM-kills on 512 MB.
+# analyze_video() streams frames one at a time and processes each immediately.
 
-def sample_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> tuple[list, int]:
+def _video_meta(video_path: str, sample_fps: int = SAMPLE_FPS) -> tuple[float, int, int]:
+    """Return (native_fps, total_frames, step) without reading any frame data."""
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise IOError(f"Cannot open video: {video_path}")
-
-    native_fps  = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    total       = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    step        = max(1, int(native_fps / sample_fps))
-
-    frames, idx = [], 0
-    while True:
-        ok, frame = cap.read()
-        if not ok:
-            break
-        if idx % step == 0:
-            # copy() ensures a contiguous, writable uint8 ndarray —
-            # some OpenCV builds return non-contiguous views that YOLO rejects
-            frames.append(frame.copy())
-        idx += 1
+    native_fps   = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     cap.release()
-
-    logger.info(
-        f"Sampled {len(frames)} frames from {total} total "
-        f"@ {native_fps:.1f} fps (step={step})"
-    )
-    return frames, total
+    step = max(1, int(native_fps / sample_fps))
+    return native_fps, total_frames, step
 
 
 # ── Image helpers ─────────────────────────────────────────────────────────────
@@ -525,54 +535,92 @@ def _generate_insights(bio: BiometricsResult, det_rate: float) -> list[str]:
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 def analyze_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> PipelineResult:
+    import torch
+
     horse_det, pose_mdl = _get_models()
 
-    frames, total_frames = sample_video(video_path, sample_fps)
-
-    # Step 1: filter frames to those containing a horse
-    logger.info(f"Filtering {len(frames)} frames for horse presence…")
-    horse_frames = [f for f in frames if _has_horse(f, horse_det)]
+    native_fps, total_frames, step = _video_meta(video_path, sample_fps)
     logger.info(
-        f"Horse in {len(horse_frames)}/{len(frames)} frames "
-        f"({len(horse_frames)/max(len(frames),1)*100:.1f}%)"
+        f"[analyze_video] {total_frames} frames @ {native_fps:.1f} fps — "
+        f"sampling every {step} frames (~{sample_fps} fps effective)"
     )
-    working_frames = horse_frames if horse_frames else frames
 
-    # Step 2: pose estimation + rider isolation
-    logger.info(f"Running YOLOv8s-pose on {len(working_frames)} frames…")
-    valid_kps:    list[np.ndarray] = []
-    cae_per_frame: list[float]     = []
+    # ── Stream frames one at a time — never buffer the full list ─────────────
+    # Peak RAM per frame at 1080p ≈ 6 MB.  Buffering 300 frames = 1.8 GB which
+    # immediately OOM-kills a 512 MB Railway container.  We read → infer → discard
+    # each frame before reading the next, keeping peak frame RAM to ~6 MB at a time.
 
-    for frame in working_frames:
-        horse_boxes = _horse_bboxes(frame, horse_det)
-        result      = _yolo_infer(pose_mdl, frame, verbose=False, conf=CONF_THRESH)
-        kps         = extract_keypoints(result)
-        if kps is None:
-            continue
-        if horse_boxes and not _rider_overlaps_horse(kps, horse_boxes):
-            continue  # skeleton belongs to a spectator, not the rider
-        valid_kps.append(kps)
+    valid_kps:     list[np.ndarray] = []
+    cae_per_frame: list[float]      = []
+    sampled_count  = 0
+    horse_count    = 0
 
-        # Per-frame CAE: shoulder width / calibration width (filled after loop)
-        ls = _pt(kps, "left_shoulder"); rs = _pt(kps, "right_shoulder")
-        if ls is not None and rs is not None:
-            cae_per_frame.append(abs(ls[0] - rs[0]))
-        else:
-            cae_per_frame.append(0.0)
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise IOError(f"Cannot open video: {video_path}")
 
-    det_rate = len(valid_kps) / max(len(frames), 1)
-    logger.info(f"Usable detections: {len(valid_kps)} ({det_rate:.1%} of sampled frames)")
+    idx = 0
+    try:
+        while True:
+            ok, raw_frame = cap.read()
+            if not ok:
+                break
+
+            if idx % step == 0:
+                sampled_count += 1
+                # Ensure contiguous BGR uint8 — some OpenCV builds return views
+                frame = np.ascontiguousarray(raw_frame, dtype=np.uint8)
+                del raw_frame  # free the OpenCV buffer immediately
+
+                # Horse detection (yolov8n — fast)
+                with torch.no_grad():
+                    horse_boxes = _horse_bboxes(frame, horse_det)
+                if horse_boxes:
+                    horse_count += 1
+
+                # Pose estimation (yolov8s-pose)
+                with torch.no_grad():
+                    pose_result = _yolo_infer(
+                        pose_mdl, frame, verbose=False, conf=CONF_THRESH
+                    )
+                kps = extract_keypoints(pose_result)
+                del pose_result  # release inference tensors immediately
+                del frame        # release frame buffer immediately
+
+                if kps is not None:
+                    # Validate: rider skeleton must overlap a horse when horses are visible
+                    if not horse_boxes or _rider_overlaps_horse(kps, horse_boxes):
+                        valid_kps.append(kps)
+                        ls = _pt(kps, "left_shoulder")
+                        rs = _pt(kps, "right_shoulder")
+                        cae_per_frame.append(
+                            abs(ls[0] - rs[0])
+                            if ls is not None and rs is not None
+                            else 0.0
+                        )
+            else:
+                del raw_frame  # skip frame — free immediately
+
+            idx += 1
+    finally:
+        cap.release()
+
+    det_rate = len(valid_kps) / max(sampled_count, 1)
+    logger.info(
+        f"[analyze_video] sampled={sampled_count} horse_frames={horse_count} "
+        f"valid_poses={len(valid_kps)} det_rate={det_rate:.1%}"
+    )
 
     # Normalise per-frame CAE widths to [0, 1]
     max_cae_w = max(cae_per_frame) if cae_per_frame else 1.0
     cae_norm  = [w / max(max_cae_w, 1.0) for w in cae_per_frame]
     cae_index = compute_cae_index(valid_kps)
 
-    # Step 3: compute APS v4 aggregate
+    # APS v4 aggregate
     aps_scores = [aps_v4(kps)[0] for kps in valid_kps]
     aps_score  = float(np.mean(aps_scores)) if aps_scores else 0.0
 
-    # Step 4: biomechanics + riding quality
+    # Biomechanics + riding quality
     bio     = compute_biomechanics(valid_kps, cae_indices=cae_norm)
     quality = _derive_riding_quality(bio)
     overall = round(float(np.mean([
@@ -580,7 +628,7 @@ def analyze_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> PipelineResu
         bio.coreStability,     bio.upperBodyAlignment, bio.pelvisStability,
     ])), 3)
 
-    # Build per-frame data for Supabase pose_frames table
+    # Per-frame data for Supabase pose_frames table
     frames_data = [
         {
             "frame_index": i,
@@ -611,11 +659,15 @@ def analyze_frame(frame_bgr: np.ndarray) -> dict:
     Returns raw keypoints + per-frame APS score.
     Used by POST /analyze/frame.
     """
+    import torch
+
     horse_det, pose_mdl = _get_models()
 
-    horse_boxes = _horse_bboxes(frame_bgr, horse_det)
-    result      = _yolo_infer(pose_mdl, frame_bgr, verbose=False, conf=CONF_THRESH)
-    kps         = extract_keypoints(result)
+    with torch.no_grad():
+        horse_boxes = _horse_bboxes(frame_bgr, horse_det)
+        result      = _yolo_infer(pose_mdl, frame_bgr, verbose=False, conf=CONF_THRESH)
+    kps = extract_keypoints(result)
+    del result
 
     if kps is None:
         return {"detected": False, "keypoints": None, "apsScore": 0.0}
