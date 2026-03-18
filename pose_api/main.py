@@ -19,9 +19,13 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 import db as _db
-# pipeline (cv2 + numpy) is imported lazily inside handlers — defers heavy
-# native-library loading until the first actual analysis request, keeping
-# startup memory well within Railway Hobby's 512 MB limit.
+# pipeline is imported at module load so that onnxruntime + ONNX models are
+# resident in memory before any request arrives.  Loading them lazily on the
+# first video request caused an OOM spike mid-processing that killed the
+# process, making every subsequent poll return a Railway 502 with no CORS
+# headers.  Total memory is the same either way; eager loading just moves the
+# spike to startup where Railway is more tolerant of it.
+import pipeline as _pipeline  # noqa: F401 — side-effectful import
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -49,6 +53,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def _preload_models() -> None:
+    """Load ONNX sessions at startup so inference memory is stable before requests arrive."""
+    try:
+        _pipeline._get_sessions()
+        logger.info("[startup] ONNX models loaded successfully")
+    except Exception as exc:
+        logger.error(f"[startup] Failed to pre-load ONNX models: {exc}")
 
 # ── In-memory job store ───────────────────────────────────────────────────────
 # MVP: single-process in-memory store.
@@ -96,8 +110,7 @@ def _process_video(job_id: str, tmp_path: str, filename: str, size_mb: float) ->
         logger.warning(f"[db] upsert_job(processing) failed — continuing: {db_exc}")
 
     try:
-        from pipeline import analyze_video
-        result      = analyze_video(tmp_path)
+        result      = _pipeline.analyze_video(tmp_path)
         completed   = time.time()
         result_dict = result.to_dict()
         _update_job(
@@ -273,7 +286,6 @@ def analyze_frame_endpoint(req: FrameRequest) -> JSONResponse:
     if frame is None:
         raise HTTPException(400, "Could not decode image — send a valid JPEG or PNG")
 
-    from pipeline import analyze_frame
-    result = analyze_frame(frame)
+    result = _pipeline.analyze_frame(frame)
     return JSONResponse(result)
 
