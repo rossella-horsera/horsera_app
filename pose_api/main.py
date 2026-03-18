@@ -127,7 +127,7 @@ def _process_video(job_id: str, tmp_path: str, filename: str, size_mb: float) ->
         logger.exception(f"Job {job_id} failed")
         _update_job(job_id, status=JobStatus.FAILED, error=str(exc))
         try:
-            _db.upsert_job(job_id, {"status": JobStatus.FAILED, "error": str(exc)})
+            _db.upsert_job(job_id, {"status": JobStatus.FAILED, "filename": filename, "error": str(exc)})
         except Exception as db_exc:
             logger.warning(f"[db] upsert_job(failed) failed: {db_exc}")
     finally:

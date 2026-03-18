@@ -119,7 +119,9 @@ def sample_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> tuple[list, i
         if not ok:
             break
         if idx % step == 0:
-            frames.append(frame)
+            # copy() ensures a contiguous, writable uint8 ndarray —
+            # some OpenCV builds return non-contiguous views that YOLO rejects
+            frames.append(frame.copy())
         idx += 1
     cap.release()
 
