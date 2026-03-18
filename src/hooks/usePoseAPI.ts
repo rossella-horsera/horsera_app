@@ -19,7 +19,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { supabase } from '../integrations/supabase/client';
-import type { VideoAnalysisResult, AnalysisStatus } from './useVideoAnalysis';
+import type { VideoAnalysisResult, AnalysisStatus, TimestampedFrame } from './useVideoAnalysis';
 import type { MovementInsight } from '../lib/poseAnalysis';
 
 const POSE_API  = 'https://horseraapp-production.up.railway.app';
@@ -309,15 +309,21 @@ export function usePoseAPI(): {
               } catch { /* non-fatal */ }
             }
 
+            const allFrames: TimestampedFrame[] = (r.framesData ?? []).map(
+              (fd: { frame_time?: number; keypoints: [number, number, number][] }) => ({
+                time:  fd.frame_time ?? 0,
+                frame: fd.keypoints.map(([x, y, conf]) => ({ x, y, score: conf })),
+              })
+            );
             setResult({
               biometrics:       r.biometrics,
               insights:         toMovementInsights(r.insights ?? []),
               frameCount:       r.framesAnalyzed ?? 0,
               videoPlaybackUrl: blobUrl,
-              bestMomentStart:  0,
-              allFrames:        [],
+              bestMomentStart:  allFrames.length > 0 ? allFrames[0].time : 0,
+              allFrames,
               thumbnailDataUrl: '',
-              bestFrame:        null,
+              bestFrame:        allFrames.length > 0 ? allFrames[0].frame : null,
             });
             setProgress(100);
             setStatus('done');

@@ -90,7 +90,8 @@ def insert_frames(job_id: str, frames: list[dict]) -> None:
     base, headers = _cfg()
     if base is None:
         return
-    rows = [{"job_id": job_id, **f} for f in frames]
+    _DB_COLS = {"frame_index", "aps_score", "cae_value", "keypoints"}
+    rows = [{"job_id": job_id, **{k: v for k, v in f.items() if k in _DB_COLS}} for f in frames]
     # Insert in batches of 500 to stay within PostgREST body limits
     batch_size = 500
     hdrs = {**headers, "Prefer": "return=minimal"}

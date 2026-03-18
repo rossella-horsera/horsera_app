@@ -85,6 +85,7 @@ class PipelineResult:
             "framesAnalyzed": self.framesAnalyzed,
             "framesTotal":    self.framesTotal,
             "insights":       self.insights,
+            "framesData":     self.frames_data,
         }
 
 
@@ -499,6 +500,7 @@ def analyze_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> PipelineResu
 
     # Stream frames one at a time — never buffer the full list in RAM.
     valid_kps:     list[np.ndarray] = []
+    valid_times:   list[float]      = []   # actual video timestamp for each valid frame
     cae_per_frame: list[float]      = []
     sampled_count  = 0
     horse_count    = 0
@@ -506,6 +508,8 @@ def analyze_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> PipelineResu
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise IOError(f"Cannot open video: {video_path}")
+    frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     idx = 0
     try:
@@ -530,6 +534,7 @@ def analyze_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> PipelineResu
                 if kps is not None:
                     if not horse_boxes or _rider_overlaps_horse(kps, horse_boxes):
                         valid_kps.append(kps)
+                        valid_times.append(idx / native_fps)
                         ls = _pt(kps, "left_shoulder")
                         rs = _pt(kps, "right_shoulder")
                         cae_per_frame.append(
@@ -564,15 +569,20 @@ def analyze_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> PipelineResu
         bio.coreStability,     bio.upperBodyAlignment, bio.pelvisStability,
     ])), 3)
 
-    frames_data = [
-        {
+    _fw = max(frame_w, 1)
+    _fh = max(frame_h, 1)
+    frames_data = []
+    for i in range(len(valid_kps)):
+        kp = valid_kps[i].copy()
+        kp[:, 0] = np.clip(kp[:, 0] / _fw, 0.0, 1.0)   # normalize x → 0-1
+        kp[:, 1] = np.clip(kp[:, 1] / _fh, 0.0, 1.0)   # normalize y → 0-1
+        frames_data.append({
             "frame_index": i,
+            "frame_time":  round(valid_times[i], 3) if i < len(valid_times) else round(float(i), 3),
             "aps_score":   round(aps_scores[i], 3) if i < len(aps_scores) else None,
             "cae_value":   round(cae_norm[i], 3)   if i < len(cae_norm)   else None,
-            "keypoints":   valid_kps[i].tolist(),
-        }
-        for i in range(len(valid_kps))
-    ]
+            "keypoints":   kp.tolist(),
+        })
 
     return PipelineResult(
         biometrics     = bio,
