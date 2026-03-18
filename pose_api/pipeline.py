@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import logging
 import math
+import os
+import tempfile
 from dataclasses import dataclass, asdict
 from typing import Optional
 
@@ -134,26 +136,32 @@ def sample_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> tuple[list, i
 
 # ── Image helpers ─────────────────────────────────────────────────────────────
 
-def _to_pil(frame: np.ndarray):
-    """Convert a BGR uint8 numpy array (OpenCV) to an RGB PIL Image.
+def _yolo_infer(model, frame: np.ndarray, **kwargs):
+    """Run YOLO inference on a BGR numpy frame via a temp JPEG file.
 
-    Ultralytics check_source() explicitly handles PIL.Image.Image objects.
-    Passing numpy arrays directly can fail on some Linux/Docker builds
-    if the array memory layout isn't recognised — PIL conversion is
-    unambiguous and works across all ultralytics 8.x versions.
-
-    PIL is imported here (not at module level) so a missing Pillow install
-    never prevents the server from starting.
+    Ultralytics check_source() reliably accepts string/Path inputs across
+    all versions. Numpy arrays and PIL images both fail on this Railway
+    build with 'Unsupported image type' — writing to a temp file bypasses
+    the type check entirely. Overhead is ~5-15 ms per frame (negligible
+    at our 1 FPS sampling rate).
     """
-    from PIL import Image as PILImage
-    return PILImage.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    fd, tmp_path = tempfile.mkstemp(suffix='.jpg')
+    try:
+        os.close(fd)
+        cv2.imwrite(tmp_path, frame)
+        return model(tmp_path, **kwargs)
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
 
 # ── Horse detection & rider isolation ────────────────────────────────────────
 
 def _has_horse(frame: np.ndarray, detector, conf: float = 0.40) -> bool:
     """Return True if at least one horse is detected in the frame."""
-    results = detector(_to_pil(frame), verbose=False, conf=conf, classes=[HORSE_CLASS_ID])
+    results = _yolo_infer(detector, frame, verbose=False, conf=conf, classes=[HORSE_CLASS_ID])
     for r in results:
         if r.boxes and len(r.boxes) > 0:
             return True
@@ -163,7 +171,7 @@ def _has_horse(frame: np.ndarray, detector, conf: float = 0.40) -> bool:
 def _horse_bboxes(frame: np.ndarray, detector, conf: float = 0.40) -> list[np.ndarray]:
     """Return list of [x1,y1,x2,y2] horse bounding boxes."""
     bboxes = []
-    results = detector(_to_pil(frame), verbose=False, conf=conf, classes=[HORSE_CLASS_ID])
+    results = _yolo_infer(detector, frame, verbose=False, conf=conf, classes=[HORSE_CLASS_ID])
     for r in results:
         if r.boxes is None:
             continue
@@ -519,7 +527,7 @@ def analyze_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> PipelineResu
 
     for frame in working_frames:
         horse_boxes = _horse_bboxes(frame, horse_det)
-        result      = pose_mdl(_to_pil(frame), verbose=False, conf=CONF_THRESH)
+        result      = _yolo_infer(pose_mdl, frame, verbose=False, conf=CONF_THRESH)
         kps         = extract_keypoints(result)
         if kps is None:
             continue
@@ -588,7 +596,7 @@ def analyze_frame(frame_bgr: np.ndarray) -> dict:
     horse_det, pose_mdl = _get_models()
 
     horse_boxes = _horse_bboxes(frame_bgr, horse_det)
-    result      = pose_mdl(_to_pil(frame_bgr), verbose=False, conf=CONF_THRESH)
+    result      = _yolo_infer(pose_mdl, frame_bgr, verbose=False, conf=CONF_THRESH)
     kps         = extract_keypoints(result)
 
     if kps is None:
