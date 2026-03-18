@@ -137,6 +137,11 @@ def _process_video(job_id: str, tmp_path: str, filename: str, size_mb: float) ->
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
+@app.get("/")
+def root() -> dict:
+    return {"status": "ok"}
+
+
 @app.get("/health")
 def health() -> dict:
     """Health check — returns model info and active job count."""
