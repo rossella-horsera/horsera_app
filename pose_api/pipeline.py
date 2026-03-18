@@ -15,6 +15,7 @@ from typing import Optional
 
 import cv2
 import numpy as np
+from PIL import Image as PILImage
 
 logger = logging.getLogger(__name__)
 
@@ -132,11 +133,24 @@ def sample_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> tuple[list, i
     return frames, total
 
 
+# ── Image helpers ─────────────────────────────────────────────────────────────
+
+def _to_pil(frame: np.ndarray) -> PILImage.Image:
+    """Convert a BGR uint8 numpy array (OpenCV) to an RGB PIL Image.
+
+    Ultralytics check_source() explicitly handles PIL.Image.Image objects.
+    Passing numpy arrays directly can fail on some Linux/Docker builds
+    if the array memory layout isn't recognised — PIL conversion is
+    unambiguous and works across all ultralytics 8.x versions.
+    """
+    return PILImage.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+
+
 # ── Horse detection & rider isolation ────────────────────────────────────────
 
 def _has_horse(frame: np.ndarray, detector, conf: float = 0.40) -> bool:
     """Return True if at least one horse is detected in the frame."""
-    results = detector(frame, verbose=False, conf=conf, classes=[HORSE_CLASS_ID])
+    results = detector(_to_pil(frame), verbose=False, conf=conf, classes=[HORSE_CLASS_ID])
     for r in results:
         if r.boxes and len(r.boxes) > 0:
             return True
@@ -146,7 +160,7 @@ def _has_horse(frame: np.ndarray, detector, conf: float = 0.40) -> bool:
 def _horse_bboxes(frame: np.ndarray, detector, conf: float = 0.40) -> list[np.ndarray]:
     """Return list of [x1,y1,x2,y2] horse bounding boxes."""
     bboxes = []
-    results = detector(frame, verbose=False, conf=conf, classes=[HORSE_CLASS_ID])
+    results = detector(_to_pil(frame), verbose=False, conf=conf, classes=[HORSE_CLASS_ID])
     for r in results:
         if r.boxes is None:
             continue
@@ -502,7 +516,7 @@ def analyze_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> PipelineResu
 
     for frame in working_frames:
         horse_boxes = _horse_bboxes(frame, horse_det)
-        result      = pose_mdl(frame, verbose=False, conf=CONF_THRESH)
+        result      = pose_mdl(_to_pil(frame), verbose=False, conf=CONF_THRESH)
         kps         = extract_keypoints(result)
         if kps is None:
             continue
@@ -571,7 +585,7 @@ def analyze_frame(frame_bgr: np.ndarray) -> dict:
     horse_det, pose_mdl = _get_models()
 
     horse_boxes = _horse_bboxes(frame_bgr, horse_det)
-    result      = pose_mdl(frame_bgr, verbose=False, conf=CONF_THRESH)
+    result      = pose_mdl(_to_pil(frame_bgr), verbose=False, conf=CONF_THRESH)
     kps         = extract_keypoints(result)
 
     if kps is None:
