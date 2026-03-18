@@ -279,6 +279,7 @@ export function usePoseAPI(): {
           const pollRes = await fetch(`${POSE_API}/jobs/${job_id}`);
           if (!pollRes.ok) return; // transient error, keep polling
           const job = await pollRes.json();
+          console.log('[Horsera] poll job:', job);
 
           if (job.status === 'pending' || job.status === 'processing') {
             // Progress: 20% → 95% over ~80 poll cycles (~4 min)
