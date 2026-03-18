@@ -13,15 +13,15 @@ import uuid
 from enum import Enum
 from typing import Optional
 
-import cv2
-import numpy as np
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from pipeline import analyze_video, analyze_frame
 import db as _db
+# pipeline (cv2 + numpy) is imported lazily inside handlers — defers heavy
+# native-library loading until the first actual analysis request, keeping
+# startup memory well within Railway Hobby's 512 MB limit.
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -96,6 +96,7 @@ def _process_video(job_id: str, tmp_path: str, filename: str, size_mb: float) ->
         logger.warning(f"[db] upsert_job(processing) failed — continuing: {db_exc}")
 
     try:
+        from pipeline import analyze_video
         result      = analyze_video(tmp_path)
         completed   = time.time()
         result_dict = result.to_dict()
@@ -261,6 +262,8 @@ def analyze_frame_endpoint(req: FrameRequest) -> JSONResponse:
     Typical use: real-time overlay in a future live-session feature.
     """
     try:
+        import cv2
+        import numpy as np
         img_bytes = base64.b64decode(req.image_b64)
         arr       = np.frombuffer(img_bytes, dtype=np.uint8)
         frame     = cv2.imdecode(arr, cv2.IMREAD_COLOR)
@@ -270,6 +273,7 @@ def analyze_frame_endpoint(req: FrameRequest) -> JSONResponse:
     if frame is None:
         raise HTTPException(400, "Could not decode image — send a valid JPEG or PNG")
 
+    from pipeline import analyze_frame
     result = analyze_frame(frame)
     return JSONResponse(result)
 
