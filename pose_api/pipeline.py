@@ -15,7 +15,6 @@ from typing import Optional
 
 import cv2
 import numpy as np
-from PIL import Image as PILImage
 
 logger = logging.getLogger(__name__)
 
@@ -135,14 +134,18 @@ def sample_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> tuple[list, i
 
 # ── Image helpers ─────────────────────────────────────────────────────────────
 
-def _to_pil(frame: np.ndarray) -> PILImage.Image:
+def _to_pil(frame: np.ndarray):
     """Convert a BGR uint8 numpy array (OpenCV) to an RGB PIL Image.
 
     Ultralytics check_source() explicitly handles PIL.Image.Image objects.
     Passing numpy arrays directly can fail on some Linux/Docker builds
     if the array memory layout isn't recognised — PIL conversion is
     unambiguous and works across all ultralytics 8.x versions.
+
+    PIL is imported here (not at module level) so a missing Pillow install
+    never prevents the server from starting.
     """
+    from PIL import Image as PILImage
     return PILImage.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
 
 
