@@ -31,3 +31,15 @@ dist-ssr
 # Protect against accidental secrets commits
 .env2*
 *.secrets.txt
+
+# Model weights — downloaded at Docker build time, never commit
+*.pt
+*.pth
+*.onnx
+
+# Video files — test locally, never commit
+*.mp4
+*.mov
+*.avi
+*.webm
+*.m4v
