@@ -108,3 +108,31 @@ def insert_frames(job_id: str, frames: list[dict]) -> None:
                 logger.warning(f"[db] pose_frames insert [{job_id}] batch {i//batch_size} — {resp.status_code}: {resp.text[:200]}")
         except Exception as exc:
             logger.warning(f"[db] pose_frames insert [{job_id}] batch {i//batch_size} — {exc}")
+
+
+def get_job(job_id: str) -> dict | None:
+    """Fetch one job row from pose_jobs. Returns None if not found or unconfigured."""
+    base, headers = _cfg()
+    if base is None:
+        return None
+    try:
+        resp = httpx.get(
+            f"{base}/pose_jobs",
+            headers=headers,
+            params={
+                "job_id": f"eq.{job_id}",
+                "select": "*",
+                "limit": 1,
+            },
+            timeout=10.0,
+        )
+        if resp.status_code != 200:
+            logger.warning(f"[db] pose_jobs get [{job_id}] — {resp.status_code}: {resp.text[:200]}")
+            return None
+        rows = resp.json()
+        if not rows:
+            return None
+        return rows[0]
+    except Exception as exc:
+        logger.warning(f"[db] pose_jobs get [{job_id}] — {exc}")
+        return None

@@ -8,6 +8,8 @@ Receives a riding video → returns 6 biomechanics scores + Training Scale quali
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Health check, active job count |
+| `POST` | `/uploads/video-url` | Create signed URL for direct video upload to GCS |
+| `POST` | `/analyze/video/object` | Start analysis from uploaded GCS object path |
 | `POST` | `/analyze/video` | Upload video → returns `job_id` (async) |
 | `GET` | `/jobs/{job_id}` | Poll job status + results |
 | `POST` | `/analyze/frame` | Single base64 frame → instant keypoints |
@@ -88,4 +90,7 @@ in the Horsera frontend (`src/lib/storage.ts`).
 |----------|---------|-------------|
 | `PORT` | `8000` | Port to bind |
 | `CORS_ORIGINS` | `https://horsera.app,...` | Comma-separated allowed origins |
+| `GCS_UPLOAD_BUCKET` | _(empty)_ | Bucket for signed uploads + server-side reads |
+| `GCS_UPLOAD_PREFIX` | `uploads` | Prefix inside the upload bucket |
+| `SIGNED_URL_TTL_SECONDS` | `900` | Signed upload URL TTL in seconds |
 | `HORSERA_PHASE2` | `0` | Set to `1` to enable MediaPipe hybrid merging (see `pipeline.py`) |

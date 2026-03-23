@@ -1,15 +1,16 @@
 // Horsera — usePoseAPI hook
-// Wires the Railway YOLOv8s-pose server pipeline.
+// Wires the Horsera pose server pipeline.
 //
 // Flow:
 //   1. Create blob URL immediately → video plays while analysis runs
 //   2. Create ride_sessions row (no video_url yet)
 //   3. Compress video in-browser (720p / 2 Mbps) via canvas+MediaRecorder
 //      [progress 0→10%] — skipped for small files or unsupported browsers
-//   4. POST compressed (or original) blob to Railway /analyze/video
+//   4. Request signed upload URL + upload video directly to cloud storage
 //      [progress 10→18%]
-//   5. Poll GET /jobs/{job_id} every 3s              [progress 18→95%]
-//   6. On complete: store result, mark done          [progress 100%]
+//   5. POST object path to /analyze/video/object
+//   6. Poll GET /jobs/{job_id} every 3s              [progress 20→95%]
+//   7. On complete: store result, mark done          [progress 100%]
 //
 // Storage upload is deferred to handleSaveSession in RidesPage.tsx —
 // the user only pays the upload cost when they explicitly save the ride.
@@ -22,7 +23,7 @@ import { supabase } from '../integrations/supabase/client';
 import type { VideoAnalysisResult, AnalysisStatus, TimestampedFrame } from './useVideoAnalysis';
 import type { MovementInsight } from '../lib/poseAnalysis';
 
-const POSE_API  = 'https://horseraapp-production.up.railway.app';
+const POSE_API  = import.meta.env.VITE_POSE_API_URL ?? 'https://horseraapp-production.up.railway.app';
 const POLL_MS   = 3000;
 const MAX_POLL  = 200; // 200 × 3s = 10 min max
 
@@ -211,42 +212,109 @@ export function usePoseAPI(): {
 
       setProgress(10);
 
-      // ── 3. POST to Railway API (XHR for upload progress + timeout) ───────────
+      // ── 3. Signed upload flow (URL request + direct storage upload) ───────────
       setStatus('extracting');
 
-      const job_id = await new Promise<string>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.timeout = 10 * 60 * 1000; // 10 min hard limit
-
-        // Track upload bytes → map to 10%–18% progress
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable) {
-            setProgress(10 + Math.round((e.loaded / e.total) * 8));
-          }
-        };
-
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            try {
-              const data = JSON.parse(xhr.responseText);
-              if (!data.job_id) throw new Error('No job_id in response');
-              resolve(data.job_id);
-            } catch {
-              reject(new Error('Unexpected response from Pose API'));
+      const uploadViaLegacyEndpoint = async (): Promise<string> => {
+        return await new Promise<string>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.timeout = 10 * 60 * 1000; // 10 min hard limit
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+              setProgress(10 + Math.round((e.loaded / e.total) * 8));
             }
-          } else {
-            reject(new Error(`Pose API ${xhr.status}: ${xhr.responseText || xhr.statusText}`));
-          }
+          };
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try {
+                const data = JSON.parse(xhr.responseText);
+                if (!data.job_id) throw new Error('No job_id in response');
+                resolve(data.job_id);
+              } catch {
+                reject(new Error('Unexpected response from Pose API'));
+              }
+            } else {
+              reject(new Error(`Pose API ${xhr.status}: ${xhr.responseText || xhr.statusText}`));
+            }
+          };
+          xhr.onerror = () => reject(new Error('Network error reaching the analysis server — check your connection'));
+          xhr.ontimeout = () => reject(new Error('Upload timed out after 10 minutes — try a shorter or smaller clip'));
+          xhr.open('POST', `${POSE_API}/analyze/video`);
+          const formData = new FormData();
+          formData.append('file', uploadBlob, uploadFilename);
+          xhr.send(formData);
+        });
+      };
+
+      let job_id: string;
+      try {
+        const signedUploadRes = await fetch(`${POSE_API}/uploads/video-url`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filename: uploadFilename,
+            content_type: uploadBlob.type || 'video/mp4',
+            size_bytes: uploadBlob.size,
+          }),
+        });
+        if (!signedUploadRes.ok) {
+          throw new Error(`Failed to create upload URL: ${signedUploadRes.status} ${signedUploadRes.statusText}`);
+        }
+
+        const signedUpload = await signedUploadRes.json() as {
+          upload_url: string;
+          object_path: string;
+          required_headers?: Record<string, string>;
         };
+        if (!signedUpload.upload_url || !signedUpload.object_path) {
+          throw new Error('Invalid signed upload response from Pose API');
+        }
 
-        xhr.onerror   = () => reject(new Error('Network error reaching the analysis server — check your connection'));
-        xhr.ontimeout = () => reject(new Error('Upload timed out after 10 minutes — try a shorter or smaller clip'));
+        await new Promise<void>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.timeout = 10 * 60 * 1000; // 10 min hard limit
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+              setProgress(10 + Math.round((e.loaded / e.total) * 8));
+            }
+          };
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) resolve();
+            else reject(new Error(`Upload failed ${xhr.status}: ${xhr.responseText || xhr.statusText}`));
+          };
+          xhr.onerror = () => reject(new Error('Network error while uploading video to storage'));
+          xhr.ontimeout = () => reject(new Error('Upload timed out after 10 minutes — try a shorter or smaller clip'));
+          xhr.open('PUT', signedUpload.upload_url);
+          if (signedUpload.required_headers) {
+            Object.entries(signedUpload.required_headers).forEach(([k, v]) => xhr.setRequestHeader(k, v));
+          } else if (uploadBlob.type) {
+            xhr.setRequestHeader('Content-Type', uploadBlob.type);
+          }
+          xhr.send(uploadBlob);
+        });
 
-        xhr.open('POST', `${POSE_API}/analyze/video`);
-        const formData = new FormData();
-        formData.append('file', uploadBlob, uploadFilename);
-        xhr.send(formData);
-      });
+        const analyzeRes = await fetch(`${POSE_API}/analyze/video/object`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            object_path: signedUpload.object_path,
+            filename: uploadFilename,
+            size_mb: Number((uploadBlob.size / (1024 ** 2)).toFixed(1)),
+          }),
+        });
+        if (!analyzeRes.ok) {
+          const body = await analyzeRes.text();
+          throw new Error(`Pose API ${analyzeRes.status}: ${body || analyzeRes.statusText}`);
+        }
+        const analyzePayload = await analyzeRes.json() as { job_id?: string };
+        if (!analyzePayload.job_id) {
+          throw new Error('No job_id in analyze response');
+        }
+        job_id = analyzePayload.job_id;
+      } catch (signedUploadErr) {
+        console.warn('[Horsera] Signed upload flow unavailable; falling back to legacy /analyze/video:', signedUploadErr);
+        job_id = await uploadViaLegacyEndpoint();
+      }
 
       setProgress(20);
 
