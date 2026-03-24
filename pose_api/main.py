@@ -5,6 +5,7 @@ FastAPI server: async video jobs + synchronous single-frame endpoint.
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import os
 import re
@@ -13,7 +14,7 @@ import time
 import uuid
 from datetime import timedelta
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -59,8 +60,17 @@ app.add_middleware(
 GCS_UPLOAD_BUCKET = os.environ.get("GCS_UPLOAD_BUCKET", "").strip()
 GCS_UPLOAD_PREFIX = os.environ.get("GCS_UPLOAD_PREFIX", "uploads").strip("/") or "uploads"
 SIGNED_URL_TTL_SECONDS = int(os.environ.get("SIGNED_URL_TTL_SECONDS", "900"))
+JOB_STORE_BACKEND = os.environ.get("JOB_STORE_BACKEND", "memory").strip().lower()
+FIRESTORE_COLLECTION = os.environ.get("FIRESTORE_COLLECTION", "pose_jobs").strip() or "pose_jobs"
+EXECUTION_BACKEND = os.environ.get("EXECUTION_BACKEND", "inline").strip().lower()
+GPU_THRESHOLD_MB = float(os.environ.get("GPU_THRESHOLD_MB", "120"))
+CLOUD_RUN_PROJECT = os.environ.get("CLOUD_RUN_PROJECT", "").strip()
+CLOUD_RUN_REGION = os.environ.get("CLOUD_RUN_REGION", "").strip()
+CLOUD_RUN_CPU_JOB = os.environ.get("CLOUD_RUN_CPU_JOB", "").strip()
+CLOUD_RUN_GPU_JOB = os.environ.get("CLOUD_RUN_GPU_JOB", "").strip()
 
 _gcs_client = None
+_firestore_client = None
 
 
 @app.on_event("startup")
@@ -131,6 +141,10 @@ def _get_job(job_id: str) -> dict:
     if job is not None:
         return job
 
+    fs_job = _firestore_get_job(job_id)
+    if fs_job is not None:
+        return fs_job
+
     # Fallback to Supabase persistence so completed/failed jobs can still be
     # retrieved after process restarts while we migrate off in-memory state.
     row = _db.get_job(job_id)
@@ -144,6 +158,14 @@ def _update_job(job_id: str, **kwargs) -> None:
     with _jobs_lock:
         if job_id in _jobs:
             _jobs[job_id].update(kwargs)
+    if kwargs:
+        _firestore_upsert_job(job_id, kwargs)
+
+
+def _create_job(job_id: str, payload: dict) -> None:
+    with _jobs_lock:
+        _jobs[job_id] = payload
+    _firestore_upsert_job(job_id, payload)
 
 
 def _sanitize_filename(name: str) -> str:
@@ -162,6 +184,128 @@ def _get_gcs_client():
             ) from exc
         _gcs_client = storage.Client()
     return _gcs_client
+
+
+def _is_firestore_enabled() -> bool:
+    return JOB_STORE_BACKEND == "firestore"
+
+
+def _get_firestore_client():
+    global _firestore_client
+    if _firestore_client is None:
+        try:
+            from google.cloud import firestore
+        except Exception as exc:
+            raise RuntimeError(
+                "google-cloud-firestore is not installed. Add it to requirements.txt."
+            ) from exc
+        _firestore_client = firestore.Client()
+    return _firestore_client
+
+
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, JobStatus):
+        return value.value
+    if isinstance(value, dict):
+        return {k: _jsonable(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_jsonable(v) for v in value]
+    return value
+
+
+def _firestore_upsert_job(job_id: str, payload: dict) -> None:
+    if not _is_firestore_enabled():
+        return
+    try:
+        client = _get_firestore_client()
+        doc_ref = client.collection(FIRESTORE_COLLECTION).document(job_id)
+        doc_ref.set(_jsonable(payload), merge=True)
+    except Exception as exc:
+        logger.warning(f"[firestore] upsert [{job_id}] failed: {exc}")
+
+
+def _firestore_get_job(job_id: str) -> dict | None:
+    if not _is_firestore_enabled():
+        return None
+    try:
+        client = _get_firestore_client()
+        snap = client.collection(FIRESTORE_COLLECTION).document(job_id).get()
+        if not snap.exists:
+            return None
+        payload = snap.to_dict() or {}
+        status_raw = str(payload.get("status") or JobStatus.FAILED.value)
+        try:
+            payload["status"] = JobStatus(status_raw)
+        except Exception:
+            payload["status"] = JobStatus.FAILED
+        payload.setdefault("job_id", job_id)
+        payload.setdefault("result", None)
+        payload.setdefault("error", None)
+        return payload
+    except Exception as exc:
+        logger.warning(f"[firestore] get [{job_id}] failed: {exc}")
+        return None
+
+
+def _choose_worker_job_name(size_mb: float) -> str:
+    if size_mb >= GPU_THRESHOLD_MB and CLOUD_RUN_GPU_JOB:
+        return CLOUD_RUN_GPU_JOB
+    return CLOUD_RUN_CPU_JOB
+
+
+def _build_cloud_run_job_path(job_name: str) -> str:
+    project = CLOUD_RUN_PROJECT
+    if not project:
+        try:
+            import google.auth
+            _creds, detected_project = google.auth.default()
+            project = detected_project or ""
+        except Exception:
+            project = ""
+    if not project or not CLOUD_RUN_REGION:
+        raise RuntimeError(
+            "CLOUD_RUN_PROJECT and CLOUD_RUN_REGION must be set for EXECUTION_BACKEND=cloud_run_job"
+        )
+    return f"projects/{project}/locations/{CLOUD_RUN_REGION}/jobs/{job_name}"
+
+
+def _trigger_cloud_run_job(job_name: str, env_vars: dict[str, str]) -> str:
+    """
+    Trigger a Cloud Run Job execution via REST and return operation name.
+    """
+    try:
+        import google.auth
+        from google.auth.transport.requests import Request as GoogleAuthRequest
+    except Exception as exc:
+        raise RuntimeError("google-auth libraries unavailable for Cloud Run Job dispatch") from exc
+
+    scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+    creds, _project = google.auth.default(scopes=scopes)
+    creds.refresh(GoogleAuthRequest())
+    if not creds.token:
+        raise RuntimeError("Failed to obtain access token for Cloud Run Job dispatch")
+
+    job_path = _build_cloud_run_job_path(job_name)
+    url = f"https://run.googleapis.com/v2/{job_path}:run"
+    request_body = {
+        "overrides": {
+            "containerOverrides": [
+                {
+                    "env": [{"name": k, "value": v} for k, v in env_vars.items()]
+                }
+            ]
+        }
+    }
+    headers = {
+        "Authorization": f"Bearer {creds.token}",
+        "Content-Type": "application/json",
+    }
+    import httpx
+    resp = httpx.post(url, headers=headers, content=json.dumps(request_body), timeout=20.0)
+    if resp.status_code >= 300:
+        raise RuntimeError(f"Cloud Run Job dispatch failed [{resp.status_code}]: {resp.text[:300]}")
+    payload = resp.json()
+    return str(payload.get("name") or "")
 
 
 def _build_object_name(filename: str) -> str:
@@ -271,6 +415,27 @@ def _process_video_from_gcs(
     _process_video(job_id, tmp_path, filename, size_mb)
 
 
+def run_worker_job(job_id: str, object_path: str, filename: str, size_mb: float) -> None:
+    """
+    Worker entrypoint for Cloud Run Jobs.
+    Ensures the job record exists, then runs the same processing pipeline.
+    """
+    try:
+        _get_job(job_id)
+    except HTTPException:
+        _create_job(job_id, {
+            "job_id": job_id,
+            "filename": filename,
+            "size_mb": float(size_mb or 0.0),
+            "object_path": object_path,
+            "status": JobStatus.PENDING,
+            "created_at": time.time(),
+            "result": None,
+            "error": None,
+        })
+    _process_video_from_gcs(job_id, object_path, filename, float(size_mb or 0.0))
+
+
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 @app.get("/")
@@ -362,27 +527,59 @@ def analyze_video_object_endpoint(
         size_mb = 0.0
     size_mb = round(float(size_mb or 0.0), 1)
 
-    with _jobs_lock:
-        _jobs[job_id] = {
-            "job_id": job_id,
-            "filename": req.filename,
-            "size_mb": size_mb,
-            "object_path": req.object_path,
-            "status": JobStatus.PENDING,
-            "created_at": time.time(),
-            "result": None,
-            "error": None,
-        }
+    _create_job(job_id, {
+        "job_id": job_id,
+        "filename": req.filename,
+        "size_mb": size_mb,
+        "object_path": req.object_path,
+        "status": JobStatus.PENDING,
+        "created_at": time.time(),
+        "result": None,
+        "error": None,
+    })
 
-    background_tasks.add_task(
-        _process_video_from_gcs,
-        job_id,
-        req.object_path,
-        req.filename,
-        size_mb,
-    )
+    if EXECUTION_BACKEND == "cloud_run_job":
+        job_name = _choose_worker_job_name(size_mb)
+        if not job_name:
+            raise HTTPException(
+                500,
+                "CLOUD_RUN_CPU_JOB (and optionally CLOUD_RUN_GPU_JOB) must be set for cloud_run_job backend",
+            )
+        try:
+            op_name = _trigger_cloud_run_job(
+                job_name,
+                env_vars={
+                    "POSE_JOB_ID": job_id,
+                    "POSE_OBJECT_PATH": req.object_path,
+                    "POSE_FILENAME": req.filename,
+                    "POSE_SIZE_MB": str(size_mb),
+                },
+            )
+            _update_job(
+                job_id,
+                dispatch_backend="cloud_run_job",
+                worker_job_name=job_name,
+                worker_operation=op_name,
+            )
+            logger.info(f"Queued Cloud Run job {job_id} via {job_name} ({op_name})")
+        except Exception as exc:
+            logger.exception(f"Failed to dispatch Cloud Run job for {job_id}")
+            _update_job(job_id, status=JobStatus.FAILED, error=f"Failed to dispatch worker: {exc}")
+            try:
+                _db.upsert_job(job_id, {"status": JobStatus.FAILED, "filename": req.filename, "error": str(exc)})
+            except Exception as db_exc:
+                logger.warning(f"[db] upsert_job(failed_dispatch) failed: {db_exc}")
+            raise HTTPException(500, f"Failed to dispatch worker job: {exc}") from exc
+    else:
+        background_tasks.add_task(
+            _process_video_from_gcs,
+            job_id,
+            req.object_path,
+            req.filename,
+            size_mb,
+        )
+        logger.info(f"Queued inline GCS job {job_id} — {req.object_path}")
 
-    logger.info(f"Queued GCS job {job_id} — {req.object_path}")
     return JSONResponse({"job_id": job_id, "status": "pending"}, status_code=202)
 
 
@@ -433,16 +630,15 @@ async def analyze_video_endpoint(
 
     size_mb = round(file_size / 1024 ** 2, 1)
 
-    with _jobs_lock:
-        _jobs[job_id] = {
-            "job_id":      job_id,
-            "filename":    file.filename,
-            "size_mb":     size_mb,
-            "status":      JobStatus.PENDING,
-            "created_at":  time.time(),
-            "result":      None,
-            "error":       None,
-        }
+    _create_job(job_id, {
+        "job_id":      job_id,
+        "filename":    file.filename,
+        "size_mb":     size_mb,
+        "status":      JobStatus.PENDING,
+        "created_at":  time.time(),
+        "result":      None,
+        "error":       None,
+    })
 
     background_tasks.add_task(_process_video, job_id, tmp_path, file.filename, size_mb)
 

@@ -23,8 +23,9 @@ YOLO('yolov8s-pose.pt').export(format='onnx', opset=12, simplify=False); \
 print('ONNX export complete.')"
 
 # ── Stage 2: Runtime — no torch, no ultralytics ───────────────────────────────
+# Runtime upgraded to Python 3.14 for newer onnxruntime wheels.
 # Memory budget at startup: ~200 MB (vs ~500 MB with torch).
-FROM python:3.11-slim
+FROM python:3.14-slim
 
 WORKDIR /app
 
