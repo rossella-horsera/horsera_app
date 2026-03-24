@@ -31,6 +31,12 @@ variable "cors_origins" {
   default     = "https://horsera.app,https://app.horsera.ai,http://localhost:5173,http://localhost:8080"
 }
 
+variable "allow_unauthenticated_api" {
+  type        = bool
+  description = "Allow unauthenticated public access to the API Cloud Run service."
+  default     = true
+}
+
 variable "upload_bucket_name" {
   type        = string
   description = "Bucket name for direct-uploaded videos."
@@ -64,4 +70,28 @@ variable "firestore_collection" {
   type        = string
   description = "Firestore collection for job state."
   default     = "pose_jobs"
+}
+
+variable "supabase_url_secret_id" {
+  type        = string
+  description = "Secret Manager secret ID that stores SUPABASE_URL."
+  default     = "horsera-supabase-url"
+}
+
+variable "supabase_key_secret_id" {
+  type        = string
+  description = "Secret Manager secret ID that stores SUPABASE_KEY."
+  default     = "horsera-supabase-key"
+}
+
+variable "inject_supabase_secrets" {
+  type        = bool
+  description = "Inject SUPABASE_URL/SUPABASE_KEY into API and workers from Secret Manager."
+  default     = false
+}
+
+variable "manage_supabase_secrets" {
+  type        = bool
+  description = "Create Secret Manager secret containers via Terraform; set false to reuse existing secrets."
+  default     = true
 }

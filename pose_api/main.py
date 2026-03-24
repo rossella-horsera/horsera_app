@@ -16,6 +16,7 @@ from datetime import timedelta
 from enum import Enum
 from typing import Any, Optional
 
+import httpx
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -59,6 +60,7 @@ app.add_middleware(
 
 GCS_UPLOAD_BUCKET = os.environ.get("GCS_UPLOAD_BUCKET", "").strip()
 GCS_UPLOAD_PREFIX = os.environ.get("GCS_UPLOAD_PREFIX", "uploads").strip("/") or "uploads"
+GCS_SIGNING_SERVICE_ACCOUNT_EMAIL = os.environ.get("GCS_SIGNING_SERVICE_ACCOUNT_EMAIL", "").strip()
 SIGNED_URL_TTL_SECONDS = int(os.environ.get("SIGNED_URL_TTL_SECONDS", "900"))
 JOB_STORE_BACKEND = os.environ.get("JOB_STORE_BACKEND", "memory").strip().lower()
 FIRESTORE_COLLECTION = os.environ.get("FIRESTORE_COLLECTION", "pose_jobs").strip() or "pose_jobs"
@@ -186,6 +188,81 @@ def _get_gcs_client():
     return _gcs_client
 
 
+def _resolve_signing_service_account_email(creds: Any) -> str:
+    if GCS_SIGNING_SERVICE_ACCOUNT_EMAIL:
+        return GCS_SIGNING_SERVICE_ACCOUNT_EMAIL
+
+    email = str(getattr(creds, "service_account_email", "") or "").strip()
+    if email and email != "default":
+        return email
+
+    # Cloud Run metadata fallback for default service account email.
+    try:
+        resp = httpx.get(
+            "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email",
+            headers={"Metadata-Flavor": "Google"},
+            timeout=2.0,
+        )
+        if resp.status_code == 200 and resp.text.strip():
+            return resp.text.strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _generate_signed_upload_url(blob: Any, content_type: str) -> str:
+    expiration = timedelta(seconds=SIGNED_URL_TTL_SECONDS)
+    direct_exc: Exception | None = None
+
+    # Works when credentials include an embedded signer (e.g., local keyfile).
+    try:
+        return blob.generate_signed_url(
+            version="v4",
+            expiration=expiration,
+            method="PUT",
+            content_type=content_type,
+        )
+    except Exception as exc:
+        direct_exc = exc
+        logger.warning(f"Direct V4 signing failed; trying IAM signBlob fallback: {exc}")
+
+    # Cloud Run fallback: sign via IAM using access token + service account email.
+    try:
+        import google.auth
+        from google.auth.transport.requests import Request as GoogleAuthRequest
+    except Exception as exc:
+        raise RuntimeError(
+            f"google-auth libraries unavailable for V4 signing fallback: {exc}"
+        ) from exc
+
+    scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+    creds, _project = google.auth.default(scopes=scopes)
+    creds.refresh(GoogleAuthRequest())
+    if not creds.token:
+        raise RuntimeError("Failed to obtain access token for signed URL generation")
+
+    signer_email = _resolve_signing_service_account_email(creds)
+    if not signer_email:
+        raise RuntimeError(
+            "Failed to resolve signing service account email. "
+            "Set GCS_SIGNING_SERVICE_ACCOUNT_EMAIL in the API environment."
+        )
+
+    try:
+        return blob.generate_signed_url(
+            version="v4",
+            expiration=expiration,
+            method="PUT",
+            content_type=content_type,
+            service_account_email=signer_email,
+            access_token=creds.token,
+        )
+    except Exception as fallback_exc:
+        raise RuntimeError(
+            f"Failed to generate signed URL. direct_sign={direct_exc}; iam_sign_blob={fallback_exc}"
+        ) from fallback_exc
+
+
 def _is_firestore_enabled() -> bool:
     return JOB_STORE_BACKEND == "firestore"
 
@@ -300,7 +377,6 @@ def _trigger_cloud_run_job(job_name: str, env_vars: dict[str, str]) -> str:
         "Authorization": f"Bearer {creds.token}",
         "Content-Type": "application/json",
     }
-    import httpx
     resp = httpx.post(url, headers=headers, content=json.dumps(request_body), timeout=20.0)
     if resp.status_code >= 300:
         raise RuntimeError(f"Cloud Run Job dispatch failed [{resp.status_code}]: {resp.text[:300]}")
@@ -488,12 +564,7 @@ def create_video_upload_url(req: UploadUrlRequest) -> JSONResponse:
         client = _get_gcs_client()
         bucket = client.bucket(GCS_UPLOAD_BUCKET)
         blob = bucket.blob(object_name)
-        upload_url = blob.generate_signed_url(
-            version="v4",
-            expiration=timedelta(seconds=SIGNED_URL_TTL_SECONDS),
-            method="PUT",
-            content_type=req.content_type,
-        )
+        upload_url = _generate_signed_upload_url(blob, req.content_type)
     except Exception as exc:
         logger.exception("Failed to generate signed upload URL")
         raise HTTPException(500, f"Failed to create signed upload URL: {exc}") from exc

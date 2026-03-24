@@ -5,12 +5,33 @@ locals {
     environment = "prod"
   }
 
+  cors_origins_list = [
+    for origin in split(",", var.cors_origins) : trimspace(origin)
+    if trimspace(origin) != ""
+  ]
+
+  supabase_secret_env = var.inject_supabase_secrets ? [
+    {
+      name      = "SUPABASE_URL"
+      secret_id = var.supabase_url_secret_id
+    },
+    {
+      name      = "SUPABASE_KEY"
+      secret_id = var.supabase_key_secret_id
+    },
+  ] : []
+
+  supabase_url_secret_name = "projects/${var.project_id}/secrets/${var.supabase_url_secret_id}"
+  supabase_key_secret_name = "projects/${var.project_id}/secrets/${var.supabase_key_secret_id}"
+
   required_services = toset([
     "artifactregistry.googleapis.com",
     "run.googleapis.com",
     "firestore.googleapis.com",
     "storage.googleapis.com",
     "iam.googleapis.com",
+    "iamcredentials.googleapis.com",
+    "secretmanager.googleapis.com",
   ])
 }
 
@@ -45,6 +66,13 @@ resource "google_storage_bucket" "uploads" {
     }
   }
 
+  cors {
+    origin          = local.cors_origins_list
+    method          = ["PUT", "GET", "HEAD"]
+    response_header = ["Content-Type", "x-goog-resumable", "x-goog-meta-*"]
+    max_age_seconds = 3600
+  }
+
   depends_on = [google_project_service.required]
 }
 
@@ -69,22 +97,64 @@ resource "google_service_account" "worker" {
   display_name = "Horsera Pose Worker Service Account"
 }
 
+resource "google_secret_manager_secret" "supabase_url" {
+  count     = var.manage_supabase_secrets ? 1 : 0
+  secret_id = var.supabase_url_secret_id
+  labels    = local.common_labels
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.required]
+}
+
+resource "google_secret_manager_secret" "supabase_key" {
+  count     = var.manage_supabase_secrets ? 1 : 0
+  secret_id = var.supabase_key_secret_id
+  labels    = local.common_labels
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.required]
+}
+
 resource "google_project_iam_member" "api_run_jobs" {
   project = var.project_id
   role    = "roles/run.developer"
   member  = "serviceAccount:${google_service_account.api.email}"
 }
 
-resource "google_project_iam_member" "api_sa_user" {
+resource "google_project_iam_member" "api_firestore" {
   project = var.project_id
-  role    = "roles/iam.serviceAccountUser"
+  role    = "roles/datastore.user"
   member  = "serviceAccount:${google_service_account.api.email}"
 }
 
-resource "google_project_iam_member" "worker_storage" {
-  project = var.project_id
-  role    = "roles/storage.objectViewer"
-  member  = "serviceAccount:${google_service_account.worker.email}"
+resource "google_service_account_iam_member" "api_act_as_worker" {
+  service_account_id = google_service_account.worker.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.api.email}"
+}
+
+resource "google_service_account_iam_member" "api_sign_blob" {
+  service_account_id = google_service_account.api.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:${google_service_account.api.email}"
+}
+
+resource "google_storage_bucket_iam_member" "api_upload_creator" {
+  bucket = google_storage_bucket.uploads.name
+  role   = "roles/storage.objectCreator"
+  member = "serviceAccount:${google_service_account.api.email}"
+}
+
+resource "google_storage_bucket_iam_member" "worker_upload_viewer" {
+  bucket = google_storage_bucket.uploads.name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.worker.email}"
 }
 
 resource "google_project_iam_member" "worker_firestore" {
@@ -97,6 +167,30 @@ resource "google_project_iam_member" "worker_logs" {
   project = var.project_id
   role    = "roles/logging.logWriter"
   member  = "serviceAccount:${google_service_account.worker.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "api_supabase_url_accessor" {
+  secret_id = local.supabase_url_secret_name
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.api.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "api_supabase_key_accessor" {
+  secret_id = local.supabase_key_secret_name
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.api.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "worker_supabase_url_accessor" {
+  secret_id = local.supabase_url_secret_name
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.worker.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "worker_supabase_key_accessor" {
+  secret_id = local.supabase_key_secret_name
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.worker.email}"
 }
 
 resource "google_cloud_run_v2_service" "pose_api" {
@@ -135,6 +229,10 @@ resource "google_cloud_run_v2_service" "pose_api" {
         value = "uploads"
       }
       env {
+        name  = "GCS_SIGNING_SERVICE_ACCOUNT_EMAIL"
+        value = google_service_account.api.email
+      }
+      env {
         name  = "SIGNED_URL_TTL_SECONDS"
         value = "900"
       }
@@ -171,6 +269,19 @@ resource "google_cloud_run_v2_service" "pose_api" {
         value = var.enable_gpu_job ? google_cloud_run_v2_job.pose_worker_gpu[0].name : ""
       }
 
+      dynamic "env" {
+        for_each = local.supabase_secret_env
+        content {
+          name = env.value.name
+          value_source {
+            secret_key_ref {
+              secret  = env.value.secret_id
+              version = "latest"
+            }
+          }
+        }
+      }
+
       resources {
         limits = {
           cpu    = "1"
@@ -188,8 +299,23 @@ resource "google_cloud_run_v2_service" "pose_api" {
   depends_on = [
     google_project_service.required,
     google_project_iam_member.api_run_jobs,
-    google_project_iam_member.api_sa_user,
+    google_project_iam_member.api_firestore,
+    google_service_account_iam_member.api_act_as_worker,
+    google_service_account_iam_member.api_sign_blob,
+    google_storage_bucket_iam_member.api_upload_creator,
+    google_secret_manager_secret_iam_member.api_supabase_url_accessor,
+    google_secret_manager_secret_iam_member.api_supabase_key_accessor,
   ]
+}
+
+resource "google_cloud_run_v2_service_iam_member" "api_public_invoker" {
+  count = var.allow_unauthenticated_api ? 1 : 0
+
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.pose_api.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
 }
 
 resource "google_cloud_run_v2_job" "pose_worker_cpu" {
@@ -218,15 +344,29 @@ resource "google_cloud_run_v2_job" "pose_worker_cpu" {
           name  = "FIRESTORE_COLLECTION"
           value = var.firestore_collection
         }
+        dynamic "env" {
+          for_each = local.supabase_secret_env
+          content {
+            name = env.value.name
+            value_source {
+              secret_key_ref {
+                secret  = env.value.secret_id
+                version = "latest"
+              }
+            }
+          }
+        }
       }
     }
   }
 
   depends_on = [
     google_project_service.required,
-    google_project_iam_member.worker_storage,
+    google_storage_bucket_iam_member.worker_upload_viewer,
     google_project_iam_member.worker_firestore,
     google_project_iam_member.worker_logs,
+    google_secret_manager_secret_iam_member.worker_supabase_url_accessor,
+    google_secret_manager_secret_iam_member.worker_supabase_key_accessor,
   ]
 }
 
@@ -259,10 +399,22 @@ resource "google_cloud_run_v2_job" "pose_worker_gpu" {
           name  = "FIRESTORE_COLLECTION"
           value = var.firestore_collection
         }
+        dynamic "env" {
+          for_each = local.supabase_secret_env
+          content {
+            name = env.value.name
+            value_source {
+              secret_key_ref {
+                secret  = env.value.secret_id
+                version = "latest"
+              }
+            }
+          }
+        }
         resources {
           limits = {
-            cpu            = "4"
-            memory         = "16Gi"
+            cpu              = "4"
+            memory           = "16Gi"
             "nvidia.com/gpu" = "1"
           }
         }
@@ -276,8 +428,10 @@ resource "google_cloud_run_v2_job" "pose_worker_gpu" {
 
   depends_on = [
     google_project_service.required,
-    google_project_iam_member.worker_storage,
+    google_storage_bucket_iam_member.worker_upload_viewer,
     google_project_iam_member.worker_firestore,
     google_project_iam_member.worker_logs,
+    google_secret_manager_secret_iam_member.worker_supabase_url_accessor,
+    google_secret_manager_secret_iam_member.worker_supabase_key_accessor,
   ]
 }

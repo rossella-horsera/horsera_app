@@ -103,6 +103,7 @@ in the Horsera frontend (`src/lib/storage.ts`).
 | `CORS_ORIGINS` | `https://horsera.app,...` | Comma-separated allowed origins |
 | `GCS_UPLOAD_BUCKET` | _(empty)_ | Bucket for signed uploads + server-side reads |
 | `GCS_UPLOAD_PREFIX` | `uploads` | Prefix inside the upload bucket |
+| `GCS_SIGNING_SERVICE_ACCOUNT_EMAIL` | _(empty)_ | Optional override for V4 signed URL signer identity (recommended on Cloud Run) |
 | `SIGNED_URL_TTL_SECONDS` | `900` | Signed upload URL TTL in seconds |
 | `JOB_STORE_BACKEND` | `memory` | `memory` or `firestore` |
 | `FIRESTORE_COLLECTION` | `pose_jobs` | Firestore collection for job state |

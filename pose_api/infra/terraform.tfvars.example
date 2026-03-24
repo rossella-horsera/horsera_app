@@ -6,7 +6,12 @@ worker_image       = "us-east4-docker.pkg.dev/your-gcp-project-id/horsera-pose-r
 upload_bucket_name = "horsera-pose-input-your-gcp-project-id"
 
 cors_origins           = "https://horsera.app,https://app.horsera.ai,http://localhost:5173,http://localhost:8080"
+allow_unauthenticated_api = true
 gpu_threshold_mb       = 120
 enable_gpu_job         = true
 create_firestore_database = false
 firestore_collection   = "pose_jobs"
+supabase_url_secret_id = "horsera-supabase-url"
+supabase_key_secret_id = "horsera-supabase-key"
+inject_supabase_secrets = true
+manage_supabase_secrets = true
