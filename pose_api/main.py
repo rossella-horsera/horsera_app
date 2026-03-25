@@ -70,14 +70,27 @@ CLOUD_RUN_PROJECT = os.environ.get("CLOUD_RUN_PROJECT", "").strip()
 CLOUD_RUN_REGION = os.environ.get("CLOUD_RUN_REGION", "").strip()
 CLOUD_RUN_CPU_JOB = os.environ.get("CLOUD_RUN_CPU_JOB", "").strip()
 CLOUD_RUN_GPU_JOB = os.environ.get("CLOUD_RUN_GPU_JOB", "").strip()
+PRELOAD_MODELS = os.environ.get("PRELOAD_MODELS", "").strip().lower()
 
 _gcs_client = None
 _firestore_client = None
 
 
+def _should_preload_models() -> bool:
+    if PRELOAD_MODELS in {"1", "true", "yes", "on"}:
+        return True
+    if PRELOAD_MODELS in {"0", "false", "no", "off"}:
+        return False
+    # Default to no preload in Cloud Run dispatch mode; keep preload for inline mode.
+    return EXECUTION_BACKEND != "cloud_run_job"
+
+
 @app.on_event("startup")
 def _preload_models() -> None:
     """Load ONNX sessions at startup so inference memory is stable before requests arrive."""
+    if not _should_preload_models():
+        logger.info("[startup] Skipping model pre-load (PRELOAD_MODELS disabled)")
+        return
     try:
         _pipeline._get_sessions()
         logger.info("[startup] ONNX models loaded successfully")

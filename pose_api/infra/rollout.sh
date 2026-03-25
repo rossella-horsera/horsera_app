@@ -11,6 +11,7 @@ PROJECT_ID="$1"
 REGION="$2"
 TAG="${3:-$(git rev-parse --short HEAD)}"
 APPLY_FLAG="${4:-}"
+PLATFORM="${PLATFORM:-linux/amd64}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 INFRA_DIR="${ROOT_DIR}/pose_api/infra"
@@ -18,8 +19,12 @@ IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/horsera-pose-repo/pose-api:${TAG}"
 
 echo "==> Building image ${IMAGE}"
 gcloud auth configure-docker "${REGION}-docker.pkg.dev"
-docker build -f "${ROOT_DIR}/pose_api/Dockerfile" -t "${IMAGE}" "${ROOT_DIR}/pose_api"
-docker push "${IMAGE}"
+docker buildx build \
+  --platform "${PLATFORM}" \
+  -f "${ROOT_DIR}/pose_api/Dockerfile" \
+  -t "${IMAGE}" \
+  --push \
+  "${ROOT_DIR}/pose_api"
 
 echo "==> Running terraform plan"
 cd "${INFRA_DIR}"

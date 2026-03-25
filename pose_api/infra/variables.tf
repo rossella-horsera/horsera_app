@@ -15,6 +15,12 @@ variable "name_prefix" {
   default     = "horsera-pose"
 }
 
+variable "manage_artifact_registry_repository" {
+  type        = bool
+  description = "Create/manage the Artifact Registry repository via Terraform. Set false if it already exists and is managed outside Terraform."
+  default     = true
+}
+
 variable "api_image" {
   type        = string
   description = "Container image for the public Pose API Cloud Run service."
@@ -57,6 +63,12 @@ variable "gpu_threshold_mb" {
 variable "enable_gpu_job" {
   type        = bool
   description = "Whether to provision a GPU worker Cloud Run Job."
+  default     = false
+}
+
+variable "gpu_zonal_redundancy_disabled" {
+  type        = bool
+  description = "Disable GPU zonal redundancy for Cloud Run Jobs when required by regional capacity constraints."
   default     = true
 }
 
@@ -72,16 +84,32 @@ variable "firestore_collection" {
   default     = "pose_jobs"
 }
 
+variable "manage_iam_bindings" {
+  type        = bool
+  description = "Manage IAM bindings (project/service account/bucket/secret) via Terraform. Set false when lacking IAM policy update permissions."
+  default     = true
+}
+
 variable "supabase_url_secret_id" {
   type        = string
   description = "Secret Manager secret ID that stores SUPABASE_URL."
   default     = "horsera-supabase-url"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_-]{1,255}$", var.supabase_url_secret_id))
+    error_message = "supabase_url_secret_id must be a Secret Manager secret ID (letters, numbers, '_' or '-'), not a URL or secret value."
+  }
 }
 
 variable "supabase_key_secret_id" {
   type        = string
   description = "Secret Manager secret ID that stores SUPABASE_KEY."
   default     = "horsera-supabase-key"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_-]{1,255}$", var.supabase_key_secret_id))
+    error_message = "supabase_key_secret_id must be a Secret Manager secret ID (letters, numbers, '_' or '-'), not an API key value."
+  }
 }
 
 variable "inject_supabase_secrets" {

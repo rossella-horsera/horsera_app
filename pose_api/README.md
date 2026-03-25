@@ -108,6 +108,7 @@ in the Horsera frontend (`src/lib/storage.ts`).
 | `JOB_STORE_BACKEND` | `memory` | `memory` or `firestore` |
 | `FIRESTORE_COLLECTION` | `pose_jobs` | Firestore collection for job state |
 | `EXECUTION_BACKEND` | `inline` | `inline` (background thread) or `cloud_run_job` |
+| `PRELOAD_MODELS` | auto | `1/true` to force eager ONNX preload, `0/false` to skip (auto skips in `cloud_run_job` mode) |
 | `GPU_THRESHOLD_MB` | `120` | Route to GPU worker job when size threshold is met |
 | `CLOUD_RUN_PROJECT` | _(empty)_ | GCP project for Cloud Run Job dispatch |
 | `CLOUD_RUN_REGION` | _(empty)_ | Cloud Run region for Job dispatch |

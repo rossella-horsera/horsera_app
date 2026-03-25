@@ -42,6 +42,8 @@ resource "google_project_service" "required" {
 }
 
 resource "google_artifact_registry_repository" "pose_api" {
+  count = var.manage_artifact_registry_repository ? 1 : 0
+
   location      = var.region
   repository_id = "${var.name_prefix}-repo"
   description   = "Container repository for Horsera Pose API and workers"
@@ -122,72 +124,96 @@ resource "google_secret_manager_secret" "supabase_key" {
 }
 
 resource "google_project_iam_member" "api_run_jobs" {
+  count = var.manage_iam_bindings ? 1 : 0
+
   project = var.project_id
   role    = "roles/run.developer"
   member  = "serviceAccount:${google_service_account.api.email}"
 }
 
 resource "google_project_iam_member" "api_firestore" {
+  count = var.manage_iam_bindings ? 1 : 0
+
   project = var.project_id
   role    = "roles/datastore.user"
   member  = "serviceAccount:${google_service_account.api.email}"
 }
 
 resource "google_service_account_iam_member" "api_act_as_worker" {
+  count = var.manage_iam_bindings ? 1 : 0
+
   service_account_id = google_service_account.worker.name
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:${google_service_account.api.email}"
 }
 
 resource "google_service_account_iam_member" "api_sign_blob" {
+  count = var.manage_iam_bindings ? 1 : 0
+
   service_account_id = google_service_account.api.name
   role               = "roles/iam.serviceAccountTokenCreator"
   member             = "serviceAccount:${google_service_account.api.email}"
 }
 
 resource "google_storage_bucket_iam_member" "api_upload_creator" {
+  count = var.manage_iam_bindings ? 1 : 0
+
   bucket = google_storage_bucket.uploads.name
   role   = "roles/storage.objectCreator"
   member = "serviceAccount:${google_service_account.api.email}"
 }
 
 resource "google_storage_bucket_iam_member" "worker_upload_viewer" {
+  count = var.manage_iam_bindings ? 1 : 0
+
   bucket = google_storage_bucket.uploads.name
   role   = "roles/storage.objectViewer"
   member = "serviceAccount:${google_service_account.worker.email}"
 }
 
 resource "google_project_iam_member" "worker_firestore" {
+  count = var.manage_iam_bindings ? 1 : 0
+
   project = var.project_id
   role    = "roles/datastore.user"
   member  = "serviceAccount:${google_service_account.worker.email}"
 }
 
 resource "google_project_iam_member" "worker_logs" {
+  count = var.manage_iam_bindings ? 1 : 0
+
   project = var.project_id
   role    = "roles/logging.logWriter"
   member  = "serviceAccount:${google_service_account.worker.email}"
 }
 
 resource "google_secret_manager_secret_iam_member" "api_supabase_url_accessor" {
+  count = var.manage_iam_bindings && var.inject_supabase_secrets ? 1 : 0
+
   secret_id = local.supabase_url_secret_name
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.api.email}"
 }
 
 resource "google_secret_manager_secret_iam_member" "api_supabase_key_accessor" {
+  count = var.manage_iam_bindings && var.inject_supabase_secrets ? 1 : 0
+
   secret_id = local.supabase_key_secret_name
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.api.email}"
 }
 
 resource "google_secret_manager_secret_iam_member" "worker_supabase_url_accessor" {
+  count = var.manage_iam_bindings && var.inject_supabase_secrets ? 1 : 0
+
   secret_id = local.supabase_url_secret_name
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.worker.email}"
 }
 
 resource "google_secret_manager_secret_iam_member" "worker_supabase_key_accessor" {
+  count = var.manage_iam_bindings && var.inject_supabase_secrets ? 1 : 0
+
   secret_id = local.supabase_key_secret_name
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.worker.email}"
@@ -247,6 +273,10 @@ resource "google_cloud_run_v2_service" "pose_api" {
       env {
         name  = "EXECUTION_BACKEND"
         value = "cloud_run_job"
+      }
+      env {
+        name  = "PRELOAD_MODELS"
+        value = "0"
       }
       env {
         name  = "GPU_THRESHOLD_MB"
@@ -309,7 +339,7 @@ resource "google_cloud_run_v2_service" "pose_api" {
 }
 
 resource "google_cloud_run_v2_service_iam_member" "api_public_invoker" {
-  count = var.allow_unauthenticated_api ? 1 : 0
+  count = var.allow_unauthenticated_api && var.manage_iam_bindings ? 1 : 0
 
   project  = var.project_id
   location = var.region
@@ -382,6 +412,9 @@ resource "google_cloud_run_v2_job" "pose_worker_gpu" {
   template {
     task_count  = 1
     parallelism = 1
+    annotations = var.gpu_zonal_redundancy_disabled ? {
+      "run.googleapis.com/gpu-zonal-redundancy-disabled" = "true"
+    } : {}
 
     template {
       service_account = google_service_account.worker.email

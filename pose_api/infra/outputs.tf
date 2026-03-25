@@ -1,6 +1,6 @@
 output "artifact_registry_repo" {
   description = "Artifact Registry Docker repository ID."
-  value       = google_artifact_registry_repository.pose_api.id
+  value       = var.manage_artifact_registry_repository ? google_artifact_registry_repository.pose_api[0].id : null
 }
 
 output "upload_bucket" {

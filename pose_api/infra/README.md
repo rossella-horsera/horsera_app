@@ -31,8 +31,7 @@ TAG="$(git rev-parse --short HEAD)"
 REPO="${REGION}-docker.pkg.dev/${PROJECT_ID}/horsera-pose-repo/pose-api:${TAG}"
 
 gcloud auth configure-docker "${REGION}-docker.pkg.dev"
-docker build -f ../Dockerfile -t "${REPO}" ..
-docker push "${REPO}"
+docker buildx build --platform linux/amd64 -f ../Dockerfile -t "${REPO}" --push ..
 ```
 
 2. Copy and edit variables:
@@ -90,3 +89,34 @@ Then set:
   - `roles/storage.objectCreator` on upload bucket
   - `roles/iam.serviceAccountTokenCreator` on the API service account (for V4 signing in Cloud Run)
 - Set `allow_unauthenticated_api = false` if you want to front this service with authenticated ingress only.
+
+## Troubleshooting Apply Errors
+
+- `repository already exists`:
+  - Either import it into state:
+    - `terraform import google_artifact_registry_repository.pose_api[0] projects/<project>/locations/<region>/repositories/<repo-id>`
+  - Or set `manage_artifact_registry_repository = false`.
+
+- `Policy update access denied` / `iam.serviceAccounts.setIamPolicy denied`:
+  - Your caller lacks IAM admin permissions.
+  - Ask a project admin to grant required bindings, or set `manage_iam_bindings = false` and manage IAM outside Terraform.
+
+- `Error creating Database ... caller does not have permission`:
+  - Set `create_firestore_database = false` unless your caller can create the default Firestore DB.
+
+- Secret Manager `404 not found`:
+  - `supabase_url_secret_id` / `supabase_key_secret_id` must be secret **names**, not URL/key values.
+  - If secrets already exist, set `manage_supabase_secrets = false`.
+  - If injecting into Cloud Run, keep `inject_supabase_secrets = true` and ensure those secret names exist.
+
+- `Image ... not found` when creating Cloud Run jobs:
+  - Push the exact image tag referenced by `api_image` / `worker_image`.
+  - Example:
+    - `docker push us-east4-docker.pkg.dev/<project>/horsera-pose-repo/pose-api:<tag>`
+- `exec format error` at startup (`/usr/local/bin/uvicorn`):
+  - Build and push as `linux/amd64` for Cloud Run:
+    - `docker buildx build --platform linux/amd64 ... --push`
+
+- GPU job fails with zonal redundancy/capacity error:
+  - Set `gpu_zonal_redundancy_disabled = true` (default).
+  - Or temporarily set `enable_gpu_job = false` and deploy CPU-only while requesting/confirming GPU capacity.
