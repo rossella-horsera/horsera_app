@@ -348,6 +348,16 @@ resource "google_cloud_run_v2_service_iam_member" "api_public_invoker" {
   member   = "allUsers"
 }
 
+resource "google_cloud_run_v2_service_iam_member" "api_invoker_members" {
+  for_each = var.manage_iam_bindings ? toset(var.api_invoker_members) : toset([])
+
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.pose_api.name
+  role     = "roles/run.invoker"
+  member   = each.value
+}
+
 resource "google_cloud_run_v2_job" "pose_worker_cpu" {
   name                = "${var.name_prefix}-worker-cpu"
   location            = var.region

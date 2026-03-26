@@ -23,7 +23,13 @@ import { supabase } from '../integrations/supabase/client';
 import type { VideoAnalysisResult, AnalysisStatus, TimestampedFrame } from './useVideoAnalysis';
 import type { MovementInsight } from '../lib/poseAnalysis';
 
-const POSE_API  = import.meta.env.VITE_POSE_API_URL ?? 'https://horseraapp-production.up.railway.app';
+const DEFAULT_POSE_API = (
+  typeof window !== 'undefined' && window.location.hostname === 'localhost'
+    ? 'http://localhost:8000'
+    : '/api/pose'
+);
+const POSE_API  = import.meta.env.VITE_POSE_API_URL ?? DEFAULT_POSE_API;
+const ENABLE_LEGACY_UPLOAD_FALLBACK = import.meta.env.VITE_POSE_API_LEGACY_UPLOAD_FALLBACK === '1';
 const POLL_MS   = 3000;
 const MAX_POLL  = 200; // 200 × 3s = 10 min max
 
@@ -312,6 +318,9 @@ export function usePoseAPI(): {
         }
         job_id = analyzePayload.job_id;
       } catch (signedUploadErr) {
+        if (!ENABLE_LEGACY_UPLOAD_FALLBACK) {
+          throw signedUploadErr;
+        }
         console.warn('[Horsera] Signed upload flow unavailable; falling back to legacy /analyze/video:', signedUploadErr);
         job_id = await uploadViaLegacyEndpoint();
       }

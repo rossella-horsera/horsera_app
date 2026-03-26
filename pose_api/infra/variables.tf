@@ -43,6 +43,12 @@ variable "allow_unauthenticated_api" {
   default     = true
 }
 
+variable "api_invoker_members" {
+  type        = list(string)
+  description = "Additional members to grant Cloud Run invoker on the API service (for authenticated caller identities such as a Vercel proxy service account)."
+  default     = []
+}
+
 variable "upload_bucket_name" {
   type        = string
   description = "Bucket name for direct-uploaded videos."
