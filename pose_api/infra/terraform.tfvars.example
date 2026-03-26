@@ -1,0 +1,21 @@
+project_id         = "your-gcp-project-id"
+region             = "us-east4"
+name_prefix        = "horsera-pose"
+manage_artifact_registry_repository = true
+api_image          = "us-east4-docker.pkg.dev/your-gcp-project-id/horsera-pose-repo/pose-api:latest"
+worker_image       = "us-east4-docker.pkg.dev/your-gcp-project-id/horsera-pose-repo/pose-api:latest"
+upload_bucket_name = "horsera-pose-input-your-gcp-project-id"
+
+cors_origins                   = "https://horsera.app,https://app.horsera.ai,http://localhost:5173,http://localhost:8080"
+allow_unauthenticated_api      = false
+api_invoker_members            = ["serviceAccount:vercel-pose-proxy@your-gcp-project-id.iam.gserviceaccount.com"]
+gpu_threshold_mb               = 120
+enable_gpu_job                 = false
+gpu_zonal_redundancy_disabled  = true
+create_firestore_database      = false
+firestore_collection           = "pose_jobs"
+manage_iam_bindings            = true
+supabase_url_secret_id         = "horsera-supabase-url"
+supabase_key_secret_id         = "horsera-supabase-key"
+inject_supabase_secrets        = true
+manage_supabase_secrets        = true

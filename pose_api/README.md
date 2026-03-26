@@ -8,6 +8,8 @@ Receives a riding video → returns 6 biomechanics scores + Training Scale quali
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Health check, active job count |
+| `POST` | `/uploads/video-url` | Create signed URL for direct video upload to GCS |
+| `POST` | `/analyze/video/object` | Start analysis from uploaded GCS object path |
 | `POST` | `/analyze/video` | Upload video → returns `job_id` (async) |
 | `GET` | `/jobs/{job_id}` | Poll job status + results |
 | `POST` | `/analyze/frame` | Single base64 frame → instant keypoints |
@@ -21,6 +23,17 @@ uvicorn main:app --reload --port 8000
 ```
 
 Visit `http://localhost:8000/docs` for the interactive Swagger UI.
+
+## Run Cloud Worker Locally
+
+```bash
+cd pose_api
+POSE_JOB_ID=test-job \
+POSE_OBJECT_PATH=gs://your-bucket/uploads/test.mp4 \
+POSE_FILENAME=test.mp4 \
+POSE_SIZE_MB=42 \
+python worker.py
+```
 
 ## Run with Docker
 
@@ -88,4 +101,17 @@ in the Horsera frontend (`src/lib/storage.ts`).
 |----------|---------|-------------|
 | `PORT` | `8000` | Port to bind |
 | `CORS_ORIGINS` | `https://horsera.app,...` | Comma-separated allowed origins |
+| `GCS_UPLOAD_BUCKET` | _(empty)_ | Bucket for signed uploads + server-side reads |
+| `GCS_UPLOAD_PREFIX` | `uploads` | Prefix inside the upload bucket |
+| `GCS_SIGNING_SERVICE_ACCOUNT_EMAIL` | _(empty)_ | Optional override for V4 signed URL signer identity (recommended on Cloud Run) |
+| `SIGNED_URL_TTL_SECONDS` | `900` | Signed upload URL TTL in seconds |
+| `JOB_STORE_BACKEND` | `memory` | `memory` or `firestore` |
+| `FIRESTORE_COLLECTION` | `pose_jobs` | Firestore collection for job state |
+| `EXECUTION_BACKEND` | `inline` | `inline` (background thread) or `cloud_run_job` |
+| `PRELOAD_MODELS` | auto | `1/true` to force eager ONNX preload, `0/false` to skip (auto skips in `cloud_run_job` mode) |
+| `GPU_THRESHOLD_MB` | `120` | Route to GPU worker job when size threshold is met |
+| `CLOUD_RUN_PROJECT` | _(empty)_ | GCP project for Cloud Run Job dispatch |
+| `CLOUD_RUN_REGION` | _(empty)_ | Cloud Run region for Job dispatch |
+| `CLOUD_RUN_CPU_JOB` | _(empty)_ | Cloud Run Job name for CPU worker |
+| `CLOUD_RUN_GPU_JOB` | _(empty)_ | Cloud Run Job name for GPU worker |
 | `HORSERA_PHASE2` | `0` | Set to `1` to enable MediaPipe hybrid merging (see `pipeline.py`) |

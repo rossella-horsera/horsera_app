@@ -130,7 +130,7 @@ For full end-to-end testing (API + skeleton overlay + UI): use `https://app.hors
 | `pose_api/main.py` | FastAPI app, in-memory job store, video upload endpoint, background worker |
 | `pose_api/pipeline.py` | ONNX inference pipeline — horse detection, pose estimation, keypoint normalisation, biomechanics scoring |
 | `pose_api/db.py` | Supabase write helpers (best-effort, non-blocking — a DB error never affects analysis results) |
-| `pose_api/requirements.txt` | Python deps — `onnxruntime==1.18.0` specifically (not `onnxruntime-cpu`, not 1.18.1 — those don't exist on Railway's Linux/amd64) |
+| `pose_api/requirements.txt` | Python deps — includes `onnxruntime` runtime dependency (keep aligned with target Python minor version and wheel availability) |
 | `pose_api/railway.toml` | Railway build + deploy config |
 | `pose_api/Dockerfile` | Container build — `EXPOSE 8000` is in the file but the server runs on `${PORT}` (8080). Do not change the Railway Networking domain back to 8000. |
 | `src/hooks/usePoseAPI.ts` | Frontend hook — handles upload, polling, and `framesData` → `allFrames` keypoint mapping |

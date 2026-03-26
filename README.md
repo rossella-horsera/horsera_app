@@ -4,6 +4,11 @@
 
 **URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
 
+## Deployment Notes
+
+- Vercel -> authenticated Cloud Run Pose API proxy setup:
+  - `docs/vercel-pose-proxy.md`
+
 ## How can I edit this code?
 
 There are several ways of editing your application.

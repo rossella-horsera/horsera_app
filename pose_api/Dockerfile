@@ -23,8 +23,9 @@ YOLO('yolov8s-pose.pt').export(format='onnx', opset=12, simplify=False); \
 print('ONNX export complete.')"
 
 # ── Stage 2: Runtime — no torch, no ultralytics ───────────────────────────────
+# Runtime upgraded to Python 3.14 for newer onnxruntime wheels.
 # Memory budget at startup: ~200 MB (vs ~500 MB with torch).
-FROM python:3.11-slim
+FROM python:3.14-slim
 
 WORKDIR /app
 
@@ -41,4 +42,4 @@ COPY --from=exporter /export/yolov8s-pose.onnx .
 COPY . .
 
 EXPOSE 8000
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}"]
