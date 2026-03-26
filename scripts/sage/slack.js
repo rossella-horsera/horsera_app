@@ -6,7 +6,7 @@
  * available (SLACK_BOT_TOKEN in .env.local), but the webhook is sufficient
  * for posting.
  *
- * Reads SLACK_WEBHOOK_URL from .env.local.
+ * Reads SAGE_SLACK_WEBHOOK_URL from .env.local.
  */
 
 import fetch from "node-fetch";
@@ -34,11 +34,11 @@ function loadEnv() {
 }
 
 const ENV = loadEnv();
-const WEBHOOK_URL = ENV.SLACK_WEBHOOK_URL;
+const WEBHOOK_URL = ENV.SAGE_SLACK_WEBHOOK_URL;
 const BOT_TOKEN = ENV.SLACK_BOT_TOKEN || null; // optional, for reading messages
 
 if (!WEBHOOK_URL) {
-  throw new Error("Missing SLACK_WEBHOOK_URL in .env.local");
+  throw new Error("Missing SAGE_SLACK_WEBHOOK_URL in .env.local — create an incoming webhook pointed at #horsera-social");
 }
 
 // ── Webhook posting (no bot token required) ─────────────────────────────────
