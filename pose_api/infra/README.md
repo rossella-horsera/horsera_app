@@ -89,6 +89,7 @@ Then set:
   - `roles/storage.objectCreator` on upload bucket
   - `roles/iam.serviceAccountTokenCreator` on the API service account (for V4 signing in Cloud Run)
 - Set `allow_unauthenticated_api = false` if you want to front this service with authenticated ingress only.
+- Use `api_invoker_members` to grant `roles/run.invoker` to specific authenticated identities (for example a Vercel proxy service account).
 
 ## Troubleshooting Apply Errors
 
@@ -120,3 +121,8 @@ Then set:
 - GPU job fails with zonal redundancy/capacity error:
   - Set `gpu_zonal_redundancy_disabled = true` (default).
   - Or temporarily set `enable_gpu_job = false` and deploy CPU-only while requesting/confirming GPU capacity.
+
+- `One or more users named in the policy do not belong to a permitted customer`:
+  - Your org likely blocks `allUsers` via Domain Restricted Sharing.
+  - Set `allow_unauthenticated_api = false`.
+  - Use `api_invoker_members` with allowed in-org principals instead of public access.
