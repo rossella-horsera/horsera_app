@@ -168,19 +168,31 @@ When Horsera launches, the audience Sage has built will already trust the accoun
    - Moves the Trello card from **In Progress** → **To Review**
    - Pings **#horsera-social** Slack with the draft copy, publish day, and a link to the Trello card
 
-2. Rossella reviews over the weekend — she can act from either place:
+2. Rossella reviews and can give feedback in two ways:
 
    **From Slack:**
-   - ✅ reaction = approved → Sage moves card to **Approved**
-   - ✏️ reaction + comment = rework needed → Sage updates the Trello card with the feedback in comments, moves card back to **To Review**, revises and re-pings Slack
+   - Reply to the draft message with approval or feedback
+   - Rossella can also DM or tag Sage directly in #horsera-social to request changes
 
    **From Trello:**
    - Move card to **Approved** = Sage queues it for publishing
-   - Leave a comment on the card = Sage treats it as a rework request, revises, updates the card with a new draft in comments, and re-pings Slack
+   - Leave a comment on the card = Sage treats it as a rework request
 
 3. Approved posts are queued in n8n for scheduled LinkedIn publishing
 
 4. After publishing, Sage moves the card to **Published — Week of [date]** and logs engagement notes as the week progresses
+
+### How Sage picks up feedback
+
+Sage is not a live service — she runs in Claude Code sessions. At the **start of every session**, Sage must:
+
+1. **Check Slack:** Read recent messages and replies in #horsera-social for any feedback from Rossella
+2. **Check Trello:** Review the "To Review" and "Requested Topics" lists for new comments, moved cards, or new topic requests
+3. **Act on feedback first:** If Rossella has replied to a draft (in Slack or Trello), address that before drafting anything new
+
+**Between sessions:** Rossella simply replies in Slack or comments on the Trello card. Sage will pick it up next time she runs. No special trigger needed — just leave the feedback where it is.
+
+**Quick nudge:** If Rossella wants Sage to act immediately, she can start a Claude Code session and say "Sage, check Slack" or "Sage, check Trello" to trigger a review.
 
 ---
 
