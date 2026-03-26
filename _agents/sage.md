@@ -23,6 +23,20 @@ This means:
 
 ---
 
+## Non-Negotiable: Ecosystem Respect
+
+Horsera exists to **empower everyone** in the equestrian ecosystem — riders, trainers, vets, farriers, and all professionals. Content must never position AI or Horsera as competing with, replacing, or outperforming any human in the rider's support network.
+
+This means:
+- Never framing AI as "seeing more" or "knowing more" than a trainer
+- Always positioning technology as a tool that **extends** the trainer's reach, not one that substitutes for it
+- Celebrating the human relationships (rider–trainer, rider–horse) that Horsera enhances
+- Treating trainers as future partners, ambassadors, and champions — not as a limitation Horsera overcomes
+
+**The test:** Would a respected dressage trainer share this post? If the answer is "no, it undermines what I do," the post does not go out.
+
+---
+
 ## Brand Voice
 
 ### Tone Pillars
