@@ -510,6 +510,7 @@ async function getChannelName(channelId) {
 
 // Listen for all messages (including in threads)
 app.event("message", async ({ event, context }) => {
+  let thinkingMsg = null;
   try {
     // Ignore bot messages, message_changed, etc.
     if (event.subtype) return;
@@ -554,7 +555,7 @@ app.event("message", async ({ event, context }) => {
     if (isInThread) {
       thinkingOpts.thread_ts = threadTs;
     }
-    const thinkingMsg = await app.client.chat.postMessage(thinkingOpts);
+    thinkingMsg = await app.client.chat.postMessage(thinkingOpts);
 
     // Call Claude
     const reply = await callClaude(systemPrompt, ctx.messages);
@@ -574,16 +575,21 @@ app.event("message", async ({ event, context }) => {
     log("Error handling message:", err.message);
     console.error(err);
 
-    // Try to reply with error message
+    // Update the thinking message with the error (or post a new one if thinking wasn't sent)
     try {
-      const threadTs = event.thread_ts || event.ts;
-      await app.client.chat.postMessage({
-        channel: event.channel,
-        thread_ts: threadTs,
-        text: `Sorry, I hit an error: ${err.message}`,
-      });
+      if (thinkingMsg?.ts) {
+        await app.client.chat.update({
+          channel: event.channel,
+          ts: thinkingMsg.ts,
+          text: `Sorry, I hit a temporary error. Please try again in a moment.`,
+        });
+      } else {
+        await app.client.chat.postMessage({
+          channel: event.channel,
+          text: `Sorry, I hit a temporary error. Please try again in a moment.`,
+        });
+      }
     } catch {
-      // If even the error message fails, just log it
       log("Failed to send error message to Slack");
     }
   }
