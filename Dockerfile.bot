@@ -2,8 +2,8 @@ FROM node:20-slim
 
 WORKDIR /app
 
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+COPY package.json ./
+RUN npm install --omit=dev @slack/bolt @anthropic-ai/sdk
 
 COPY scripts/bot.js scripts/bot.js
 COPY _agents/ _agents/
