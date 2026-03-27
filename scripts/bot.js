@@ -14,6 +14,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { App } from "@slack/bolt";
 import Anthropic from "@anthropic-ai/sdk";
+import { google } from "googleapis";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -137,6 +138,81 @@ const TRELLO_TOOL_HANDLERS = {
   },
 };
 
+// ── Google Docs config ──────────────────────────────────────────────────────
+
+const CONTENT_DOC_ID = "1BulY-4nHxpn69ZUbOItOxYN1OArDktyBoc_bVDDI-xM";
+
+let docsClient = null;
+
+function getDocsClient() {
+  if (docsClient) return docsClient;
+  const GOOGLE_CREDENTIALS = ENV.GOOGLE_SERVICE_ACCOUNT_KEY;
+  if (!GOOGLE_CREDENTIALS) {
+    log("Warning: GOOGLE_SERVICE_ACCOUNT_KEY not set — Google Docs tools disabled");
+    return null;
+  }
+  const credentials = JSON.parse(Buffer.from(GOOGLE_CREDENTIALS, "base64").toString("utf-8"));
+  const auth = new google.auth.GoogleAuth({
+    credentials,
+    scopes: ["https://www.googleapis.com/auth/documents", "https://www.googleapis.com/auth/drive"],
+  });
+  docsClient = google.docs({ version: "v1", auth });
+  return docsClient;
+}
+
+async function readGoogleDoc() {
+  const docs = getDocsClient();
+  if (!docs) throw new Error("Google Docs not configured");
+  const doc = await docs.documents.get({ documentId: CONTENT_DOC_ID });
+  // Extract plain text from the doc
+  let text = "";
+  for (const element of doc.data.body.content || []) {
+    if (element.paragraph) {
+      for (const el of element.paragraph.elements || []) {
+        if (el.textRun) text += el.textRun.content;
+      }
+    }
+  }
+  return { title: doc.data.title, text: text.trim() };
+}
+
+async function appendToGoogleDoc(content) {
+  const docs = getDocsClient();
+  if (!docs) throw new Error("Google Docs not configured");
+  // Get current doc length
+  const doc = await docs.documents.get({ documentId: CONTENT_DOC_ID });
+  const endIndex = doc.data.body.content.at(-1)?.endIndex || 1;
+  await docs.documents.batchUpdate({
+    documentId: CONTENT_DOC_ID,
+    requestBody: {
+      requests: [
+        {
+          insertText: {
+            location: { index: endIndex - 1 },
+            text: content,
+          },
+        },
+      ],
+    },
+  });
+  return { success: true, docId: CONTENT_DOC_ID };
+}
+
+// Google Docs tool handlers
+const GDOCS_TOOL_HANDLERS = {
+  read_content_doc: async () => {
+    const result = await readGoogleDoc();
+    return { success: true, title: result.title, content: result.text };
+  },
+  append_to_content_doc: async (input) => {
+    const result = await appendToGoogleDoc(input.content);
+    return result;
+  },
+};
+
+// Merge into Trello handlers
+Object.assign(TRELLO_TOOL_HANDLERS, GDOCS_TOOL_HANDLERS);
+
 // Tool definitions for Claude
 const TRELLO_TOOLS = [
   {
@@ -177,6 +253,26 @@ const TRELLO_TOOLS = [
       required: ["listId", "name"],
     },
   },
+  {
+    name: "read_content_doc",
+    description: "Read the current contents of the Horsera Content Pipeline Google Doc. Use this to see what drafts exist, what's been approved, and what Rossella has commented on.",
+    input_schema: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "append_to_content_doc",
+    description: "Append content to the end of the Horsera Content Pipeline Google Doc. Use this to add new post drafts, updates, or notes. Use markdown-style formatting (# for headings, --- for dividers, ** for bold).",
+    input_schema: {
+      type: "object",
+      properties: {
+        content: { type: "string", description: "The text content to append to the doc" },
+      },
+      required: ["content"],
+    },
+  },
 ];
 
 // ── Agent system prompts ────────────────────────────────────────────────────
@@ -195,7 +291,15 @@ You have access to Trello. The social board lists are:
 - Published: 69c55c50dccc64d962916fa3
 
 When Rossella approves a post, move the card to Approved and confirm.
-When she requests changes, update the card description with the new draft and move it back to In Progress.`;
+When she requests changes, update the card description with the new draft and move it back to In Progress.
+
+You also have access to the Horsera Content Pipeline Google Doc.
+- Use read_content_doc to see current drafts, approved posts, and Rossella's inline comments
+- Use append_to_content_doc to add new post drafts to the doc
+- The Google Doc is the primary workspace for drafting and reviewing content
+- Trello tracks status; the Google Doc holds the actual content
+- When you draft a new post, add it to the Google Doc AND create/update the Trello card
+- Format drafts in the doc with clear headings, status, and sections for hook/body/hashtags/images`;
 
 function loadAgentFile(filename) {
   const filePath = path.join(ROOT, "_agents", filename);

@@ -3,7 +3,7 @@ FROM node:20-slim
 WORKDIR /app
 
 COPY package.json ./
-RUN npm install --omit=dev @slack/bolt @anthropic-ai/sdk
+RUN npm install --omit=dev @slack/bolt @anthropic-ai/sdk googleapis
 
 COPY scripts/bot.js scripts/bot.js
 COPY _agents/ _agents/
