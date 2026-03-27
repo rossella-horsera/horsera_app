@@ -989,11 +989,11 @@ app.event("message", async ({ event, context }) => {
     // Add assistant reply to conversation history
     addToConversation(convKey, agentKey, "assistant", reply);
 
-    // Replace the thinking message with the real response
+    // Replace the thinking message with the real response, prefixed with agent name
     await app.client.chat.update({
       channel: channelId,
       ts: thinkingMsg.ts,
-      text: reply,
+      text: `*${agentName}:*  ${reply}`,
     });
 
     log(`${agentName} replied (${reply.length} chars)`);
