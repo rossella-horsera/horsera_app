@@ -421,9 +421,25 @@ function addToConversation(key, agent, role, content) {
 
 const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
+async function callAnthropicWithRetry(params, maxRetries = 3) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await anthropic.messages.create(params);
+    } catch (err) {
+      if (err.status === 529 && attempt < maxRetries) {
+        const delay = (attempt + 1) * 2000; // 2s, 4s, 6s
+        log(`Anthropic 529 overloaded — retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})`);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
 async function callClaude(systemPrompt, messages) {
   // Initial API call
-  let response = await anthropic.messages.create({
+  let response = await callAnthropicWithRetry({
     model: "claude-sonnet-4-20250514",
     max_tokens: 1024,
     system: systemPrompt,
@@ -466,7 +482,7 @@ async function callClaude(systemPrompt, messages) {
       { role: "user", content: toolResults },
     ];
 
-    response = await anthropic.messages.create({
+    response = await callAnthropicWithRetry({
       model: "claude-sonnet-4-20250514",
       max_tokens: 1024,
       system: systemPrompt,
