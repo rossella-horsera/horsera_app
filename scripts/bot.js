@@ -915,9 +915,24 @@ app.event("message", async ({ event, context }) => {
     const existingCtx = getConversationContext(convKey);
     let agentKey;
 
-    if (existingCtx && !AGENT_KEYWORDS.some(({ pattern }) => pattern.test(text))) {
-      // Continue with the same agent in an ongoing conversation (unless user explicitly names one)
-      agentKey = existingCtx.agent;
+    // Check if user explicitly names an agent
+    const explicitAgent = AGENT_KEYWORDS.some(({ pattern }) => pattern.test(text));
+
+    if (explicitAgent) {
+      // User named an agent — route to them
+      agentKey = detectAgent(text, channelName);
+    } else if (existingCtx) {
+      const channelDefault = CHANNEL_DEFAULTS[channelName] || "ross";
+      const timeSinceLastActivity = Date.now() - existingCtx.lastActivity;
+      const isRecentConvo = timeSinceLastActivity < 5 * 60 * 1000; // 5 minutes
+
+      if (existingCtx.agent !== channelDefault && !isRecentConvo) {
+        // Non-default agent context expired — fall back to channel default
+        agentKey = channelDefault;
+      } else {
+        // Continue with existing agent
+        agentKey = existingCtx.agent;
+      }
     } else {
       agentKey = detectAgent(text, channelName);
     }
