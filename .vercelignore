@@ -1,0 +1,8 @@
+# Exclude backend implementation from Vercel frontend build/runtime.
+pose_api/
+
+# Do not treat local Python helpers as Vercel Serverless Functions.
+api/*.py
+
+# Keep the authenticated pose proxy function.
+!api/pose.js
