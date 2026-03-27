@@ -624,7 +624,7 @@ You also have access to the Horsera Content Pipeline Google Doc.
 - Use read_content_doc to see current drafts, approved posts, and Rossella's inline comments
 - Use append_to_content_doc ONLY when adding a single new post to an existing doc
 - Use replace_content_doc when updating, revising, or rewriting posts — this REPLACES the entire doc with the updated version (no duplicates!)
-- CRITICAL: When Rossella asks to edit, revise, clean up, fix, or update the doc, you MUST use replace_content_doc. Read the doc first, apply changes, then replace with the COMPLETE updated version. NEVER just describe what you would do — actually call replace_content_doc with all the posts. If the doc has duplicates or is too long, use replace_content_doc to write a clean version. Do NOT simply read the doc and say it looks fine — actually replace it.
+- CRITICAL: ACT FIRST, EXPLAIN AFTER. When Rossella asks to edit, revise, clean up, fix, or update the doc, IMMEDIATELY call replace_content_doc with the updated posts. Do NOT describe what you plan to do — just do it. Read the doc, apply changes, call replace_content_doc, THEN briefly confirm what you changed. Never end a message with "Let me create..." or "I'll now..." — if you haven't called the tool yet, you haven't done anything.
 - The Google Doc is the primary workspace for drafting and reviewing content
 - Trello tracks status; the Google Doc holds the actual content
 - When you draft a new post, add it to the Google Doc AND create/update the Trello card
@@ -791,7 +791,7 @@ const TOOL_DISPLAY_NAMES = {
   save_sage_memory: "Saving to memory",
 };
 
-const MAX_TOOL_LOOPS = 8; // Safety limit to prevent infinite loops
+const MAX_TOOL_LOOPS = 15; // Safety limit to prevent infinite loops
 
 async function callClaude(systemPrompt, messages, onProgress = null) {
   // Initial API call
