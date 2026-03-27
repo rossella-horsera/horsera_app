@@ -442,13 +442,15 @@ app.event("message", async ({ event, context }) => {
     const ctx = getConversationContext(convKey);
     const systemPrompt = AGENTS[agentKey];
 
-    // Show typing indicator
-    try {
-      // Acknowledge we're working on it — Slack doesn't have a true typing indicator
-      // for bots in Socket Mode, so we just proceed quickly.
-    } catch {
-      // ignore
+    // Post a "thinking" message, then replace it with the real response
+    const thinkingOpts = {
+      channel: channelId,
+      text: `_${agentName} is thinking..._`,
+    };
+    if (isInThread) {
+      thinkingOpts.thread_ts = threadTs;
     }
+    const thinkingMsg = await app.client.chat.postMessage(thinkingOpts);
 
     // Call Claude
     const reply = await callClaude(systemPrompt, ctx.messages);
@@ -456,15 +458,12 @@ app.event("message", async ({ event, context }) => {
     // Add assistant reply to conversation history
     addToConversation(convKey, agentKey, "assistant", reply);
 
-    // Reply in-channel by default; only use thread if the user started one
-    const messageOpts = {
+    // Replace the thinking message with the real response
+    await app.client.chat.update({
       channel: channelId,
+      ts: thinkingMsg.ts,
       text: reply,
-    };
-    if (isInThread) {
-      messageOpts.thread_ts = threadTs;
-    }
-    await app.client.chat.postMessage(messageOpts);
+    });
 
     log(`${agentName} replied (${reply.length} chars)`);
   } catch (err) {
