@@ -180,6 +180,20 @@ function getDocsClient() {
   return docsClient;
 }
 
+let driveClient = null;
+function getDriveClient() {
+  if (driveClient) return driveClient;
+  const b64Key = ENV.GOOGLE_SERVICE_ACCOUNT_KEY;
+  if (!b64Key) return null;
+  const credentials = JSON.parse(Buffer.from(b64Key, "base64").toString("utf-8"));
+  const auth = new google.auth.GoogleAuth({
+    credentials,
+    scopes: ["https://www.googleapis.com/auth/drive"],
+  });
+  driveClient = google.drive({ version: "v3", auth });
+  return driveClient;
+}
+
 async function readGoogleDocTab(tabId = CONTENT_TAB_ID) {
   const docs = getDocsClient();
   if (!docs) throw new Error("Google Docs not configured");
@@ -190,15 +204,48 @@ async function readGoogleDocTab(tabId = CONTENT_TAB_ID) {
   // Find the right tab
   const tab = doc.data.tabs?.find((t) => t.tabProperties?.tabId === tabId);
   if (!tab) throw new Error(`Tab ${tabId} not found in document`);
+
+  // Extract text with suggestions marked
   let text = "";
   for (const element of tab.documentTab?.body?.content || []) {
     if (element.paragraph) {
       for (const el of element.paragraph.elements || []) {
-        if (el.textRun) text += el.textRun.content;
+        if (el.textRun) {
+          const content = el.textRun.content;
+          if (el.textRun.suggestedInsertionIds?.length > 0) {
+            text += `[SUGGESTION - ADD: ${content}]`;
+          } else if (el.textRun.suggestedDeletionIds?.length > 0) {
+            text += `[SUGGESTION - DELETE: ${content}]`;
+          } else {
+            text += content;
+          }
+        }
       }
     }
   }
   return { title: tab.tabProperties?.title || "Untitled", text: text.trim() };
+}
+
+async function readDocComments() {
+  const drive = getDriveClient();
+  if (!drive) return [];
+  try {
+    const res = await drive.comments.list({
+      fileId: CONTENT_DOC_ID,
+      fields: "comments(id,content,author,quotedFileContent,resolved,createdTime)",
+    });
+    return (res.data.comments || [])
+      .filter((c) => !c.resolved)
+      .map((c) => ({
+        author: c.author?.displayName || "Unknown",
+        comment: c.content,
+        quotedText: c.quotedFileContent?.value || "",
+        date: c.createdTime?.slice(0, 10) || "",
+      }));
+  } catch (err) {
+    log("Failed to read comments:", err.message);
+    return [];
+  }
 }
 
 function getTabEndIndex(tab) {
@@ -413,7 +460,13 @@ async function clearAndWriteContentTab(posts) {
 const GDOCS_TOOL_HANDLERS = {
   read_content_doc: async () => {
     const result = await readGoogleDocTab(CONTENT_TAB_ID);
-    return { success: true, title: result.title, content: result.text };
+    const comments = await readDocComments();
+    return {
+      success: true,
+      title: result.title,
+      content: result.text,
+      comments: comments.length > 0 ? comments : "No comments",
+    };
   },
   append_to_content_doc: async (input) => {
     const result = await appendFormattedPost(input);
