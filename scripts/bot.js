@@ -146,14 +146,17 @@ let docsClient = null;
 
 function getDocsClient() {
   if (docsClient) return docsClient;
-  const GOOGLE_CREDENTIALS = ENV.GOOGLE_SERVICE_ACCOUNT_KEY;
-  if (!GOOGLE_CREDENTIALS) {
-    log("Warning: GOOGLE_SERVICE_ACCOUNT_KEY not set — Google Docs tools disabled");
+  const clientEmail = ENV.GOOGLE_CLIENT_EMAIL;
+  const privateKey = ENV.GOOGLE_PRIVATE_KEY;
+  if (!clientEmail || !privateKey) {
+    log("Warning: GOOGLE_CLIENT_EMAIL or GOOGLE_PRIVATE_KEY not set — Google Docs tools disabled");
     return null;
   }
-  const credentials = JSON.parse(Buffer.from(GOOGLE_CREDENTIALS, "base64").toString("utf-8"));
   const auth = new google.auth.GoogleAuth({
-    credentials,
+    credentials: {
+      client_email: clientEmail,
+      private_key: privateKey.replace(/\\n/g, "\n"),
+    },
     scopes: ["https://www.googleapis.com/auth/documents", "https://www.googleapis.com/auth/drive"],
   });
   docsClient = google.docs({ version: "v1", auth });
