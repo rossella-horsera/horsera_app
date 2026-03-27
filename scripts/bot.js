@@ -374,6 +374,41 @@ async function appendSageMemory(content) {
   return { success: true };
 }
 
+async function clearAndWriteContentTab(posts) {
+  const docs = getDocsClient();
+  if (!docs) throw new Error("Google Docs not configured");
+
+  const doc = await docs.documents.get({ documentId: CONTENT_DOC_ID, includeTabsContent: true });
+  const tab = doc.data.tabs?.find((t) => t.tabProperties?.tabId === CONTENT_TAB_ID);
+  if (!tab) throw new Error("Content tab not found");
+  const endIndex = getTabEndIndex(tab);
+
+  // Step 1: Delete all existing content (leave index 1, the minimum)
+  const requests = [];
+  if (endIndex > 2) {
+    requests.push({
+      deleteContentRange: {
+        range: { startIndex: 1, endIndex: endIndex - 1, tabId: CONTENT_TAB_ID },
+      },
+    });
+  }
+
+  // Execute delete first
+  if (requests.length > 0) {
+    await docs.documents.batchUpdate({
+      documentId: CONTENT_DOC_ID,
+      requestBody: { requests },
+    });
+  }
+
+  // Step 2: Write each post with formatting
+  for (const post of posts) {
+    await appendFormattedPost(post);
+  }
+
+  return { success: true, postsWritten: posts.length };
+}
+
 // Google Docs tool handlers
 const GDOCS_TOOL_HANDLERS = {
   read_content_doc: async () => {
@@ -382,6 +417,10 @@ const GDOCS_TOOL_HANDLERS = {
   },
   append_to_content_doc: async (input) => {
     const result = await appendFormattedPost(input);
+    return result;
+  },
+  replace_content_doc: async (input) => {
+    const result = await clearAndWriteContentTab(input.posts);
     return result;
   },
   read_sage_memory: async () => {
@@ -463,6 +502,32 @@ const TRELLO_TOOLS = [
     },
   },
   {
+    name: "replace_content_doc",
+    description: "REPLACE the entire content of the Google Doc with updated posts. Use this when Rossella asks you to revise, update, or clean up the doc — do NOT append duplicates. Provide ALL posts that should be in the doc (the old content is deleted first).",
+    input_schema: {
+      type: "object",
+      properties: {
+        posts: {
+          type: "array",
+          description: "Array of all posts to write to the doc (replaces everything)",
+          items: {
+            type: "object",
+            properties: {
+              title: { type: "string" },
+              status: { type: "string" },
+              hook: { type: "string" },
+              body: { type: "string" },
+              hashtags: { type: "string" },
+              notes: { type: "string" },
+            },
+            required: ["title", "hook", "body", "hashtags"],
+          },
+        },
+      },
+      required: ["posts"],
+    },
+  },
+  {
     name: "read_sage_memory",
     description: "Read Sage's persistent memory — conversation history, preferences, and context from past sessions. Always read this at the start of a new conversation to maintain continuity.",
     input_schema: {
@@ -504,7 +569,9 @@ When she requests changes, update the card description with the new draft and mo
 
 You also have access to the Horsera Content Pipeline Google Doc.
 - Use read_content_doc to see current drafts, approved posts, and Rossella's inline comments
-- Use append_to_content_doc to add new post drafts — provide structured data (title, hook, body, hashtags, notes) and the doc will be formatted beautifully with Horsera brand colors
+- Use append_to_content_doc ONLY when adding a single new post to an existing doc
+- Use replace_content_doc when updating, revising, or rewriting posts — this REPLACES the entire doc with the updated version (no duplicates!)
+- IMPORTANT: When Rossella asks to edit, revise, or update the doc, ALWAYS use replace_content_doc. Read the doc first, apply changes, then replace with the updated version. NEVER append a revised version — that creates duplicates.
 - The Google Doc is the primary workspace for drafting and reviewing content
 - Trello tracks status; the Google Doc holds the actual content
 - When you draft a new post, add it to the Google Doc AND create/update the Trello card
