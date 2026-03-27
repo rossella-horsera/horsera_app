@@ -141,7 +141,8 @@ const TRELLO_TOOL_HANDLERS = {
 // ── Google Docs config ──────────────────────────────────────────────────────
 
 const CONTENT_DOC_ID = "1BulY-4nHxpn69ZUbOItOxYN1OArDktyBoc_bVDDI-xM";
-const MEMORY_DOC_ID = ENV.SAGE_MEMORY_DOC_ID || "";
+const CONTENT_TAB_ID = "t.0";
+const MEMORY_TAB_ID = "t.m8e6w0f9mcmv";
 
 // Horsera brand colors
 const COLORS = {
@@ -179,27 +180,40 @@ function getDocsClient() {
   return docsClient;
 }
 
-async function readGoogleDoc(docId = CONTENT_DOC_ID) {
+async function readGoogleDocTab(tabId = CONTENT_TAB_ID) {
   const docs = getDocsClient();
   if (!docs) throw new Error("Google Docs not configured");
-  const doc = await docs.documents.get({ documentId: docId });
+  const doc = await docs.documents.get({
+    documentId: CONTENT_DOC_ID,
+    includeTabsContent: true,
+  });
+  // Find the right tab
+  const tab = doc.data.tabs?.find((t) => t.tabProperties?.tabId === tabId);
+  if (!tab) throw new Error(`Tab ${tabId} not found in document`);
   let text = "";
-  for (const element of doc.data.body.content || []) {
+  for (const element of tab.documentTab?.body?.content || []) {
     if (element.paragraph) {
       for (const el of element.paragraph.elements || []) {
         if (el.textRun) text += el.textRun.content;
       }
     }
   }
-  return { title: doc.data.title, text: text.trim() };
+  return { title: tab.tabProperties?.title || "Untitled", text: text.trim() };
+}
+
+function getTabEndIndex(tab) {
+  const content = tab.documentTab?.body?.content || [];
+  return content.at(-1)?.endIndex || 1;
 }
 
 async function appendFormattedPost(postData) {
   const docs = getDocsClient();
   if (!docs) throw new Error("Google Docs not configured");
 
-  const doc = await docs.documents.get({ documentId: CONTENT_DOC_ID });
-  const endIndex = doc.data.body.content.at(-1)?.endIndex || 1;
+  const doc = await docs.documents.get({ documentId: CONTENT_DOC_ID, includeTabsContent: true });
+  const tab = doc.data.tabs?.find((t) => t.tabProperties?.tabId === CONTENT_TAB_ID);
+  if (!tab) throw new Error("Content tab not found");
+  const endIndex = getTabEndIndex(tab);
   const startIdx = endIndex - 1;
 
   // Build the post text block
@@ -224,9 +238,9 @@ async function appendFormattedPost(postData) {
 
   const fullText = divider + statusLine + titleLine + hookLabel + hookText + bodyLabel + bodyText + hashtagsLabel + hashtagsText + notesSection;
 
-  // Step 1: Insert all text
+  // Step 1: Insert all text (specify tab)
   const requests = [
-    { insertText: { location: { index: startIdx }, text: fullText } },
+    { insertText: { location: { index: startIdx, tabId: CONTENT_TAB_ID }, text: fullText } },
   ];
 
   // Step 2: Apply formatting (indices relative to startIdx)
@@ -333,9 +347,8 @@ async function appendFormattedPost(postData) {
 // ── Sage Memory (persistent across redeploys) ──────────────────────────────
 
 async function readSageMemory() {
-  if (!MEMORY_DOC_ID) return "";
   try {
-    const result = await readGoogleDoc(MEMORY_DOC_ID);
+    const result = await readGoogleDocTab(MEMORY_TAB_ID);
     return result.text;
   } catch (err) {
     log("Failed to read Sage memory:", err.message);
@@ -344,17 +357,18 @@ async function readSageMemory() {
 }
 
 async function appendSageMemory(content) {
-  if (!MEMORY_DOC_ID) throw new Error("SAGE_MEMORY_DOC_ID not configured");
   const docs = getDocsClient();
   if (!docs) throw new Error("Google Docs not configured");
-  const doc = await docs.documents.get({ documentId: MEMORY_DOC_ID });
-  const endIndex = doc.data.body.content.at(-1)?.endIndex || 1;
+  const doc = await docs.documents.get({ documentId: CONTENT_DOC_ID, includeTabsContent: true });
+  const tab = doc.data.tabs?.find((t) => t.tabProperties?.tabId === MEMORY_TAB_ID);
+  if (!tab) throw new Error("Sage-memory tab not found");
+  const endIndex = getTabEndIndex(tab);
   const date = new Date().toISOString().slice(0, 10);
   const entry = `\n[${date}] ${content}\n`;
   await docs.documents.batchUpdate({
-    documentId: MEMORY_DOC_ID,
+    documentId: CONTENT_DOC_ID,
     requestBody: {
-      requests: [{ insertText: { location: { index: endIndex - 1 }, text: entry } }],
+      requests: [{ insertText: { location: { index: endIndex - 1, tabId: MEMORY_TAB_ID }, text: entry } }],
     },
   });
   return { success: true };
@@ -363,7 +377,7 @@ async function appendSageMemory(content) {
 // Google Docs tool handlers
 const GDOCS_TOOL_HANDLERS = {
   read_content_doc: async () => {
-    const result = await readGoogleDoc(CONTENT_DOC_ID);
+    const result = await readGoogleDocTab(CONTENT_TAB_ID);
     return { success: true, title: result.title, content: result.text };
   },
   append_to_content_doc: async (input) => {
@@ -765,7 +779,7 @@ app.event("message", async ({ event, context }) => {
 
     // For Sage's first message in a new conversation, inject memory into system prompt
     let systemPrompt = AGENTS[agentKey];
-    if (agentKey === "sage" && ctx.messages.length === 1 && MEMORY_DOC_ID) {
+    if (agentKey === "sage" && ctx.messages.length === 1) {
       try {
         const memory = await readSageMemory();
         if (memory) {
