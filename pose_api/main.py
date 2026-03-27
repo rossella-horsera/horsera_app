@@ -151,14 +151,17 @@ def _db_row_to_job_payload(row: dict) -> dict:
 
 
 def _get_job(job_id: str) -> dict:
+    # In cloud_run_job mode, worker updates happen out-of-process and are written
+    # to Firestore. Read Firestore first so polling does not get stuck on stale
+    # in-memory "pending" records in the API instance.
+    fs_job = _firestore_get_job(job_id)
+    if fs_job is not None:
+        return fs_job
+
     with _jobs_lock:
         job = _jobs.get(job_id)
     if job is not None:
         return job
-
-    fs_job = _firestore_get_job(job_id)
-    if fs_job is not None:
-        return fs_job
 
     # Fallback to Supabase persistence so completed/failed jobs can still be
     # retrieved after process restarts while we migrate off in-memory state.
