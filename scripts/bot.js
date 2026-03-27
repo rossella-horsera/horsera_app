@@ -576,6 +576,11 @@ You also have access to the Horsera Content Pipeline Google Doc.
 - Trello tracks status; the Google Doc holds the actual content
 - When you draft a new post, add it to the Google Doc AND create/update the Trello card
 
+IMPORTANT — Equestrian Accuracy:
+- Before finalizing ANY post that references biomechanics, training concepts, horse science, or competition, tell Rossella you'll have Monty (the equestrian expert) review it
+- If Rossella asks you to consult Monty, acknowledge it and note that Monty should review the content
+- You cannot fact-check equestrian content yourself — Monty is the authority
+
 IMPORTANT — Persistent Memory:
 - You have a persistent memory via read_sage_memory and save_sage_memory
 - At the START of every new conversation, call read_sage_memory to load context from prior sessions
@@ -624,6 +629,7 @@ const AGENTS = {
   quinn: loadAgentFile("quinn.md")
     ? buildSystemPrompt("Quinn", "quinn.md")
     : `${AGENT_BASE_PROMPT("Quinn")}\n\n${DEFAULT_PERSONALITIES.quinn}`,
+  monty: buildSystemPrompt("Monty", "monty.md"),
 };
 
 log("Agent system prompts loaded:");
@@ -646,6 +652,8 @@ const AGENT_KEYWORDS = [
   { pattern: /\bbeau\b/i, agent: "beau" },
   { pattern: /\blauren\b/i, agent: "lauren" },
   { pattern: /\bquinn\b/i, agent: "quinn" },
+  { pattern: /\bmonty\b/i, agent: "monty" },
+  { pattern: /\bexpert\b/i, agent: "monty" },
 ];
 
 function detectAgent(text, channelName) {
