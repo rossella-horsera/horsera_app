@@ -28,20 +28,23 @@ function log(...args) {
 // ── Load .env.local ─────────────────────────────────────────────────────────
 
 function loadEnv() {
+  // In production (Railway), env vars come from process.env
+  // Locally, read from .env.local
   const envPath = path.join(ROOT, ".env.local");
-  if (!fs.existsSync(envPath)) {
-    throw new Error("Missing .env.local in project root");
+  if (fs.existsSync(envPath)) {
+    const lines = fs.readFileSync(envPath, "utf-8").split("\n");
+    const env = {};
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eqIdx = trimmed.indexOf("=");
+      if (eqIdx === -1) continue;
+      env[trimmed.slice(0, eqIdx).trim()] = trimmed.slice(eqIdx + 1).trim();
+    }
+    return env;
   }
-  const lines = fs.readFileSync(envPath, "utf-8").split("\n");
-  const env = {};
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eqIdx = trimmed.indexOf("=");
-    if (eqIdx === -1) continue;
-    env[trimmed.slice(0, eqIdx).trim()] = trimmed.slice(eqIdx + 1).trim();
-  }
-  return env;
+  // Fall back to process.env (Railway, Docker, etc.)
+  return process.env;
 }
 
 const ENV = loadEnv();
