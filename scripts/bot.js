@@ -791,24 +791,34 @@ const TOOL_DISPLAY_NAMES = {
   save_sage_memory: "Saving to memory",
 };
 
-const MAX_TOOL_LOOPS = 15; // Safety limit to prevent infinite loops
+const MAX_TOOL_LOOPS = 30; // High safety limit — auto-continue handles the flow
 
 async function callClaude(systemPrompt, messages, onProgress = null) {
-  // Initial API call
+  // Build an accumulating message history so tool calls chain properly
+  let allMessages = [...messages];
+
   let response = await callAnthropicWithRetry({
     model: "claude-sonnet-4-20250514",
     max_tokens: 4096,
     system: systemPrompt,
-    messages,
+    messages: allMessages,
     tools: TRELLO_TOOLS,
   });
 
-  // Process tool calls in a loop until we get a final text response
   let loopCount = 0;
   while (response.stop_reason === "tool_use") {
     loopCount++;
     if (loopCount > MAX_TOOL_LOOPS) {
-      log("Tool loop limit reached — breaking");
+      log("Tool loop hard limit reached — forcing completion");
+      // Ask Claude to wrap up without tools
+      allMessages.push({ role: "assistant", content: response.content });
+      allMessages.push({ role: "user", content: [{ type: "text", text: "You've used many tool calls. Please provide your final response now without any more tool calls." }] });
+      response = await callAnthropicWithRetry({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 4096,
+        system: systemPrompt,
+        messages: allMessages,
+      });
       break;
     }
 
@@ -818,7 +828,6 @@ async function callClaude(systemPrompt, messages, onProgress = null) {
     // Execute each tool call
     const toolResults = [];
     for (const toolUse of toolUseBlocks) {
-      // Update progress
       const displayName = TOOL_DISPLAY_NAMES[toolUse.name] || toolUse.name;
       if (onProgress) await onProgress(displayName);
 
@@ -827,9 +836,9 @@ async function callClaude(systemPrompt, messages, onProgress = null) {
       if (handler) {
         try {
           result = await handler(toolUse.input);
-          log(`Tool ${toolUse.name} succeeded:`, JSON.stringify(result).slice(0, 200));
+          log(`Tool [${loopCount}] ${toolUse.name} succeeded:`, JSON.stringify(result).slice(0, 200));
         } catch (err) {
-          log(`Tool ${toolUse.name} failed:`, err.message);
+          log(`Tool [${loopCount}] ${toolUse.name} failed:`, err.message);
           result = { success: false, error: err.message };
         }
       } else {
@@ -842,12 +851,9 @@ async function callClaude(systemPrompt, messages, onProgress = null) {
       });
     }
 
-    // Continue the conversation with tool results
-    const updatedMessages = [
-      ...messages,
-      { role: "assistant", content: assistantContent },
-      { role: "user", content: toolResults },
-    ];
+    // Accumulate messages so Claude has full history
+    allMessages.push({ role: "assistant", content: assistantContent });
+    allMessages.push({ role: "user", content: toolResults });
 
     if (onProgress) await onProgress("Thinking");
 
@@ -855,7 +861,7 @@ async function callClaude(systemPrompt, messages, onProgress = null) {
       model: "claude-sonnet-4-20250514",
       max_tokens: 4096,
       system: systemPrompt,
-      messages: updatedMessages,
+      messages: allMessages,
       tools: TRELLO_TOOLS,
     });
   }
