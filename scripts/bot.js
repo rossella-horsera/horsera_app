@@ -652,30 +652,54 @@ async function callAnthropicWithRetry(params, maxRetries = 3) {
   }
 }
 
-async function callClaude(systemPrompt, messages) {
+// Friendly tool names for progress display
+const TOOL_DISPLAY_NAMES = {
+  move_card: "Moving Trello card",
+  add_comment: "Adding Trello comment",
+  create_card: "Creating Trello card",
+  read_content_doc: "Reading the Google Doc",
+  append_to_content_doc: "Writing to the Google Doc",
+  read_sage_memory: "Loading memory",
+  save_sage_memory: "Saving to memory",
+};
+
+const MAX_TOOL_LOOPS = 8; // Safety limit to prevent infinite loops
+
+async function callClaude(systemPrompt, messages, onProgress = null) {
   // Initial API call
   let response = await callAnthropicWithRetry({
     model: "claude-sonnet-4-20250514",
-    max_tokens: 1024,
+    max_tokens: 4096,
     system: systemPrompt,
     messages,
     tools: TRELLO_TOOLS,
   });
 
   // Process tool calls in a loop until we get a final text response
+  let loopCount = 0;
   while (response.stop_reason === "tool_use") {
+    loopCount++;
+    if (loopCount > MAX_TOOL_LOOPS) {
+      log("Tool loop limit reached — breaking");
+      break;
+    }
+
     const assistantContent = response.content;
     const toolUseBlocks = assistantContent.filter((b) => b.type === "tool_use");
 
     // Execute each tool call
     const toolResults = [];
     for (const toolUse of toolUseBlocks) {
+      // Update progress
+      const displayName = TOOL_DISPLAY_NAMES[toolUse.name] || toolUse.name;
+      if (onProgress) await onProgress(displayName);
+
       const handler = TRELLO_TOOL_HANDLERS[toolUse.name];
       let result;
       if (handler) {
         try {
           result = await handler(toolUse.input);
-          log(`Tool ${toolUse.name} succeeded:`, JSON.stringify(result));
+          log(`Tool ${toolUse.name} succeeded:`, JSON.stringify(result).slice(0, 200));
         } catch (err) {
           log(`Tool ${toolUse.name} failed:`, err.message);
           result = { success: false, error: err.message };
@@ -697,9 +721,11 @@ async function callClaude(systemPrompt, messages) {
       { role: "user", content: toolResults },
     ];
 
+    if (onProgress) await onProgress("Thinking");
+
     response = await callAnthropicWithRetry({
       model: "claude-sonnet-4-20250514",
-      max_tokens: 1024,
+      max_tokens: 4096,
       system: systemPrompt,
       messages: updatedMessages,
       tools: TRELLO_TOOLS,
@@ -801,8 +827,21 @@ app.event("message", async ({ event, context }) => {
     }
     thinkingMsg = await app.client.chat.postMessage(thinkingOpts);
 
+    // Progress callback — updates the thinking message with what Sage is doing
+    const onProgress = async (status) => {
+      try {
+        await app.client.chat.update({
+          channel: channelId,
+          ts: thinkingMsg.ts,
+          text: `_${agentName}: ${status}..._`,
+        });
+      } catch {
+        // ignore update failures
+      }
+    };
+
     // Call Claude
-    const reply = await callClaude(systemPrompt, ctx.messages);
+    const reply = await callClaude(systemPrompt, ctx.messages, onProgress);
 
     // Add assistant reply to conversation history
     addToConversation(convKey, agentKey, "assistant", reply);
