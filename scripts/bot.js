@@ -990,10 +990,11 @@ app.event("message", async ({ event, context }) => {
     addToConversation(convKey, agentKey, "assistant", reply);
 
     // Replace the thinking message with the real response, prefixed with agent name
+    const finalReply = reply?.trim() ? `*${agentName}:*  ${reply}` : `*${agentName}:*  Done! Let me know if you need anything else.`;
     await app.client.chat.update({
       channel: channelId,
       ts: thinkingMsg.ts,
-      text: `*${agentName}:*  ${reply}`,
+      text: finalReply,
     });
 
     log(`${agentName} replied (${reply.length} chars)`);
