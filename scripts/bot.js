@@ -141,6 +141,17 @@ const TRELLO_TOOL_HANDLERS = {
 // ── Google Docs config ──────────────────────────────────────────────────────
 
 const CONTENT_DOC_ID = "1BulY-4nHxpn69ZUbOItOxYN1OArDktyBoc_bVDDI-xM";
+const MEMORY_DOC_ID = ENV.SAGE_MEMORY_DOC_ID || "";
+
+// Horsera brand colors
+const COLORS = {
+  cognac: { red: 0.549, green: 0.353, blue: 0.235 },     // #8C5A3C
+  champagne: { red: 0.788, green: 0.663, blue: 0.431 },   // #C9A96E
+  cadenceBlue: { red: 0.420, green: 0.498, blue: 0.639 }, // #6B7FA3
+  progressGreen: { red: 0.490, green: 0.608, blue: 0.463 }, // #7D9B76
+  ink: { red: 0.102, green: 0.078, blue: 0.055 },          // #1A140E
+  stone: { red: 0.941, green: 0.922, blue: 0.894 },        // #F0EBE4
+};
 
 let docsClient = null;
 
@@ -168,11 +179,10 @@ function getDocsClient() {
   return docsClient;
 }
 
-async function readGoogleDoc() {
+async function readGoogleDoc(docId = CONTENT_DOC_ID) {
   const docs = getDocsClient();
   if (!docs) throw new Error("Google Docs not configured");
-  const doc = await docs.documents.get({ documentId: CONTENT_DOC_ID });
-  // Extract plain text from the doc
+  const doc = await docs.documents.get({ documentId: docId });
   let text = "";
   for (const element of doc.data.body.content || []) {
     if (element.paragraph) {
@@ -184,36 +194,188 @@ async function readGoogleDoc() {
   return { title: doc.data.title, text: text.trim() };
 }
 
-async function appendToGoogleDoc(content) {
+async function appendFormattedPost(postData) {
   const docs = getDocsClient();
   if (!docs) throw new Error("Google Docs not configured");
-  // Get current doc length
+
   const doc = await docs.documents.get({ documentId: CONTENT_DOC_ID });
   const endIndex = doc.data.body.content.at(-1)?.endIndex || 1;
-  await docs.documents.batchUpdate({
-    documentId: CONTENT_DOC_ID,
-    requestBody: {
-      requests: [
-        {
-          insertText: {
-            location: { index: endIndex - 1 },
-            text: content,
-          },
-        },
-      ],
+  const startIdx = endIndex - 1;
+
+  // Build the post text block
+  const divider = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n";
+  const status = postData.status || "Draft";
+  const date = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  const title = postData.title || "Untitled Post";
+  const hook = postData.hook || "";
+  const body = postData.body || "";
+  const hashtags = postData.hashtags || "";
+  const notes = postData.notes || "";
+
+  const statusLine = `[${status}]  •  ${date}\n`;
+  const titleLine = `${title}\n\n`;
+  const hookLabel = "HOOK\n";
+  const hookText = `${hook}\n\n`;
+  const bodyLabel = "BODY\n";
+  const bodyText = `${body}\n\n`;
+  const hashtagsLabel = "HASHTAGS\n";
+  const hashtagsText = `${hashtags}\n\n`;
+  const notesSection = notes ? `ROSSELLA'S NOTES\n${notes}\n\n` : "ROSSELLA'S NOTES\n(Add your feedback here)\n\n";
+
+  const fullText = divider + statusLine + titleLine + hookLabel + hookText + bodyLabel + bodyText + hashtagsLabel + hashtagsText + notesSection;
+
+  // Step 1: Insert all text
+  const requests = [
+    { insertText: { location: { index: startIdx }, text: fullText } },
+  ];
+
+  // Step 2: Apply formatting (indices relative to startIdx)
+  let idx = startIdx;
+
+  // Divider — cognac color
+  requests.push({
+    updateTextStyle: {
+      range: { startIndex: idx, endIndex: idx + divider.length },
+      textStyle: { foregroundColor: { color: { rgbColor: COLORS.cognac } } },
+      fields: "foregroundColor",
     },
   });
+  idx += divider.length;
+
+  // Status line — champagne, small caps feel
+  requests.push({
+    updateTextStyle: {
+      range: { startIndex: idx, endIndex: idx + statusLine.length },
+      textStyle: {
+        foregroundColor: { color: { rgbColor: COLORS.champagne } },
+        bold: true,
+        fontSize: { magnitude: 9, unit: "PT" },
+      },
+      fields: "foregroundColor,bold,fontSize",
+    },
+  });
+  idx += statusLine.length;
+
+  // Title — heading style, cognac
+  requests.push({
+    updateParagraphStyle: {
+      range: { startIndex: idx, endIndex: idx + titleLine.length },
+      paragraphStyle: { namedStyleType: "HEADING_2" },
+      fields: "namedStyleType",
+    },
+  });
+  requests.push({
+    updateTextStyle: {
+      range: { startIndex: idx, endIndex: idx + titleLine.length - 1 },
+      textStyle: { foregroundColor: { color: { rgbColor: COLORS.cognac } } },
+      fields: "foregroundColor",
+    },
+  });
+  idx += titleLine.length;
+
+  // Section labels — bold, cadence blue, small
+  const sections = [
+    { label: hookLabel, text: hookText },
+    { label: bodyLabel, text: bodyText },
+    { label: hashtagsLabel, text: hashtagsText },
+  ];
+
+  for (const section of sections) {
+    requests.push({
+      updateTextStyle: {
+        range: { startIndex: idx, endIndex: idx + section.label.length },
+        textStyle: {
+          foregroundColor: { color: { rgbColor: COLORS.cadenceBlue } },
+          bold: true,
+          fontSize: { magnitude: 8, unit: "PT" },
+        },
+        fields: "foregroundColor,bold,fontSize",
+      },
+    });
+    idx += section.label.length;
+
+    // Body text — ink color, normal
+    requests.push({
+      updateTextStyle: {
+        range: { startIndex: idx, endIndex: idx + section.text.length },
+        textStyle: {
+          foregroundColor: { color: { rgbColor: COLORS.ink } },
+          fontSize: { magnitude: 11, unit: "PT" },
+        },
+        fields: "foregroundColor,fontSize",
+      },
+    });
+    idx += section.text.length;
+  }
+
+  // Notes label — progress green
+  const notesLabel = "ROSSELLA'S NOTES\n";
+  requests.push({
+    updateTextStyle: {
+      range: { startIndex: idx, endIndex: idx + notesLabel.length },
+      textStyle: {
+        foregroundColor: { color: { rgbColor: COLORS.progressGreen } },
+        bold: true,
+        fontSize: { magnitude: 8, unit: "PT" },
+      },
+      fields: "foregroundColor,bold,fontSize",
+    },
+  });
+
+  await docs.documents.batchUpdate({
+    documentId: CONTENT_DOC_ID,
+    requestBody: { requests },
+  });
+
   return { success: true, docId: CONTENT_DOC_ID };
+}
+
+// ── Sage Memory (persistent across redeploys) ──────────────────────────────
+
+async function readSageMemory() {
+  if (!MEMORY_DOC_ID) return "";
+  try {
+    const result = await readGoogleDoc(MEMORY_DOC_ID);
+    return result.text;
+  } catch (err) {
+    log("Failed to read Sage memory:", err.message);
+    return "";
+  }
+}
+
+async function appendSageMemory(content) {
+  if (!MEMORY_DOC_ID) throw new Error("SAGE_MEMORY_DOC_ID not configured");
+  const docs = getDocsClient();
+  if (!docs) throw new Error("Google Docs not configured");
+  const doc = await docs.documents.get({ documentId: MEMORY_DOC_ID });
+  const endIndex = doc.data.body.content.at(-1)?.endIndex || 1;
+  const date = new Date().toISOString().slice(0, 10);
+  const entry = `\n[${date}] ${content}\n`;
+  await docs.documents.batchUpdate({
+    documentId: MEMORY_DOC_ID,
+    requestBody: {
+      requests: [{ insertText: { location: { index: endIndex - 1 }, text: entry } }],
+    },
+  });
+  return { success: true };
 }
 
 // Google Docs tool handlers
 const GDOCS_TOOL_HANDLERS = {
   read_content_doc: async () => {
-    const result = await readGoogleDoc();
+    const result = await readGoogleDoc(CONTENT_DOC_ID);
     return { success: true, title: result.title, content: result.text };
   },
   append_to_content_doc: async (input) => {
-    const result = await appendToGoogleDoc(input.content);
+    const result = await appendFormattedPost(input);
+    return result;
+  },
+  read_sage_memory: async () => {
+    const text = await readSageMemory();
+    return { success: true, content: text };
+  },
+  save_sage_memory: async (input) => {
+    const result = await appendSageMemory(input.content);
     return result;
   },
 };
@@ -272,11 +434,36 @@ const TRELLO_TOOLS = [
   },
   {
     name: "append_to_content_doc",
-    description: "Append content to the end of the Horsera Content Pipeline Google Doc. Use this to add new post drafts, updates, or notes. Use markdown-style formatting (# for headings, --- for dividers, ** for bold).",
+    description: "Add a beautifully formatted LinkedIn post draft to the Horsera Content Pipeline Google Doc. The doc is styled with Horsera brand colors automatically. Provide structured post data.",
     input_schema: {
       type: "object",
       properties: {
-        content: { type: "string", description: "The text content to append to the doc" },
+        title: { type: "string", description: "Post title (e.g., 'Swimming With Horses — Personal Story')" },
+        status: { type: "string", description: "Status: Draft, In Review, Approved, Published" },
+        hook: { type: "string", description: "The opening hook line (bold, attention-grabbing)" },
+        body: { type: "string", description: "The main post body (2-4 paragraphs)" },
+        hashtags: { type: "string", description: "Hashtags (e.g., '#equestrian #horsescience')" },
+        notes: { type: "string", description: "Optional notes or questions for Rossella" },
+      },
+      required: ["title", "hook", "body", "hashtags"],
+    },
+  },
+  {
+    name: "read_sage_memory",
+    description: "Read Sage's persistent memory — conversation history, preferences, and context from past sessions. Always read this at the start of a new conversation to maintain continuity.",
+    input_schema: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "save_sage_memory",
+    description: "Save an important fact, decision, preference, or conversation summary to Sage's persistent memory. Use this to remember things across sessions — e.g., content decisions, Rossella's feedback patterns, approved topics, ongoing projects. Be concise but specific.",
+    input_schema: {
+      type: "object",
+      properties: {
+        content: { type: "string", description: "The memory to save (concise, specific, useful for future sessions)" },
       },
       required: ["content"],
     },
@@ -303,11 +490,17 @@ When she requests changes, update the card description with the new draft and mo
 
 You also have access to the Horsera Content Pipeline Google Doc.
 - Use read_content_doc to see current drafts, approved posts, and Rossella's inline comments
-- Use append_to_content_doc to add new post drafts to the doc
+- Use append_to_content_doc to add new post drafts — provide structured data (title, hook, body, hashtags, notes) and the doc will be formatted beautifully with Horsera brand colors
 - The Google Doc is the primary workspace for drafting and reviewing content
 - Trello tracks status; the Google Doc holds the actual content
 - When you draft a new post, add it to the Google Doc AND create/update the Trello card
-- Format drafts in the doc with clear headings, status, and sections for hook/body/hashtags/images`;
+
+IMPORTANT — Persistent Memory:
+- You have a persistent memory via read_sage_memory and save_sage_memory
+- At the START of every new conversation, call read_sage_memory to load context from prior sessions
+- After meaningful conversations (content decisions, feedback, new topics, preferences), save key takeaways to memory
+- This memory survives restarts and redeploys — it is your long-term knowledge base
+- Save things like: approved topics, Rossella's content preferences, ongoing projects, key decisions, feedback patterns`;
 
 function loadAgentFile(filename) {
   const filePath = path.join(ROOT, "_agents", filename);
@@ -569,7 +762,20 @@ app.event("message", async ({ event, context }) => {
 
     // Build messages array from conversation history
     const ctx = getConversationContext(convKey);
-    const systemPrompt = AGENTS[agentKey];
+
+    // For Sage's first message in a new conversation, inject memory into system prompt
+    let systemPrompt = AGENTS[agentKey];
+    if (agentKey === "sage" && ctx.messages.length === 1 && MEMORY_DOC_ID) {
+      try {
+        const memory = await readSageMemory();
+        if (memory) {
+          systemPrompt += `\n\n--- Sage's Memory (from prior sessions) ---\n${memory}`;
+          log("Loaded Sage memory into system prompt");
+        }
+      } catch (err) {
+        log("Failed to load Sage memory:", err.message);
+      }
+    }
 
     // Post a "thinking" message, then replace it with the real response
     const thinkingOpts = {
