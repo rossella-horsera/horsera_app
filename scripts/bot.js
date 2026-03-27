@@ -624,7 +624,7 @@ You also have access to the Horsera Content Pipeline Google Doc.
 - Use read_content_doc to see current drafts, approved posts, and Rossella's inline comments
 - Use append_to_content_doc ONLY when adding a single new post to an existing doc
 - Use replace_content_doc when updating, revising, or rewriting posts — this REPLACES the entire doc with the updated version (no duplicates!)
-- IMPORTANT: When Rossella asks to edit, revise, or update the doc, ALWAYS use replace_content_doc. Read the doc first, apply changes, then replace with the updated version. NEVER append a revised version — that creates duplicates.
+- CRITICAL: When Rossella asks to edit, revise, clean up, fix, or update the doc, you MUST use replace_content_doc. Read the doc first, apply changes, then replace with the COMPLETE updated version. NEVER just describe what you would do — actually call replace_content_doc with all the posts. If the doc has duplicates or is too long, use replace_content_doc to write a clean version. Do NOT simply read the doc and say it looks fine — actually replace it.
 - The Google Doc is the primary workspace for drafting and reviewing content
 - Trello tracks status; the Google Doc holds the actual content
 - When you draft a new post, add it to the Google Doc AND create/update the Trello card
@@ -931,14 +931,14 @@ app.event("message", async ({ event, context }) => {
     // Build messages array from conversation history
     const ctx = getConversationContext(convKey);
 
-    // For Sage's first message in a new conversation, inject memory into system prompt
+    // For Sage, always inject memory into system prompt (not just first message)
     let systemPrompt = AGENTS[agentKey];
-    if (agentKey === "sage" && ctx.messages.length === 1) {
+    if (agentKey === "sage") {
       try {
         const memory = await readSageMemory();
         if (memory) {
           systemPrompt += `\n\n--- Sage's Memory (from prior sessions) ---\n${memory}`;
-          log("Loaded Sage memory into system prompt");
+          if (ctx.messages.length === 1) log("Loaded Sage memory into system prompt");
         }
       } catch (err) {
         log("Failed to load Sage memory:", err.message);
