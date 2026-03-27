@@ -79,10 +79,41 @@ async function _getIdTokenViaWif(audience) {
     },
   });
 
-  const googleAuth = new GoogleAuth({ authClient });
-  const idClient = await googleAuth.getIdTokenClient(audience);
-  const headers = await idClient.getRequestHeaders(audience);
-  return headers.Authorization || headers.authorization;
+  const accessTokenResponse = await authClient.getAccessToken();
+  const accessToken = typeof accessTokenResponse === 'string'
+    ? accessTokenResponse
+    : accessTokenResponse?.token;
+
+  if (!accessToken) {
+    throw new Error('Failed to mint federated access token via Workload Identity Federation');
+  }
+
+  const tokenRes = await fetch(
+    `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${encodeURIComponent(serviceAccountEmail)}:generateIdToken`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        audience,
+        includeEmail: true,
+      }),
+    }
+  );
+
+  if (!tokenRes.ok) {
+    const body = await tokenRes.text();
+    throw new Error(`WIF generateIdToken failed (${tokenRes.status}): ${body}`);
+  }
+
+  const payload = await tokenRes.json();
+  if (!payload?.token) {
+    throw new Error('WIF generateIdToken succeeded but no token was returned');
+  }
+
+  return `Bearer ${payload.token}`;
 }
 
 async function _getIdTokenViaGoogleAuth(audience) {
@@ -121,12 +152,37 @@ function _requestBody(req) {
   return JSON.stringify(req.body);
 }
 
+function _stripProxyPrefix(pathLike) {
+  const raw = String(pathLike || '').replace(/^\/+/, '');
+  if (raw === 'api/pose') return '';
+  if (raw.startsWith('api/pose/')) return raw.slice('api/pose/'.length);
+  return raw;
+}
+
+function _extractProxyPath(req) {
+  const pathParam = req?.query?.path;
+  if (Array.isArray(pathParam) && pathParam.length > 0) {
+    return _stripProxyPrefix(pathParam.join('/'));
+  }
+  if (typeof pathParam === 'string' && pathParam.trim()) {
+    return _stripProxyPrefix(pathParam);
+  }
+
+  const rawUrl = req?.url || '';
+  try {
+    const parsed = new URL(rawUrl, 'http://localhost');
+    return _stripProxyPrefix(parsed.pathname);
+  } catch {
+    return _stripProxyPrefix(rawUrl.split('?')[0] || '');
+  }
+}
+
 function _buildUpstreamUrl(req, baseUrl) {
-  const pathParam = req.query.path;
-  const path = Array.isArray(pathParam) ? pathParam.join('/') : (pathParam || '');
-  const queryIndex = (req.url || '').indexOf('?');
-  const query = queryIndex >= 0 ? req.url.slice(queryIndex) : '';
-  return `${baseUrl}/${path}${query}`;
+  const path = _extractProxyPath(req);
+  const rawUrl = req.url || '';
+  const queryIndex = rawUrl.indexOf('?');
+  const query = queryIndex >= 0 ? rawUrl.slice(queryIndex) : '';
+  return path ? `${baseUrl}/${path}${query}` : `${baseUrl}${query}`;
 }
 
 function _copyResponseHeaders(upstream, res) {
@@ -140,6 +196,8 @@ function _copyResponseHeaders(upstream, res) {
 
 export default async function handler(req, res) {
   try {
+    const debugEnabled = _toBool(process.env.POSE_PROXY_DEBUG, false);
+
     if (req.method === 'OPTIONS') {
       res.status(204).end();
       return;
@@ -154,6 +212,9 @@ export default async function handler(req, res) {
 
     const body = await _requestBody(req);
     const upstreamUrl = _buildUpstreamUrl(req, baseUrl);
+    if (debugEnabled) {
+      console.log(`[pose-proxy] ${req.method} ${req.url || ''} -> ${upstreamUrl}`);
+    }
     const upstreamHeaders = {
       Authorization: authHeader,
     };
@@ -168,6 +229,11 @@ export default async function handler(req, res) {
       body,
     });
 
+    if (debugEnabled) {
+      res.setHeader('x-pose-proxy-upstream-url', upstreamUrl);
+      res.setHeader('x-pose-proxy-upstream-status', String(upstreamRes.status));
+    }
+
     _copyResponseHeaders(upstreamRes, res);
     res.status(upstreamRes.status);
 
@@ -175,7 +241,14 @@ export default async function handler(req, res) {
     res.send(raw);
   } catch (error) {
     const exposeDetails = _toBool(process.env.POSE_PROXY_EXPOSE_ERRORS, false);
+    const debugEnabled = _toBool(process.env.POSE_PROXY_DEBUG, false);
     const message = error instanceof Error ? error.message : 'Unknown proxy error';
+    if (debugEnabled) {
+      console.error('[pose-proxy] request failed:', message);
+      if (error instanceof Error && error.stack) {
+        console.error(error.stack);
+      }
+    }
     res.status(500).json({
       error: 'pose_proxy_error',
       message: exposeDetails ? message : 'Proxy request failed',
