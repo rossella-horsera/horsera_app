@@ -146,6 +146,85 @@ export async function publishLinkPost(text, url, { title, description, asOrg = f
 }
 
 /**
+ * Upload an image to LinkedIn and return the asset URN.
+ *
+ * @param {Buffer} imageBuffer — raw image bytes
+ * @returns {string} asset URN (e.g., urn:li:digitalmediaAsset:xxx)
+ */
+export async function uploadImage(imageBuffer) {
+  const registerBody = {
+    registerUploadRequest: {
+      recipes: ["urn:li:digitalmediaRecipe:feedshare-image"],
+      owner: PERSON_URN,
+      serviceRelationships: [
+        { relationshipType: "OWNER", identifier: "urn:li:userGeneratedContent" },
+      ],
+    },
+  };
+
+  const regResult = await linkedinFetch("/v2/assets?action=registerUpload", {
+    method: "POST",
+    body: JSON.stringify(registerBody),
+  });
+
+  const uploadUrl = regResult.value.uploadMechanism["com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest"].uploadUrl;
+  const asset = regResult.value.asset;
+
+  const uploadRes = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${ACCESS_TOKEN}`,
+      "Content-Type": "application/octet-stream",
+    },
+    body: imageBuffer,
+  });
+
+  if (!uploadRes.ok) {
+    const errBody = await uploadRes.text();
+    throw new Error(`LinkedIn image upload ${uploadRes.status}: ${errBody}`);
+  }
+
+  return asset;
+}
+
+/**
+ * Publish a post with an image.
+ *
+ * @param {string} text — the post commentary
+ * @param {Buffer} imageBuffer — raw image bytes
+ * @param {object} options
+ * @param {boolean} options.asOrg — post as org
+ * @returns {object} LinkedIn API response
+ */
+export async function publishImagePost(text, imageBuffer, { asOrg = false } = {}) {
+  const author = asOrg && ORG_URN ? ORG_URN : PERSON_URN;
+  const asset = await uploadImage(imageBuffer);
+
+  const body = {
+    author,
+    lifecycleState: "PUBLISHED",
+    specificContent: {
+      "com.linkedin.ugc.ShareContent": {
+        shareCommentary: { text },
+        shareMediaCategory: "IMAGE",
+        media: [{ status: "READY", media: asset }],
+      },
+    },
+    visibility: {
+      "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC",
+    },
+  };
+
+  const result = await linkedinFetch("/v2/ugcPosts", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+  console.log(`✅ Published image post to LinkedIn`);
+  return result;
+}
+
+/**
  * Get the current user's LinkedIn profile info.
  * Useful for verifying the token still works.
  */

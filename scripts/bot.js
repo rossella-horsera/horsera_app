@@ -490,9 +490,97 @@ const GDOCS_TOOL_HANDLERS = {
 
 // ── LinkedIn publishing ─────────────────────────────────────────────────────
 
-async function linkedinPublish(text, { linkUrl } = {}) {
+function linkedinHeaders(contentType = "application/json") {
+  return {
+    Authorization: `Bearer ${LINKEDIN_ACCESS_TOKEN}`,
+    "Content-Type": contentType,
+    "LinkedIn-Version": "202402",
+    "X-Restli-Protocol-Version": "2.0.0",
+  };
+}
+
+/**
+ * Upload an image to LinkedIn and return the asset URN.
+ * Steps: 1) register upload, 2) upload binary, 3) return asset.
+ */
+async function linkedinUploadImage(imageBuffer) {
+  // Step 1: Register the upload
+  const registerBody = {
+    registerUploadRequest: {
+      recipes: ["urn:li:digitalmediaRecipe:feedshare-image"],
+      owner: LINKEDIN_PERSON_URN,
+      serviceRelationships: [
+        { relationshipType: "OWNER", identifier: "urn:li:userGeneratedContent" },
+      ],
+    },
+  };
+
+  const regRes = await fetch("https://api.linkedin.com/v2/assets?action=registerUpload", {
+    method: "POST",
+    headers: linkedinHeaders(),
+    body: JSON.stringify(registerBody),
+  });
+
+  if (!regRes.ok) {
+    const errBody = await regRes.text();
+    throw new Error(`LinkedIn register upload ${regRes.status}: ${errBody}`);
+  }
+
+  const regData = await regRes.json();
+  const uploadUrl = regData.value.uploadMechanism["com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest"].uploadUrl;
+  const asset = regData.value.asset;
+
+  // Step 2: Upload the image binary
+  const uploadRes = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${LINKEDIN_ACCESS_TOKEN}`,
+      "Content-Type": "application/octet-stream",
+    },
+    body: imageBuffer,
+  });
+
+  if (!uploadRes.ok) {
+    const errBody = await uploadRes.text();
+    throw new Error(`LinkedIn image upload ${uploadRes.status}: ${errBody}`);
+  }
+
+  log(`LinkedIn image uploaded: ${asset}`);
+  return asset;
+}
+
+/**
+ * Download an image from a URL (Slack file, external URL, etc.)
+ * For Slack files, uses the bot token for auth.
+ */
+async function downloadImage(imageUrl) {
+  const headers = {};
+  // Slack file URLs need bot token auth
+  if (imageUrl.includes("files.slack.com")) {
+    headers.Authorization = `Bearer ${SLACK_BOT_TOKEN}`;
+  }
+  const res = await fetch(imageUrl, { headers });
+  if (!res.ok) throw new Error(`Failed to download image (${res.status}): ${imageUrl}`);
+  return Buffer.from(await res.arrayBuffer());
+}
+
+async function linkedinPublish(text, { linkUrl, imageUrl } = {}) {
   if (!LINKEDIN_ACCESS_TOKEN || !LINKEDIN_PERSON_URN) {
     throw new Error("LinkedIn not configured — missing LINKEDIN_ACCESS_TOKEN or LINKEDIN_PERSON_URN");
+  }
+
+  let shareMediaCategory = "NONE";
+  let media = [];
+
+  if (imageUrl) {
+    // Download and upload image to LinkedIn
+    const imageBuffer = await downloadImage(imageUrl);
+    const asset = await linkedinUploadImage(imageBuffer);
+    shareMediaCategory = "IMAGE";
+    media = [{ status: "READY", media: asset }];
+  } else if (linkUrl) {
+    shareMediaCategory = "ARTICLE";
+    media = [{ status: "READY", originalUrl: linkUrl }];
   }
 
   const body = {
@@ -501,10 +589,8 @@ async function linkedinPublish(text, { linkUrl } = {}) {
     specificContent: {
       "com.linkedin.ugc.ShareContent": {
         shareCommentary: { text },
-        shareMediaCategory: linkUrl ? "ARTICLE" : "NONE",
-        ...(linkUrl
-          ? { media: [{ status: "READY", originalUrl: linkUrl }] }
-          : {}),
+        shareMediaCategory,
+        ...(media.length > 0 ? { media } : {}),
       },
     },
     visibility: {
@@ -514,12 +600,7 @@ async function linkedinPublish(text, { linkUrl } = {}) {
 
   const res = await fetch("https://api.linkedin.com/v2/ugcPosts", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${LINKEDIN_ACCESS_TOKEN}`,
-      "Content-Type": "application/json",
-      "LinkedIn-Version": "202402",
-      "X-Restli-Protocol-Version": "2.0.0",
-    },
+    headers: linkedinHeaders(),
     body: JSON.stringify(body),
   });
 
@@ -534,7 +615,10 @@ async function linkedinPublish(text, { linkUrl } = {}) {
 
 const LINKEDIN_TOOL_HANDLERS = {
   publish_to_linkedin: async (input) => {
-    const result = await linkedinPublish(input.text, { linkUrl: input.linkUrl });
+    const result = await linkedinPublish(input.text, {
+      linkUrl: input.linkUrl,
+      imageUrl: input.imageUrl,
+    });
     log("LinkedIn post published successfully");
     return { success: true, message: "Published to LinkedIn as Horsera AI", result };
   },
@@ -656,12 +740,13 @@ const TRELLO_TOOLS = [
   },
   {
     name: "publish_to_linkedin",
-    description: "Publish a post to LinkedIn as Horsera AI. ONLY use this after Rossella explicitly approves the post. The post goes live immediately and is public. Optionally include a link URL for article/link preview posts.",
+    description: "Publish a post to LinkedIn as Horsera AI. ONLY use this after Rossella explicitly approves the post. The post goes live immediately and is public. Supports text-only, link preview, or image posts. For images: if Rossella attached an image in Slack, use that file's URL as imageUrl.",
     input_schema: {
       type: "object",
       properties: {
         text: { type: "string", description: "The full post text to publish on LinkedIn" },
-        linkUrl: { type: "string", description: "Optional URL to attach as a link preview" },
+        linkUrl: { type: "string", description: "Optional URL to attach as a link preview (cannot combine with imageUrl)" },
+        imageUrl: { type: "string", description: "Optional image URL to upload and attach to the post (Slack file URL or external URL)" },
       },
       required: ["text"],
     },
@@ -710,6 +795,8 @@ IMPORTANT — LinkedIn Publishing:
 - NEVER publish without Rossella's explicit approval ("approved", "publish it", "go ahead", "ship it", etc.)
 - After publishing, move the Trello card to Published (list ID: 69c55c50dccc64d962916fa3)
 - If the post includes a link, pass it as linkUrl for a rich preview
+- If Rossella attaches an image in Slack, use that file's URL as imageUrl to publish an image post
+- You can handle text-only posts, link posts, and image posts
 
 IMPORTANT — Persistent Memory:
 - You have a persistent memory via read_sage_memory and save_sage_memory
