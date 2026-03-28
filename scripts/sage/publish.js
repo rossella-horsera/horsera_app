@@ -35,6 +35,7 @@ import {
   postMessage,
   postDraftForReview,
 } from "./slack.js";
+import { publishTextPost, publishLinkPost, checkToken } from "./linkedin.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -157,6 +158,7 @@ export async function waitForApproval(cardId, intervalMs = 30_000, timeoutMs = 1
  * @param {string} options.draft     — the content draft
  * @param {string} options.platform  — "LinkedIn", "Instagram", etc.
  * @param {string} options.dueDate   — ISO date string (defaults to today)
+ * @param {string} options.linkUrl   — optional URL to share as a link post
  * @param {boolean} options.waitForApproval — whether to poll for approval (default true)
  */
 export async function runPublishWorkflow({
@@ -164,6 +166,7 @@ export async function runPublishWorkflow({
   draft,
   platform = "LinkedIn",
   dueDate,
+  linkUrl,
   waitForApproval: shouldWait = true,
 } = {}) {
   if (!title || !draft) {
@@ -190,17 +193,31 @@ export async function runPublishWorkflow({
     if (result?.approved) {
       console.log("🎉 Draft approved! Comment:", result.comment);
       await addComment(card.id, "✅ Approved — proceeding to publish.");
+
+      // 5. Publish to LinkedIn
+      try {
+        const publishResult = linkUrl
+          ? await publishLinkPost(draft, linkUrl, { asOrg: false })
+          : await publishTextPost(draft, { asOrg: false });
+        await addComment(card.id, "✅ Published to LinkedIn.");
+        await moveToReview(card.id, "Done");
+        return { card, approval: result, published: true };
+      } catch (err) {
+        console.error("❌ LinkedIn publish failed:", err.message);
+        await addComment(card.id, `❌ LinkedIn publish failed: ${err.message}`);
+        return { card, approval: result, published: false, error: err.message };
+      }
     } else if (result && !result.approved) {
       console.log("❌ Draft rejected. Comment:", result.comment);
       await addComment(card.id, "🔄 Changes requested — see comment above.");
     } else {
       console.log("⏰ No response received within timeout.");
     }
-    return { card, approval: result };
+    return { card, approval: result, published: false };
   }
 
   console.log("\n✅ Workflow complete — awaiting manual approval.\n");
-  return { card, approval: null };
+  return { card, approval: null, published: false };
 }
 
 // ── CLI entrypoint ──────────────────────────────────────────────────────────

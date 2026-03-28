@@ -55,6 +55,8 @@ const SLACK_APP_TOKEN = ENV.SLACK_APP_TOKEN;
 const ANTHROPIC_API_KEY = ENV.ANTHROPIC_API_KEY;
 const TRELLO_API_KEY = ENV.TRELLO_API_KEY;
 const TRELLO_TOKEN = ENV.TRELLO_TOKEN;
+const LINKEDIN_ACCESS_TOKEN = ENV.LINKEDIN_ACCESS_TOKEN;
+const LINKEDIN_PERSON_URN = ENV.LINKEDIN_PERSON_URN;
 
 if (!SLACK_BOT_TOKEN) throw new Error("Missing SLACK_BOT_TOKEN in .env.local");
 if (!SLACK_APP_TOKEN) throw new Error("Missing SLACK_APP_TOKEN in .env.local");
@@ -486,8 +488,60 @@ const GDOCS_TOOL_HANDLERS = {
   },
 };
 
-// Merge into Trello handlers
-Object.assign(TRELLO_TOOL_HANDLERS, GDOCS_TOOL_HANDLERS);
+// ── LinkedIn publishing ─────────────────────────────────────────────────────
+
+async function linkedinPublish(text, { linkUrl } = {}) {
+  if (!LINKEDIN_ACCESS_TOKEN || !LINKEDIN_PERSON_URN) {
+    throw new Error("LinkedIn not configured — missing LINKEDIN_ACCESS_TOKEN or LINKEDIN_PERSON_URN");
+  }
+
+  const body = {
+    author: LINKEDIN_PERSON_URN,
+    lifecycleState: "PUBLISHED",
+    specificContent: {
+      "com.linkedin.ugc.ShareContent": {
+        shareCommentary: { text },
+        shareMediaCategory: linkUrl ? "ARTICLE" : "NONE",
+        ...(linkUrl
+          ? { media: [{ status: "READY", originalUrl: linkUrl }] }
+          : {}),
+      },
+    },
+    visibility: {
+      "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC",
+    },
+  };
+
+  const res = await fetch("https://api.linkedin.com/v2/ugcPosts", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${LINKEDIN_ACCESS_TOKEN}`,
+      "Content-Type": "application/json",
+      "LinkedIn-Version": "202402",
+      "X-Restli-Protocol-Version": "2.0.0",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`LinkedIn API ${res.status}: ${errBody}`);
+  }
+
+  const resText = await res.text();
+  return resText ? JSON.parse(resText) : { ok: true };
+}
+
+const LINKEDIN_TOOL_HANDLERS = {
+  publish_to_linkedin: async (input) => {
+    const result = await linkedinPublish(input.text, { linkUrl: input.linkUrl });
+    log("LinkedIn post published successfully");
+    return { success: true, message: "Published to LinkedIn as Horsera AI", result };
+  },
+};
+
+// Merge all handlers
+Object.assign(TRELLO_TOOL_HANDLERS, GDOCS_TOOL_HANDLERS, LINKEDIN_TOOL_HANDLERS);
 
 // Tool definitions for Claude
 const TRELLO_TOOLS = [
@@ -600,6 +654,18 @@ const TRELLO_TOOLS = [
       required: ["content"],
     },
   },
+  {
+    name: "publish_to_linkedin",
+    description: "Publish a post to LinkedIn as Horsera AI. ONLY use this after Rossella explicitly approves the post. The post goes live immediately and is public. Optionally include a link URL for article/link preview posts.",
+    input_schema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "The full post text to publish on LinkedIn" },
+        linkUrl: { type: "string", description: "Optional URL to attach as a link preview" },
+      },
+      required: ["text"],
+    },
+  },
 ];
 
 // ── Agent system prompts ────────────────────────────────────────────────────
@@ -637,6 +703,13 @@ IMPORTANT — Equestrian Accuracy:
 - Before finalizing ANY post that references biomechanics, training concepts, horse science, or competition, tell Rossella you'll have Monty (the equestrian expert) review it
 - If Rossella asks you to consult Monty, acknowledge it and note that Monty should review the content
 - You cannot fact-check equestrian content yourself — Monty is the authority
+
+IMPORTANT — LinkedIn Publishing:
+- You can publish directly to LinkedIn using the publish_to_linkedin tool
+- Posts go live as "Horsera AI" (personal profile) — they are PUBLIC and IMMEDIATE
+- NEVER publish without Rossella's explicit approval ("approved", "publish it", "go ahead", "ship it", etc.)
+- After publishing, move the Trello card to Published (list ID: 69c55c50dccc64d962916fa3)
+- If the post includes a link, pass it as linkUrl for a rich preview
 
 IMPORTANT — Persistent Memory:
 - You have a persistent memory via read_sage_memory and save_sage_memory
@@ -793,6 +866,7 @@ const TOOL_DISPLAY_NAMES = {
   append_to_content_doc: "Writing to the Google Doc",
   read_sage_memory: "Loading memory",
   save_sage_memory: "Saving to memory",
+  publish_to_linkedin: "Publishing to LinkedIn",
 };
 
 const MAX_TOOL_LOOPS = 30; // High safety limit — auto-continue handles the flow

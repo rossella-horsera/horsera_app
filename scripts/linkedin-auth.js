@@ -87,9 +87,11 @@ const server = http.createServer(async (req, res) => {
       const tokenData = await tokenRes.json();
 
       if (tokenData.access_token) {
-        // Get user profile to find the person URN
+        const token = tokenData.access_token;
+
+        // Get user profile
         const profileRes = await fetch("https://api.linkedin.com/v2/userinfo", {
-          headers: { Authorization: `Bearer ${tokenData.access_token}` },
+          headers: { Authorization: `Bearer ${token}` },
         });
         const profile = await profileRes.json();
 
@@ -97,18 +99,46 @@ const server = http.createServer(async (req, res) => {
         console.log(`   Expires in: ${tokenData.expires_in} seconds`);
         console.log(`   LinkedIn user: ${profile.name} (${profile.sub})`);
 
+        // Try to find organizations this user is admin of
+        let orgInfo = "";
+        try {
+          const orgRes = await fetch(
+            "https://api.linkedin.com/v2/organizationAcls?q=roleAssignee&role=ADMINISTRATOR&projection=(elements*(organization~(localizedName,vanityName),roleAssignee))",
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+          const orgData = await orgRes.json();
+          const orgs = orgData.elements || [];
+
+          if (orgs.length > 0) {
+            console.log("\n📋 Organizations you admin:");
+            for (const org of orgs) {
+              const orgUrn = org.organization;
+              const orgName = org["organization~"]?.localizedName || "Unknown";
+              const orgId = orgUrn.split(":").pop();
+              console.log(`   ${orgName} → urn:li:organization:${orgId}`);
+              orgInfo += `\nLINKEDIN_ORG_URN=urn:li:organization:${orgId}`;
+            }
+          } else {
+            console.log("\n⚠️  No organization admin access found. You may need to check the LinkedIn app's products (Community Management API).");
+          }
+        } catch (err) {
+          console.log("\n⚠️  Could not fetch organizations:", err.message);
+          console.log("   You may need to add 'Community Management API' to your LinkedIn app products.");
+        }
+
         // Append to .env.local
         const envPath = path.join(ROOT, ".env.local");
-        const additions = `\nLINKEDIN_ACCESS_TOKEN=${tokenData.access_token}\nLINKEDIN_PERSON_URN=urn:li:person:${profile.sub}\n`;
+        const additions = `\nLINKEDIN_ACCESS_TOKEN=${token}\nLINKEDIN_PERSON_URN=urn:li:person:${profile.sub}${orgInfo}\n`;
         fs.appendFileSync(envPath, additions);
 
         console.log("\n✅ Saved to .env.local:");
-        console.log(`   LINKEDIN_ACCESS_TOKEN=...${tokenData.access_token.slice(-20)}`);
+        console.log(`   LINKEDIN_ACCESS_TOKEN=...${token.slice(-20)}`);
         console.log(`   LINKEDIN_PERSON_URN=urn:li:person:${profile.sub}`);
+        if (orgInfo) console.log(`   LINKEDIN_ORG_URN=${orgInfo.split("=").pop()}`);
         console.log("\nAdd these same values to Railway Variables for the bot to publish.");
 
         res.writeHead(200, { "Content-Type": "text/html" });
-        res.end(`<h1>✅ Success!</h1><p>LinkedIn connected as <strong>${profile.name}</strong>.</p><p>You can close this window.</p>`);
+        res.end(`<h1>✅ Success!</h1><p>LinkedIn connected as <strong>${profile.name}</strong>.</p>${orgInfo ? "<p>Organization access found — posts will appear as Horsera.</p>" : "<p>⚠️ No org access yet — check LinkedIn app products.</p>"}<p>You can close this window.</p>`);
       } else {
         console.error("Token exchange failed:", tokenData);
         res.writeHead(200, { "Content-Type": "text/html" });
