@@ -939,6 +939,7 @@ export default function RidesPage() {
     // Persist to localStorage (always)
     saveRide(ride);
     setStoredRides(getRides());
+    navigate(`/rides/${ride.id}`);
 
     // Update Supabase ride_sessions with video_url + user metadata (non-fatal)
     if (sessionId) {
