@@ -78,31 +78,31 @@ const PROCESSING_MESSAGES = [
 ];
 
 const HORSE_FACTS = [
-  "Horses can sleep both lying down and standing up — they lock their legs to doze.",
-  "A horse's heart weighs about 9 lbs — nearly 3× the size of a human heart.",
-  "Horses have the largest eyes of any land mammal.",
-  "Horses have an excellent memory — they recognise people and horses for years.",
-  "The frog of the hoof acts as a natural shock absorber and circulatory pump.",
-  "Dressage comes from the French word 'dresser' — to train.",
-  "Horses can sense your emotional state through subtle body language and breathing.",
-  "A horse's teeth take up more space in its skull than its brain.",
-  "Horses have nearly 360° vision — they can see almost all the way around.",
-  "The walk is the most difficult gait to improve, and the most revealing of training quality.",
-  "Grand Prix dressage movements like piaffe and passage occur naturally in the wild.",
-  "Horses can run within hours of being born.",
-  "Impulsion isn't speed — it's energy flowing from the hindquarters through a supple back.",
-  "A horse can drink up to 10 gallons of water a day.",
-  "The fastest recorded horse speed was 55 mph — clocked over a quarter mile.",
-  "Horses communicate through facial expressions, ear position, and tail movement.",
-  "'On the bit' describes the whole topline engaged and round — not just the head position.",
-  "Horses have 205 bones — just one more than the human skeleton.",
-  "In competition, a score of 10 means 'excellent' — and it's exceptionally rare.",
-  "The shoulder angle affects a horse's range of motion more than almost any other conformation point.",
-  "Horses can't vomit — their digestive system only goes one direction.",
-  "A horse's hooves grow about 1 cm per month and fully regenerate in about a year.",
-  "The Lusitano and Andalusian are among the oldest classical dressage breeds.",
-  "Cadence in riding means the rhythm and energy of the gait — your horse's musical tempo.",
-  "Submission in dressage means willingness and confidence — not dominance.",
+  "The walk is the hardest gait to improve — and the most revealing of how well a horse is trained.",
+  "A horse's heart weighs about 9 lbs — nearly 3× a human's. No wonder they run on heart.",
+  "Horses have the largest eyes of any land mammal, giving them nearly 360° of vision.",
+  "Horses remember faces for years — and whether you were kind to them. They keep score.",
+  "'Dressage' comes from the French word dresser — to train. Every ride is literally called training.",
+  "Impulsion isn't speed. It's energy flowing from the hindquarters through a supple, swinging back.",
+  "A horse can sense your heart rate from up to 4 feet away. They know when you're nervous before you do.",
+  "Grand Prix movements like piaffe and passage occur naturally in the wild. We simply learned to ask politely.",
+  "A score of 10 in a dressage test means 'excellent.' So rare, some judges have never awarded one.",
+  "'On the bit' isn't about the head position — it describes a whole topline that is engaged and round.",
+  "The frog of the hoof acts as a natural pump, pushing blood back up the leg with every single step.",
+  "'Submission' in dressage means willingness and confidence — not obedience. A meaningful distinction.",
+  "Horses have 205 bones — just one more than humans. More in common than you might think.",
+  "The fastest horse ever recorded hit 55 mph over a quarter mile. Highway speed, on four legs.",
+  "Horses use both sides of their brain independently. Something that spooks on the left may be fine on the right.",
+  "A horse's teeth take up more space in its skull than its brain. Make of that what you will.",
+  "Cadence in riding describes the rhythm and energy of the gait — your horse's natural musical tempo.",
+  "The shoulder angle affects range of motion more than almost any other conformation point.",
+  "The Lusitano and Andalusian have been trained for classical dressage for over 500 years.",
+  "Horses can't vomit — their digestive system only flows one direction, which makes colic a serious condition.",
+  "A horse's hoof grows about 1 cm per month and takes a full year to completely regenerate.",
+  "Horses communicate through tiny ear movements, nostril flares, and tail position — a rich silent language.",
+  "Most foals can stand within an hour and run within hours of birth. They arrive ready.",
+  "A horse can drink up to 10 gallons of water a day. Hydration is serious business at every level.",
+  "The Scales of Training — rhythm, relaxation, contact, impulsion, straightness, collection — are the same ones judges use.",
 ];
 
 
@@ -1384,12 +1384,12 @@ export default function RidesPage() {
                   {horseFacts.length > 0 && (
                     <div style={{ marginTop: 12, textAlign: 'center', maxWidth: 280, padding: '0 20px' }}>
                       <div style={{
-                        fontSize: '9px', fontWeight: 700, letterSpacing: '1.2px',
-                        textTransform: 'uppercase', color: COLORS.champagne, marginBottom: 6,
-                      }}>Did you know?</div>
+                        fontSize: '9px', fontWeight: 600, letterSpacing: '0.2em',
+                        textTransform: 'uppercase', color: COLORS.cognac, marginBottom: 8,
+                      }}>· DID YOU KNOW ·</div>
                       <div key={horseFactIdx} style={{
-                        fontFamily: FONTS.body, fontSize: '12px', fontStyle: 'italic',
-                        color: 'rgba(250,247,243,0.55)', lineHeight: 1.6,
+                        fontFamily: FONTS.body, fontSize: '13px',
+                        color: 'rgba(250,247,243,0.55)', lineHeight: 1.65,
                         animation: 'fadeIn 0.6s ease',
                       }}>
                         {horseFacts[horseFactIdx]}
