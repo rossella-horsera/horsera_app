@@ -926,6 +926,7 @@ export default function RidesPage() {
       },
       overallScore: Math.round(overall * 100) / 100,
       insights: result.insights.map(i => i.text),
+      keyframes: result.allFrames ?? [],
     };
 
     // ── Upload video to Supabase Storage now (deferred from analysis time) ──────

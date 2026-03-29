@@ -29,6 +29,7 @@ export interface StoredRide {
   };
   overallScore: number;
   insights: string[];
+  keyframes?: Array<{ time: number; frame: Array<{ x: number; y: number; score: number }> }>;
 }
 
 const STORAGE_KEY = 'horsera_rides';

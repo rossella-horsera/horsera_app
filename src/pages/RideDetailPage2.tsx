@@ -1,5 +1,6 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { getRides, type StoredRide } from '@/lib/storage';
+import VideoWithSkeleton from '../components/VideoWithSkeleton';
 
 const C = {
   pa: '#F5EFE6',
@@ -168,11 +169,10 @@ export default function RideDetailPage2() {
 
       {/* ── S2: VIDEO ── */}
       {ride.videoUrl ? (
-        <video
-          src={ride.videoUrl}
-          controls
-          playsInline
-          style={{ width: '100%', aspectRatio: '16/9', background: '#000', display: 'block' }}
+        <VideoWithSkeleton
+          videoUrl={ride.videoUrl}
+          keyframes={ride.keyframes ?? []}
+          biometrics={ride.biometrics}
         />
       ) : (
         <div style={{
