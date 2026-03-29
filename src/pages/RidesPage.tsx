@@ -1595,10 +1595,7 @@ export default function RidesPage() {
                     key={ride.id}
                     ride={ride}
                     storedRide={stored ?? undefined}
-                    onClick={() => {
-                      setSelectedRide(ride);
-                      setSelectedStoredRide(stored ?? undefined);
-                    }}
+                    onClick={() => navigate(`/rides/${ride.id}`)}
                   />
                 );
               })}
