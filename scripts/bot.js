@@ -1447,6 +1447,127 @@ app.event("message", async ({ event, context }) => {
   }
 });
 
+// ── Morning content check ──────────────────────────────────────────────────
+// Every morning, Sage reads the Google Doc, finds posts scheduled for today,
+// and sends a summary to #horsera-social.
+
+const MORNING_CHECK_HOUR = 8; // 8 AM ET
+let lastMorningCheck = null;
+
+async function morningContentCheck() {
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10); // YYYY-MM-DD
+
+  // Only run once per day
+  if (lastMorningCheck === today) return;
+
+  // Check if it's the right hour (ET = UTC-4 or UTC-5 depending on DST)
+  const etHour = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" })).getHours();
+  if (etHour < MORNING_CHECK_HOUR) return;
+
+  lastMorningCheck = today;
+  log("Running morning content check...");
+
+  try {
+    // Read the Google Doc
+    const docContent = await readGoogleDocTab();
+
+    // Parse today's date in various formats for matching
+    const dateObj = new Date(today + "T12:00:00");
+    const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    const monthShort = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const month = dateObj.getMonth();
+    const day = dateObj.getDate();
+    const year = dateObj.getFullYear();
+
+    // Match patterns like "March 29, 2026", "Mar 29", "Apr 1", "April 1, 2026"
+    const datePatterns = [
+      `${monthNames[month]} ${day}, ${year}`,
+      `${monthNames[month]} ${day}`,
+      `${monthShort[month]} ${day}`,
+      `📅 ${monthNames[month]} ${day}`,
+      `📅 ${monthShort[month]} ${day}`,
+    ];
+
+    const docText = docContent.text;
+    const todayHasPost = datePatterns.some(p => docText.includes(p));
+
+    if (!todayHasPost) {
+      log("No posts scheduled for today");
+      return;
+    }
+
+    // Use Claude to analyze the doc and create a morning summary
+    const summaryPrompt = `You are Sage, the Horsera content manager. Read the content pipeline document below and find any posts scheduled for today (${monthNames[month]} ${day}, ${year}).
+
+For each post scheduled today, check:
+- Is it marked as "Approved" or "☑" or similar? → It's ready to publish. Send an FYI reminder.
+- Is it marked as "Draft" or "☐" or has no approval? → It needs Rossella's input before publishing.
+
+Write a concise Slack message for #horsera-social. Format:
+
+If approved:
+"☀️ *Good morning, Rossella!*
+
+📋 *Today's content:*
+• [Post title] — ✅ Approved and ready to publish. I'll publish this when you give the word.
+
+Let me know when you'd like me to publish!"
+
+If needs approval:
+"☀️ *Good morning, Rossella!*
+
+📋 *Today's content:*
+• [Post title] — 📝 Draft, needs your review before publishing.
+
+Here's the draft for your review:
+[include the post text]
+
+Want me to make any changes, or shall I publish as-is?"
+
+Here's the document:
+
+${docText}`;
+
+    const response = await callAnthropicWithRetry({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 2048,
+      system: "You are Sage, the Horsera social media manager. Be warm, concise, and professional. Use Slack mrkdwn formatting.",
+      messages: [{ role: "user", content: summaryPrompt }],
+    });
+
+    const message = response.content.filter(b => b.type === "text").map(b => b.text).join("\n");
+
+    if (!message) {
+      log("Morning check produced no message");
+      return;
+    }
+
+    // Find #horsera-social channel ID
+    const socialChannelId = await getChannelId("horsera-social");
+    if (!socialChannelId) {
+      log("Could not find #horsera-social channel for morning check");
+      return;
+    }
+
+    // Post the morning summary
+    await app.client.chat.postMessage({
+      channel: socialChannelId,
+      text: `*Sage:*  ${message}`,
+    });
+
+    log(`Morning content check posted to #horsera-social`);
+  } catch (err) {
+    log("Morning content check failed:", err.message);
+    console.error(err);
+  }
+}
+
+// Run morning check every 5 minutes
+setInterval(() => {
+  morningContentCheck().catch(err => log("Morning check interval error:", err.message));
+}, 5 * 60 * 1000);
+
 // ── Start ───────────────────────────────────────────────────────────────────
 
 (async () => {
@@ -1455,4 +1576,9 @@ app.event("message", async ({ event, context }) => {
   log("Agents available: " + Object.keys(AGENTS).join(", "));
   log("Channel defaults: " + JSON.stringify(CHANNEL_DEFAULTS));
   log("Listening for messages...");
+
+  // Run morning check on startup (in case bot restarts after the check hour)
+  setTimeout(() => {
+    morningContentCheck().catch(err => log("Startup morning check error:", err.message));
+  }, 10_000); // Wait 10s for connections to stabilize
 })();
