@@ -319,13 +319,82 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
+def _encode_result_for_firestore(result: dict) -> dict:
+    """
+    Firestore does not support arrays that directly contain arrays.
+    Convert keypoints [[x,y,conf], ...] -> [{x,y,conf}, ...] for storage.
+    """
+    out = dict(result)
+    frames = out.get("framesData")
+    if not isinstance(frames, list):
+        return out
+
+    encoded_frames: list[Any] = []
+    for frame in frames:
+        if not isinstance(frame, dict):
+            encoded_frames.append(frame)
+            continue
+        frame_out = dict(frame)
+        keypoints = frame_out.get("keypoints")
+        if isinstance(keypoints, list):
+            encoded_kps: list[Any] = []
+            for kp in keypoints:
+                if isinstance(kp, (list, tuple)) and len(kp) >= 3:
+                    encoded_kps.append({
+                        "x": _jsonable(kp[0]),
+                        "y": _jsonable(kp[1]),
+                        "conf": _jsonable(kp[2]),
+                    })
+                else:
+                    encoded_kps.append(_jsonable(kp))
+            frame_out["keypoints"] = encoded_kps
+        encoded_frames.append(frame_out)
+    out["framesData"] = encoded_frames
+    return out
+
+
+def _decode_result_from_firestore(result: dict) -> dict:
+    """
+    Convert Firestore-safe keypoint maps back to API shape:
+    [{x,y,conf}, ...] -> [[x,y,conf], ...]
+    """
+    out = dict(result)
+    frames = out.get("framesData")
+    if not isinstance(frames, list):
+        return out
+
+    decoded_frames: list[Any] = []
+    for frame in frames:
+        if not isinstance(frame, dict):
+            decoded_frames.append(frame)
+            continue
+        frame_out = dict(frame)
+        keypoints = frame_out.get("keypoints")
+        if isinstance(keypoints, list):
+            decoded_kps: list[Any] = []
+            for kp in keypoints:
+                if isinstance(kp, dict) and {"x", "y", "conf"}.issubset(kp.keys()):
+                    decoded_kps.append([kp.get("x"), kp.get("y"), kp.get("conf")])
+                else:
+                    decoded_kps.append(kp)
+            frame_out["keypoints"] = decoded_kps
+        decoded_frames.append(frame_out)
+    out["framesData"] = decoded_frames
+    return out
+
+
 def _firestore_upsert_job(job_id: str, payload: dict) -> None:
     if not _is_firestore_enabled():
         return
     try:
         client = _get_firestore_client()
         doc_ref = client.collection(FIRESTORE_COLLECTION).document(job_id)
-        doc_ref.set(_jsonable(payload), merge=True)
+        payload_out = _jsonable(payload)
+        if isinstance(payload_out, dict):
+            result = payload_out.get("result")
+            if isinstance(result, dict):
+                payload_out["result"] = _encode_result_for_firestore(result)
+        doc_ref.set(payload_out, merge=True)
     except Exception as exc:
         logger.warning(f"[firestore] upsert [{job_id}] failed: {exc}")
 
@@ -339,6 +408,9 @@ def _firestore_get_job(job_id: str) -> dict | None:
         if not snap.exists:
             return None
         payload = snap.to_dict() or {}
+        result = payload.get("result")
+        if isinstance(result, dict):
+            payload["result"] = _decode_result_from_firestore(result)
         status_raw = str(payload.get("status") or JobStatus.FAILED.value)
         try:
             payload["status"] = JobStatus(status_raw)
