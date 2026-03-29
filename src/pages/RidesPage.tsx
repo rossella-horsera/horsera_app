@@ -850,7 +850,7 @@ export default function RidesPage() {
   // Detail view for ride history
   const [selectedRide, setSelectedRide] = useState<Ride | null>(null);
   const [selectedStoredRide, setSelectedStoredRide] = useState<StoredRide | undefined>(undefined);
-  const [sortBy, setSortBy] = useState<'date' | 'score' | 'horse'>('date');
+  const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'score'>('newest');
   const [storedRides, setStoredRides] = useState<StoredRide[]>(getRides);
 
   // Refresh stored rides on mount
@@ -1045,7 +1045,7 @@ export default function RidesPage() {
   const sortedRides = useMemo(() => {
     const sorted = [...allRides];
     if (sortBy === 'score') sorted.sort((a, b) => (b.biometrics?.upperBodyAlignment ?? 0) - (a.biometrics?.upperBodyAlignment ?? 0));
-    else if (sortBy === 'horse') sorted.sort((a, b) => a.horse.localeCompare(b.horse));
+    else if (sortBy === 'oldest') sorted.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     else sorted.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     return sorted;
   }, [allRides, sortBy]);
@@ -1560,10 +1560,10 @@ export default function RidesPage() {
           Ride History
         </div>
 
-        {/* Sort pills — only show if rides span multiple months */}
-        {monthCount > 1 && (
+        {/* Sort pills — visible when more than 1 ride */}
+        {sortedRides.length > 1 && (
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 4, marginBottom: 12 }}>
-            {([['date', 'Newest ↓'], ['score', 'Score ↓'], ['horse', 'Horse']] as const).map(([key, label]) => {
+            {([['newest', 'Newest'], ['oldest', 'Oldest'], ['score', 'Top score']] as const).map(([key, label]) => {
               const active = sortBy === key;
               return (
                 <button key={key} onClick={() => setSortBy(key)} style={{
