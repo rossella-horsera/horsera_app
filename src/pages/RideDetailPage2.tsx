@@ -1,5 +1,6 @@
+import { useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getRides, type StoredRide } from '@/lib/storage';
+import { getRides, updateRide, type StoredRide } from '@/lib/storage';
 import VideoWithSkeleton from '../components/VideoWithSkeleton';
 
 const C = {
@@ -88,6 +89,11 @@ const card = (extra: React.CSSProperties = {}): React.CSSProperties => ({
 export default function RideDetailPage2() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [editMode, setEditMode] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [, forceUpdate] = useState(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const ride: StoredRide | undefined = getRides().find(r => r.id === id);
 
@@ -101,6 +107,31 @@ export default function RideDetailPage2() {
         }}>Back to Rides</button>
       </div>
     );
+  }
+
+  async function handleVideoReplace(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !ride) return;
+    setUploading(true);
+    setUploadError(null);
+    try {
+      const { supabase } = await import('../integrations/supabase/client');
+      const ext = file.name.split('.').pop() ?? 'mp4';
+      const path = `videos/${ride.id}-${Date.now()}.${ext}`;
+      const { error } = await supabase.storage
+        .from('ride-videos')
+        .upload(path, file, { upsert: true });
+      if (error) throw error;
+      const { data: { publicUrl } } = supabase.storage
+        .from('ride-videos')
+        .getPublicUrl(path);
+      updateRide(ride.id, { videoUrl: publicUrl });
+      forceUpdate(n => n + 1);
+    } catch {
+      setUploadError('Upload failed — please try again.');
+    } finally {
+      setUploading(false);
+    }
   }
 
   const bio = ride.biometrics;
@@ -147,13 +178,36 @@ export default function RideDetailPage2() {
             <path d="M10 3L5 8L10 13" stroke={C.nk} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
         </button>
+        <button onClick={() => setEditMode(e => !e)} style={{
+          background: 'none', border: 'none', cursor: 'pointer',
+          padding: '4px 8px', borderRadius: 8,
+          color: editMode ? C.cg : 'rgba(28,28,30,0.35)',
+          fontSize: 11, fontFamily: "'DM Sans', sans-serif", fontWeight: 500,
+        }}>
+          {editMode ? 'Done' : 'Edit'}
+        </button>
         <div style={{ flex: 1 }}>
           <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 16, color: C.nk }}>
             {ride.type.charAt(0).toUpperCase() + ride.type.slice(1)} · {ride.horse}
           </div>
-          <div style={{ fontSize: 10, color: '#999', fontFamily: "'DM Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-            {dateStr}
-          </div>
+          {editMode ? (
+            <input type="date"
+              defaultValue={ride.date.slice(0, 10)}
+              onChange={e => {
+                updateRide(ride.id, { date: e.target.value });
+              }}
+              style={{
+                border: 'none', borderBottom: '1px solid rgba(193,127,74,0.4)',
+                background: 'transparent', fontSize: 10, letterSpacing: '0.1em',
+                color: C.nk, fontFamily: "'DM Mono', monospace",
+                padding: '2px 4px', outline: 'none',
+              }}
+            />
+          ) : (
+            <div style={{ fontSize: 10, color: '#999', fontFamily: "'DM Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              {dateStr}
+            </div>
+          )}
         </div>
         <svg width="52" height="52" viewBox="0 0 52 52">
           <circle cx="26" cy="26" r="22" fill="none" stroke="#EDE7DF" strokeWidth="3" />
@@ -181,6 +235,33 @@ export default function RideDetailPage2() {
           color: '#666', fontFamily: "'DM Sans', sans-serif", fontSize: 13,
         }}>
           No video for this ride
+        </div>
+      )}
+
+      {/* ── Edit: Replace video ── */}
+      {editMode && (
+        <div style={{ padding: '4px 18px' }}>
+          {!uploading && (
+            <button onClick={() => fileInputRef.current?.click()} style={{
+              display: 'flex', alignItems: 'center', gap: 6, margin: '6px auto',
+              background: 'none', border: '1px solid rgba(193,127,74,0.35)',
+              borderRadius: 20, padding: '7px 16px', cursor: 'pointer', color: C.cg,
+              fontSize: 11.5, fontWeight: 500, fontFamily: "'DM Sans', sans-serif",
+            }}>
+              ↑ {ride.videoUrl ? 'Replace video' : 'Upload video'}
+            </button>
+          )}
+          {uploading && (
+            <p style={{ textAlign: 'center', fontSize: 11, color: 'rgba(28,28,30,0.4)', fontFamily: "'DM Sans', sans-serif" }}>
+              Uploading…
+            </p>
+          )}
+          {uploadError && (
+            <p style={{ textAlign: 'center', fontSize: 11, color: C.focus, fontFamily: "'DM Sans', sans-serif" }}>
+              {uploadError}
+            </p>
+          )}
+          <input type="file" accept="video/*" style={{ display: 'none' }} ref={fileInputRef} onChange={handleVideoReplace} />
         </div>
       )}
 

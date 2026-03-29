@@ -53,3 +53,10 @@ export function deleteRide(id: string): void {
   const rides = getRides().filter(r => r.id !== id);
   safeStorage.setItem(STORAGE_KEY, JSON.stringify(rides));
 }
+
+export function updateRide(id: string, updates: Partial<StoredRide>): void {
+  const rides = getRides().map(r =>
+    r.id === id ? { ...r, ...updates } : r
+  );
+  safeStorage.setItem(STORAGE_KEY, JSON.stringify(rides));
+}

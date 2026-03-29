@@ -1322,77 +1322,9 @@ export default function RidesPage() {
                 <VideoSilhouetteOverlay biometrics={result.biometrics} />
               )}
 
-              {/* ── Premium Progress Overlay ─────────────────── */}
+              {/* ── Premium Progress Overlay (inline placeholder — real overlay is fixed below) ── */}
               {isAnalyzing && (
-                <div style={{
-                  position: 'absolute', inset: 0,
-                  background: 'rgba(26, 20, 14, 0.85)',
-                  display: 'flex', flexDirection: 'column',
-                  alignItems: 'center', justifyContent: 'center',
-                  animation: 'fadeIn 0.3s ease',
-                  paddingBottom: 32,
-                }}>
-                  {/* ── Top section: progress + status ── */}
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
-                    {/* Circular progress ring */}
-                    <div style={{ position: 'relative', width: 88, height: 88 }}>
-                      <svg width="88" height="88" viewBox="0 0 88 88" style={{ transform: 'rotate(-90deg)' }}>
-                        <circle
-                          cx="44" cy="44" r="38"
-                          fill="none"
-                          stroke="rgba(201,169,110,0.2)"
-                          strokeWidth="4"
-                        />
-                        <circle
-                          cx="44" cy="44" r="38"
-                          fill="none"
-                          stroke={COLORS.champagne}
-                          strokeWidth="4"
-                          strokeLinecap="round"
-                          strokeDasharray={`${2 * Math.PI * 38}`}
-                          strokeDashoffset={`${2 * Math.PI * 38 * (1 - progress / 100)}`}
-                          style={{ transition: 'stroke-dashoffset 0.4s ease' }}
-                        />
-                      </svg>
-                      <div style={{
-                        position: 'absolute', inset: 0,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontFamily: FONTS.mono, fontSize: '16px', color: COLORS.champagne,
-                        fontWeight: 500,
-                      }}>
-                        {progress}%
-                      </div>
-                    </div>
-
-                    {/* Status text */}
-                    <div style={{
-                      fontFamily: FONTS.body, fontSize: '13px', color: 'rgba(250,247,243,0.8)',
-                      letterSpacing: '0.02em',
-                    }}>
-                      {statusMessage}
-                    </div>
-                  </div>
-
-                  {/* ── Divider ── */}
-                  <div style={{ height: 1, background: 'rgba(255,255,255,0.12)', margin: '20px 24px', alignSelf: 'stretch' }} />
-
-                  {/* ── Bottom section: fun facts ── */}
-                  {horseFacts.length > 0 && (
-                    <div style={{ textAlign: 'center', maxWidth: 280, padding: '0 24px' }}>
-                      <div style={{
-                        fontSize: '9px', fontWeight: 600, letterSpacing: '0.2em',
-                        textTransform: 'uppercase', color: COLORS.cognac, marginBottom: 10,
-                      }}>· DID YOU KNOW ·</div>
-                      <div key={horseFactIdx} style={{
-                        fontFamily: FONTS.body, fontSize: '13px',
-                        color: 'rgba(250,247,243,0.55)', lineHeight: 1.7,
-                        animation: 'fadeIn 0.6s ease',
-                      }}>
-                        {horseFacts[horseFactIdx]}
-                      </div>
-                    </div>
-                  )}
-                </div>
+                <div style={{ position: 'absolute', inset: 0, background: 'rgba(26,20,14,0.85)' }} />
               )}
             </div>
 
@@ -1612,6 +1544,69 @@ export default function RidesPage() {
         }}>
           Ride History
         </div>
+
+        {/* ── Full-screen fixed loading overlay ── */}
+        {isAnalyzing && (
+          <div style={{
+            position: 'fixed', inset: 0, zIndex: 999,
+            background: 'rgba(20, 16, 12, 0.96)',
+            display: 'flex', flexDirection: 'column',
+            alignItems: 'center', justifyContent: 'center',
+            padding: '40px 32px',
+          }}>
+            {/* Progress ring */}
+            <div style={{ position: 'relative', width: 96, height: 96 }}>
+              <svg width="96" height="96" viewBox="0 0 96 96" style={{ transform: 'rotate(-90deg)' }}>
+                <circle cx="48" cy="48" r="38" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="3" />
+                <circle cx="48" cy="48" r="38" fill="none" stroke="#C17F4A" strokeWidth="3"
+                  strokeLinecap="round"
+                  strokeDasharray={`${(progress / 100) * 2 * Math.PI * 38} ${2 * Math.PI * 38}`}
+                  style={{ transition: 'stroke-dasharray 0.4s ease' }} />
+              </svg>
+              <div style={{
+                position: 'absolute', inset: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontFamily: FONTS.mono, fontSize: '18px', color: 'rgba(255,255,255,0.9)',
+                fontWeight: 500,
+              }}>
+                {progress}%
+              </div>
+            </div>
+
+            {/* Status text */}
+            <div style={{
+              fontFamily: FONTS.body, fontSize: '14px',
+              color: 'rgba(255,255,255,0.6)',
+              marginTop: 20, textAlign: 'center',
+            }}>
+              {progress <= 18 ? 'Uploading your ride…'
+                : progress <= 25 ? 'Sending to Cadence…'
+                : progress <= 94 ? 'Analyzing movement…'
+                : progress <= 99 ? 'Almost there…'
+                : 'Done'}
+            </div>
+
+            {/* Divider */}
+            <div style={{ height: 1, background: 'rgba(255,255,255,0.1)', alignSelf: 'stretch', margin: '28px 0' }} />
+
+            {/* Fun facts */}
+            {horseFacts.length > 0 && (
+              <div style={{ textAlign: 'center' }}>
+                <div style={{
+                  fontSize: '9px', fontWeight: 600, letterSpacing: '0.2em',
+                  textTransform: 'uppercase', color: '#C17F4A', marginBottom: 12,
+                }}>· DID YOU KNOW ·</div>
+                <div key={horseFactIdx} style={{
+                  fontFamily: FONTS.body, fontSize: '14px',
+                  color: 'rgba(255,255,255,0.72)', lineHeight: 1.7,
+                  maxWidth: 300, animation: 'fadeIn 0.6s ease',
+                }}>
+                  {horseFacts[horseFactIdx]}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ── Empty state (#60) */}
         {Object.keys(grouped).length === 0 && (
