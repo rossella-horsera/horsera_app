@@ -29,23 +29,25 @@ function log(...args) {
 // ── Load .env.local ─────────────────────────────────────────────────────────
 
 function loadEnv() {
-  // In production (Railway), env vars come from process.env
-  // Locally, read from .env.local
+  // Start with process.env (Railway, Docker, etc.)
+  // Then overlay .env.local if it exists (local dev)
+  // process.env values take precedence — so Railway vars always win
+  const env = { ...process.env };
   const envPath = path.join(ROOT, ".env.local");
   if (fs.existsSync(envPath)) {
     const lines = fs.readFileSync(envPath, "utf-8").split("\n");
-    const env = {};
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith("#")) continue;
       const eqIdx = trimmed.indexOf("=");
       if (eqIdx === -1) continue;
-      env[trimmed.slice(0, eqIdx).trim()] = trimmed.slice(eqIdx + 1).trim();
+      const key = trimmed.slice(0, eqIdx).trim();
+      const value = trimmed.slice(eqIdx + 1).trim();
+      // Only use .env.local value if not already set by process.env
+      if (!env[key]) env[key] = value;
     }
-    return env;
   }
-  // Fall back to process.env (Railway, Docker, etc.)
-  return process.env;
+  return env;
 }
 
 const ENV = loadEnv();
