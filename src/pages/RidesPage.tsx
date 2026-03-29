@@ -5,7 +5,7 @@ import type { Ride, BiometricsSnapshot } from '../data/mock';
 import { usePoseAPI } from '../hooks/usePoseAPI';
 import { computeRidingQualities, generateInsights } from '../lib/poseAnalysis';
 import type { MovementInsight } from '../lib/poseAnalysis';
-import { saveRide, getRides } from '../lib/storage';
+import { saveRide, getRides, deleteRide } from '../lib/storage';
 import type { StoredRide } from '../lib/storage';
 import { getUserProfile } from '../lib/userProfile';
 import { supabase } from '../integrations/supabase/client';
@@ -1686,16 +1686,26 @@ export default function RidesPage() {
               {month}
               <span style={{ opacity: 0.6 }}>  · {rides.length} ride{rides.length !== 1 ? 's' : ''}</span>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
-              {rides.map(ride => {
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' }}>
+              {rides.map((ride, i) => {
                 const isStored = ride.id.startsWith('stored-');
                 const stored = isStored ? storedRides.find(s => s.id === ride.id) : null;
+                const prevRide = i > 0 ? rides[i - 1] : null;
+                const prevStored = prevRide?.id.startsWith('stored-') ? storedRides.find(s => s.id === prevRide.id) : null;
+                const trendDelta = stored && prevStored
+                  ? Math.round(stored.overallScore * 100) - Math.round(prevStored.overallScore * 100)
+                  : null;
                 return (
-                  <RideRow
+                  <SwipeRideRow
                     key={ride.id}
                     ride={ride}
                     storedRide={stored ?? undefined}
-                    onClick={() => navigate(`/rides/${ride.id}`)}
+                    trendDelta={trendDelta}
+                    onNavigate={() => navigate(`/rides/${ride.id}`)}
+                    onDelete={() => {
+                      deleteRide(ride.id);
+                      setStoredRides(getRides());
+                    }}
                   />
                 );
               })}
@@ -1928,81 +1938,138 @@ function InsightsCard({ insights }: { insights: MovementInsight[] }) {
 // RIDE ROW COMPONENT
 // ─────────────────────────────────────────────────────────
 
-function RideRow({ ride, storedRide, onClick }: { ride: Ride; storedRide?: StoredRide; onClick: () => void }) {
-  const signal = signalConfig[ride.signal];
+const BIO_LABELS: Record<string, string> = {
+  upperBodyAlignment: 'Upper Body', lowerLegStability: 'Lower Leg',
+  coreStability: 'Core', pelvisStability: 'Pelvis',
+  reinSteadiness: 'Rein Steady', reinSymmetry: 'Symmetry',
+};
+
+const RC = { pa: '#F5EFE6', nk: '#1C1C1E', cg: '#C17F4A', ch: '#D4AF76', ideal: '#5B9E56', good: '#E8A857', focus: '#C14A2A' };
+
+function SwipeRideRow({ ride, storedRide, trendDelta, onNavigate, onDelete }: {
+  ride: Ride; storedRide?: StoredRide; trendDelta: number | null;
+  onNavigate: () => void; onDelete: () => void;
+}) {
+  const [swipeX, setSwipeX] = useState(0);
+  const [swiping, setSwiping] = useState(false);
+  const startXRef = useRef(0);
+  const DELETE_THRESHOLD = 80;
+
   const d = new Date(ride.date);
   const dateStr = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  const score = storedRide ? Math.round(storedRide.overallScore * 100) : null;
+
+  const bioEntries = storedRide
+    ? Object.entries(storedRide.biometrics)
+        .map(([k, v]) => ({ key: k, label: BIO_LABELS[k] ?? k, score: Math.round((v as number) * 100) }))
+        .filter(e => e.score > 0)
+    : [];
+  const best = bioEntries.length ? bioEntries.reduce((a, b) => a.score > b.score ? a : b) : null;
+  const worst = bioEntries.length ? bioEntries.reduce((a, b) => a.score < b.score ? a : b) : null;
+
+  const trendLabel = trendDelta === null ? null
+    : trendDelta > 3  ? { text: 'Building', color: RC.ideal, arrow: '↑' }
+    : trendDelta < -3 ? { text: 'Focus session', color: RC.focus, arrow: '↓' }
+    :                    { text: 'Holding', color: RC.good, arrow: '→' };
 
   return (
-    <div
-      onClick={onClick}
-      style={{
-        background: COLORS.cardBg, borderRadius: '14px', padding: '13px 15px',
-        display: 'flex', alignItems: 'center', gap: 12,
-        boxShadow: '0 2px 8px rgba(26,20,14,0.05)', cursor: 'pointer',
-        transition: 'transform 0.1s ease',
-        border: storedRide ? `1px solid ${COLORS.champagne}30` : 'none',
-      }}
-    >
-      <div style={{ width: 9, height: 9, borderRadius: '50%', background: signal.color, flexShrink: 0, marginTop: 1 }} />
+    <div style={{ position: 'relative', overflow: 'hidden', borderRadius: 16 }}>
+      {/* Delete strip */}
+      <div style={{
+        position: 'absolute', right: 0, top: 0, bottom: 0,
+        width: DELETE_THRESHOLD, background: RC.focus,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        borderRadius: '0 16px 16px 0',
+      }}>
+        <button onClick={onDelete} style={{
+          background: 'none', border: 'none', cursor: 'pointer',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+        }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+            <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+          <span style={{ color: 'white', fontSize: 9, fontWeight: 600, letterSpacing: '0.08em', fontFamily: "'DM Sans', sans-serif" }}>DELETE</span>
+        </button>
+      </div>
 
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-          <span style={{ fontSize: '13.5px', fontWeight: 500, color: COLORS.charcoal, fontFamily: FONTS.body }}>
-            {rideTypeLabel[ride.type] ?? ride.type} · {ride.horse}
+      {/* Swipeable card */}
+      <div
+        onTouchStart={e => { startXRef.current = e.touches[0].clientX; setSwiping(true); }}
+        onTouchMove={e => { const dx = e.touches[0].clientX - startXRef.current; if (dx < 0) setSwipeX(Math.max(dx, -100)); }}
+        onTouchEnd={() => { setSwiping(false); setSwipeX(swipeX < -DELETE_THRESHOLD ? -DELETE_THRESHOLD : 0); }}
+        onClick={() => { if (swipeX < -20) { setSwipeX(0); return; } onNavigate(); }}
+        style={{
+          transform: `translateX(${swipeX}px)`,
+          transition: swiping ? 'none' : 'transform 0.2s ease',
+          position: 'relative', zIndex: 1,
+          background: '#fff', borderRadius: 16, padding: '14px 16px',
+          boxShadow: '0 2px 12px rgba(0,0,0,0.05)', cursor: 'pointer',
+        }}
+      >
+        {/* Row 1: Horse · Type + badges */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+          <span style={{ fontSize: 14, fontWeight: 600, color: RC.nk, fontFamily: "'DM Sans', sans-serif" }}>
+            {(ride.type.charAt(0).toUpperCase() + ride.type.slice(1))} · {ride.horse}
           </span>
-          {ride.videoUploaded && (
-            <span style={{ fontSize: '10px', background: '#F0F4F8', color: '#6B7FA3', padding: '2px 6px', borderRadius: '6px', fontFamily: FONTS.body }}>
-              📹
-            </span>
-          )}
-          {storedRide && (
-            <span style={{
-              fontSize: '9px', background: `${COLORS.champagne}20`, color: COLORS.champagne,
-              padding: '2px 6px', borderRadius: '6px', fontFamily: FONTS.mono,
-              fontWeight: 600, letterSpacing: '0.03em',
-            }}>
-              AI
-            </span>
-          )}
-        </div>
-        <div style={{ fontFamily: FONTS.mono, fontSize: '10.5px', color: COLORS.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {dateStr} · {ride.duration}min{storedRide ? ` · Score ${Math.round(storedRide.overallScore * 100)}%` : ` · ${ride.focusMilestone}`}
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+            {(storedRide?.videoUrl || ride.videoUploaded) && (
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" style={{ opacity: 0.35 }}>
+                <rect x="3" y="4" width="18" height="16" rx="3" stroke="currentColor" strokeWidth="1.5"/>
+                <path d="M10 8.5V15.5L16 12L10 8.5Z" fill="currentColor"/>
+              </svg>
+            )}
+            {storedRide?.insights && storedRide.insights.length > 0 && (
+              <span style={{ fontSize: 9, background: `${RC.ch}20`, color: RC.ch, padding: '2px 6px', borderRadius: 6, fontFamily: "'DM Mono', monospace", fontWeight: 600 }}>AI</span>
+            )}
+          </div>
         </div>
 
-        {/* Mini score bar for stored rides */}
-        {storedRide && (
-          <div style={{ display: 'flex', gap: 4, marginTop: 5 }}>
-            {([
-              ['LL', storedRide.biometrics.lowerLegStability],
-              ['RS', storedRide.biometrics.reinSteadiness],
-              ['SY', storedRide.biometrics.reinSymmetry],
-              ['CO', storedRide.biometrics.coreStability],
-              ['UB', storedRide.biometrics.upperBodyAlignment],
-              ['PV', storedRide.biometrics.pelvisStability],
-            ] as [string, number][]).map(([abbr, val]) => (
-              <div key={abbr} style={{
-                fontFamily: FONTS.mono, fontSize: '8px',
-                color: scoreColor(val), background: `${scoreColor(val)}12`,
-                padding: '2px 4px', borderRadius: '4px',
-              }}>
-                {abbr} {Math.round(val * 100)}
-              </div>
-            ))}
+        {/* Row 2: Date · Duration */}
+        <div style={{ fontSize: 11, color: COLORS.muted, fontFamily: "'DM Sans', sans-serif", marginBottom: bioEntries.length > 0 ? 8 : 0 }}>
+          {dateStr} · {ride.duration}min
+        </div>
+
+        {/* Row 3: Best + Worst chips */}
+        {best && (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+            <span style={{
+              fontSize: 11, padding: '3px 10px', borderRadius: 20,
+              background: 'rgba(91,158,86,0.08)', border: '1px solid rgba(91,158,86,0.2)',
+              color: RC.ideal, fontFamily: "'DM Sans', sans-serif",
+            }}>↑ {best.label} {best.score}/100</span>
+            {worst && worst.key !== best.key && (
+              <span style={{
+                fontSize: 11, padding: '3px 10px', borderRadius: 20,
+                background: 'rgba(193,127,74,0.06)', border: '1px solid rgba(193,127,74,0.2)',
+                color: RC.cg, fontFamily: "'DM Sans', sans-serif",
+              }}>↓ {worst.label}</span>
+            )}
           </div>
         )}
-      </div>
 
-      <div style={{ textAlign: 'center', flexShrink: 0 }}>
-        <div style={{ fontSize: '18px', color: signal.color, lineHeight: 1 }}>{signal.symbol}</div>
-        <div style={{ fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.08em', color: COLORS.muted, fontFamily: FONTS.body }}>
-          {signal.label}
+        {/* Row 4: Trend + Score */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            {trendLabel && (
+              <span style={{
+                fontSize: 10, fontWeight: 500, textTransform: 'uppercase',
+                padding: '2px 8px', borderRadius: 12,
+                background: `${trendLabel.color}15`, color: trendLabel.color,
+                fontFamily: "'DM Sans', sans-serif",
+              }}>{trendLabel.arrow} {trendLabel.text}</span>
+            )}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center' }}>
+            {score !== null && (
+              <>
+                <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 16, fontWeight: 600, color: RC.cg }}>{score}</span>
+                <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: 'rgba(28,28,30,0.35)' }}>/100</span>
+              </>
+            )}
+            <span style={{ color: 'rgba(28,28,30,0.25)', marginLeft: 8, fontSize: 14 }}>›</span>
+          </div>
         </div>
       </div>
-
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
-        <path d="M9 6l6 6-6 6" stroke="#D4C9BC" strokeWidth="1.7" strokeLinecap="round" />
-      </svg>
     </div>
   );
 }
