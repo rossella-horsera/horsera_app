@@ -46,9 +46,10 @@ function ScoreRing({ score, size = 52 }: { score: number; size?: number }) {
         strokeLinecap="round"
         transform="rotate(-90 50 50)"
       />
-      <text x="50" y="54" textAnchor="middle" fill={color}
-        style={{ fontSize: '22px', fontFamily: "'DM Mono', monospace", fontWeight: 600 }}>
-        {score}
+      <text x="50" y="50" textAnchor="middle" fill={color}
+        style={{ fontFamily: "'DM Mono', monospace", fontWeight: 600 }}>
+        <tspan style={{ fontSize: '18px' }}>{score}</tspan>
+        <tspan style={{ fontSize: '10px', fill: '#BBB' }}>/100</tspan>
       </text>
     </svg>
   );
