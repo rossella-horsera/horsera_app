@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getRides } from '../../lib/storage';
 import { useCadence } from '../../context/CadenceContext';
@@ -92,18 +92,69 @@ function sx(i: number, n: number, w = 280) {
   return 30 + (i / (n - 1)) * (w - 40);
 }
 
+// ── Pill button ────────────────────────────────────────────────────────────
+function Pill({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button onClick={onClick} style={{
+      height: 28, padding: '0 14px', borderRadius: 14,
+      border: active ? 'none' : '1px solid rgba(28,28,30,0.15)',
+      background: active ? C.nk : 'transparent',
+      color: active ? '#fff' : C.muted,
+      fontFamily: "'DM Mono', monospace", fontSize: 11, fontWeight: 600, cursor: 'pointer',
+    }}>
+      {label}
+    </button>
+  );
+}
+
 // ── Component ───────────────────────────────────────────────────────────────
 export default function InsightsTab() {
   const navigate = useNavigate();
   const { openCadence } = useCadence();
-  const [intervalSize, setIntervalSize] = useState(8);
+
+  // Time selector state
+  const [timeMode, setTimeMode] = useState<'months' | 'rides'>('months');
+  const [monthsValue, setMonthsValue] = useState(6);
+  const [ridesValue, setRidesValue] = useState(10);
+
+  // Bio scroll state
+  const bioScrollRef = useRef<HTMLDivElement>(null);
+  const [showScrollArrow, setShowScrollArrow] = useState(true);
+
+  const checkScroll = useCallback(() => {
+    const el = bioScrollRef.current;
+    if (!el) return;
+    setShowScrollArrow(el.scrollLeft + el.clientWidth < el.scrollWidth - 10);
+  }, []);
+
+  useEffect(() => {
+    const el = bioScrollRef.current;
+    if (!el) return;
+    el.addEventListener('scroll', checkScroll);
+    checkScroll();
+    return () => el.removeEventListener('scroll', checkScroll);
+  }, [checkScroll]);
+
+  const scrollBioRight = () => {
+    bioScrollRef.current?.scrollBy({ left: 160, behavior: 'smooth' });
+  };
 
   const allRides = useMemo(() =>
     getRides().sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()),
   []);
 
   const hasReal = allRides.length > 0;
-  const rides = intervalSize === 0 ? allRides : allRides.slice(-intervalSize);
+
+  // Filter rides based on time selector
+  const rides = useMemo(() => {
+    if (!hasReal) return [];
+    if (timeMode === 'months') {
+      const cutoff = new Date();
+      cutoff.setMonth(cutoff.getMonth() - monthsValue);
+      return allRides.filter(r => new Date(r.date) >= cutoff);
+    }
+    return ridesValue === 0 ? allRides : allRides.slice(-ridesValue);
+  }, [hasReal, allRides, timeMode, monthsValue, ridesValue]);
 
   // Derived data
   const overallScores = hasReal
@@ -134,10 +185,13 @@ export default function InsightsTab() {
     const scores = hasReal
       ? rides.map(r => Math.round(r.biometrics[m.key] * 100))
       : Array(8).fill(0).map(() => Math.round(MOCK_BIO[m.key] * 100));
-    const cur = scores[scores.length - 1];
-    const first = scores[0];
-    const trend = cur - first;
-    return { ...m, scores, cur, trend };
+    const cur = scores[scores.length - 1] ?? 0;
+    const nonZero = scores.filter(s => s > 0);
+    const first = nonZero[0] ?? 0;
+    const last = nonZero[nonZero.length - 1] ?? 0;
+    const trend = nonZero.length >= 2 ? last - first : null;
+    const hasSufficientData = nonZero.length >= 2;
+    return { ...m, scores, cur, trend, hasSufficientData };
   });
 
   // Riding quality data
@@ -162,6 +216,10 @@ export default function InsightsTab() {
   const horseName = hasReal ? rides[rides.length - 1]?.horse ?? 'Your Horse' : 'Caviar';
   const dateRange = xLabels.length > 1 ? `${xLabels[0]} – ${xLabels[xLabels.length - 1]}` : xLabels[0] ?? '';
 
+  const headerSubtext = timeMode === 'months'
+    ? `Last ${monthsValue} month${monthsValue > 1 ? 's' : ''} · ${dateRange}`
+    : `Last ${rides.length} ride${rides.length !== 1 ? 's' : ''} · ${dateRange}`;
+
   return (
     <div style={{ background: C.pa, paddingBottom: 100 }}>
 
@@ -176,7 +234,7 @@ export default function InsightsTab() {
             {horseName} · Your Progress
           </div>
           <div style={{ fontSize: 10, letterSpacing: '1.2px', textTransform: 'uppercase', color: C.muted, marginTop: 1 }}>
-            Last {n} rides · {dateRange}
+            {headerSubtext}
           </div>
         </div>
         <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -199,20 +257,24 @@ export default function InsightsTab() {
 
       <div style={{ padding: '20px 18px 28px' }}>
 
-        {/* ── Interval selector ────────────────────────────────────────── */}
-        <div style={{ display: 'flex', gap: 6, marginBottom: 18 }}>
-          {[{ label: '4', value: 4 }, { label: '8', value: 8 }, { label: '12', value: 12 }, { label: 'All', value: 0 }].map(opt => {
-            const active = intervalSize === opt.value;
-            return (
-              <button key={opt.value} onClick={() => setIntervalSize(opt.value)} style={{
-                height: 28, padding: '0 14px', borderRadius: 14, border: active ? 'none' : '1px solid rgba(28,28,30,0.15)',
-                background: active ? C.nk : 'transparent', color: active ? '#fff' : C.muted,
-                fontFamily: "'DM Mono', monospace", fontSize: 11, fontWeight: 600, cursor: 'pointer',
-              }}>
-                {opt.label}
-              </button>
-            );
-          })}
+        {/* ── Time selector (two-tier) ────────────────────────────────── */}
+        <div style={{ marginBottom: 18 }}>
+          {/* Row 1: mode toggle */}
+          <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+            <Pill label="By months" active={timeMode === 'months'} onClick={() => setTimeMode('months')} />
+            <Pill label="By rides" active={timeMode === 'rides'} onClick={() => setTimeMode('rides')} />
+          </div>
+          {/* Row 2: options */}
+          <div style={{ display: 'flex', gap: 6 }}>
+            {timeMode === 'months'
+              ? [{ l: '1M', v: 1 }, { l: '3M', v: 3 }, { l: '6M', v: 6 }, { l: '1Y', v: 12 }].map(o => (
+                  <Pill key={o.v} label={o.l} active={monthsValue === o.v} onClick={() => setMonthsValue(o.v)} />
+                ))
+              : [{ l: '5', v: 5 }, { l: '10', v: 10 }, { l: '20', v: 20 }, { l: 'All', v: 0 }].map(o => (
+                  <Pill key={o.v} label={o.l} active={ridesValue === o.v} onClick={() => setRidesValue(o.v)} />
+                ))
+            }
+          </div>
         </div>
 
         {/* ── Cadence Pattern Insight ─────────────────────────────────── */}
@@ -320,12 +382,17 @@ export default function InsightsTab() {
         <div style={{ marginBottom: 22 }}>
           <SecHdr>Biomechanics trends</SecHdr>
           <div style={{ position: 'relative' }}>
-            <div style={{
-              display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 8,
-              WebkitOverflowScrolling: 'touch',
-            } as React.CSSProperties}>
+            <div
+              ref={bioScrollRef}
+              style={{
+                display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 8,
+                WebkitOverflowScrolling: 'touch',
+              } as React.CSSProperties}
+            >
               {bioData.map(m => {
-                const maxS = Math.max(...m.scores, 1);
+                const maxS = Math.max(...m.scores.filter(s => s > 0), 1);
+                const nonZeroCount = m.scores.filter(s => s > 0).length;
+                const showDash = m.cur === 0 && nonZeroCount <= 1;
                 return (
                   <div key={m.label} style={{
                     flexShrink: 0, width: 130, background: '#fff',
@@ -337,38 +404,59 @@ export default function InsightsTab() {
                     </div>
                     <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 28, marginBottom: 8 }}>
                       {m.scores.map((s, i) => (
-                        <div key={i} style={{
-                          flex: 1, borderRadius: 2,
-                          background: scoreColor(s),
-                          height: `${(s / maxS) * 100}%`,
-                        }}/>
+                        s === 0 ? (
+                          <div key={i} style={{
+                            flex: 1, borderRadius: 2, height: 4,
+                            background: 'transparent',
+                            border: '1.5px dashed rgba(28,28,30,0.15)',
+                          }}/>
+                        ) : (
+                          <div key={i} style={{
+                            flex: 1, borderRadius: 2,
+                            background: scoreColor(s),
+                            height: `${(s / maxS) * 100}%`,
+                          }}/>
+                        )
                       ))}
                     </div>
-                    <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 24, fontWeight: 700, color: C.nk, lineHeight: 1 }}>
-                      {m.cur}<span style={{ fontSize: 13, color: '#bbb' }}>/100</span>
+                    <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 24, fontWeight: 700, color: showDash ? '#ccc' : C.nk, lineHeight: 1 }}>
+                      {showDash ? '–' : m.cur}<span style={{ fontSize: 13, color: '#bbb' }}>/100</span>
                     </div>
                     <div style={{
                       fontSize: 11, fontWeight: 500, marginTop: 4,
-                      color: m.trend >= 0 ? C.ideal : C.focus,
+                      color: m.trend !== null ? (m.trend >= 0 ? C.ideal : C.focus) : '#ccc',
                     }}>
-                      {m.trend >= 0 ? '↑' : '↓'} {m.trend >= 0 ? '+' : ''}{m.trend}%
+                      {m.trend !== null
+                        ? `${m.trend >= 0 ? '↑' : '↓'} ${m.trend >= 0 ? '+' : ''}${m.trend}%`
+                        : '–'}
                     </div>
                   </div>
                 );
               })}
             </div>
-            {/* Scroll fade indicator */}
-            <div style={{
-              position: 'absolute', top: 0, right: 0, bottom: 8, width: 40,
-              background: `linear-gradient(to right, transparent, ${C.pa})`,
-              pointerEvents: 'none', borderRadius: '0 10px 10px 0',
-            }}/>
+
+            {/* Scroll arrow overlay */}
+            {showScrollArrow && (
+              <div style={{
+                position: 'absolute', right: 0, top: 0, bottom: 8, width: 48,
+                background: `linear-gradient(to right, transparent, rgba(245,239,230,0.95))`,
+                display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
+                paddingRight: 8, pointerEvents: 'none',
+              }}>
+                <button onClick={scrollBioRight} style={{
+                  width: 28, height: 28, borderRadius: '50%',
+                  background: '#fff', border: '0.5px solid rgba(28,28,30,0.15)',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  cursor: 'pointer', pointerEvents: 'auto',
+                }}>
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <path d="M4.5 2L8.5 6L4.5 10" stroke={C.cg} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </button>
+              </div>
+            )}
           </div>
-          {bioData.length > 3 && (
-            <div style={{ fontSize: 10, color: C.muted, marginTop: 4, textAlign: 'right' }}>
-              → {bioData.length} metrics
-            </div>
-          )}
         </div>
 
         {/* ── Riding Quality (rings) ─────────────────────────────────── */}

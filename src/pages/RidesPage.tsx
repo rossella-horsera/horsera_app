@@ -1329,67 +1329,63 @@ export default function RidesPage() {
                   background: 'rgba(26, 20, 14, 0.85)',
                   display: 'flex', flexDirection: 'column',
                   alignItems: 'center', justifyContent: 'center',
-                  gap: '16px',
                   animation: 'fadeIn 0.3s ease',
+                  paddingBottom: 32,
                 }}>
-                  {/* Circular progress ring */}
-                  <div style={{ position: 'relative', width: 88, height: 88 }}>
-                    <svg width="88" height="88" viewBox="0 0 88 88" style={{ transform: 'rotate(-90deg)' }}>
-                      {/* Background ring */}
-                      <circle
-                        cx="44" cy="44" r="38"
-                        fill="none"
-                        stroke="rgba(201,169,110,0.2)"
-                        strokeWidth="4"
-                      />
-                      {/* Progress ring */}
-                      <circle
-                        cx="44" cy="44" r="38"
-                        fill="none"
-                        stroke={COLORS.champagne}
-                        strokeWidth="4"
-                        strokeLinecap="round"
-                        strokeDasharray={`${2 * Math.PI * 38}`}
-                        strokeDashoffset={`${2 * Math.PI * 38 * (1 - progress / 100)}`}
-                        style={{ transition: 'stroke-dashoffset 0.4s ease' }}
-                      />
-                    </svg>
-                    {/* Percentage text */}
+                  {/* ── Top section: progress + status ── */}
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+                    {/* Circular progress ring */}
+                    <div style={{ position: 'relative', width: 88, height: 88 }}>
+                      <svg width="88" height="88" viewBox="0 0 88 88" style={{ transform: 'rotate(-90deg)' }}>
+                        <circle
+                          cx="44" cy="44" r="38"
+                          fill="none"
+                          stroke="rgba(201,169,110,0.2)"
+                          strokeWidth="4"
+                        />
+                        <circle
+                          cx="44" cy="44" r="38"
+                          fill="none"
+                          stroke={COLORS.champagne}
+                          strokeWidth="4"
+                          strokeLinecap="round"
+                          strokeDasharray={`${2 * Math.PI * 38}`}
+                          strokeDashoffset={`${2 * Math.PI * 38 * (1 - progress / 100)}`}
+                          style={{ transition: 'stroke-dashoffset 0.4s ease' }}
+                        />
+                      </svg>
+                      <div style={{
+                        position: 'absolute', inset: 0,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontFamily: FONTS.mono, fontSize: '16px', color: COLORS.champagne,
+                        fontWeight: 500,
+                      }}>
+                        {progress}%
+                      </div>
+                    </div>
+
+                    {/* Status text */}
                     <div style={{
-                      position: 'absolute', inset: 0,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontFamily: FONTS.mono, fontSize: '16px', color: COLORS.champagne,
-                      fontWeight: 500,
+                      fontFamily: FONTS.body, fontSize: '13px', color: 'rgba(250,247,243,0.8)',
+                      letterSpacing: '0.02em',
                     }}>
-                      {progress}%
+                      {statusMessage}
                     </div>
                   </div>
 
-                  {/* Status text */}
-                  <div style={{
-                    fontFamily: FONTS.body, fontSize: '13px', color: 'rgba(250,247,243,0.8)',
-                    letterSpacing: '0.02em',
-                  }}>
-                    {statusMessage}
-                  </div>
+                  {/* ── Divider ── */}
+                  <div style={{ height: 1, background: 'rgba(255,255,255,0.12)', margin: '20px 24px', alignSelf: 'stretch' }} />
 
-                  {/* Subtle pulsing dot */}
-                  <div style={{
-                    width: 6, height: 6, borderRadius: '50%',
-                    background: COLORS.champagne,
-                    animation: 'pulse 1.5s ease-in-out infinite',
-                  }} />
-
-                  {/* Horse fun fact */}
+                  {/* ── Bottom section: fun facts ── */}
                   {horseFacts.length > 0 && (
-                    <div style={{ marginTop: 12, textAlign: 'center', maxWidth: 280, padding: '0 20px' }}>
+                    <div style={{ textAlign: 'center', maxWidth: 280, padding: '0 24px' }}>
                       <div style={{
                         fontSize: '9px', fontWeight: 600, letterSpacing: '0.2em',
-                        textTransform: 'uppercase', color: COLORS.cognac, marginBottom: 8,
+                        textTransform: 'uppercase', color: COLORS.cognac, marginBottom: 10,
                       }}>· DID YOU KNOW ·</div>
                       <div key={horseFactIdx} style={{
                         fontFamily: FONTS.body, fontSize: '13px',
-                        color: 'rgba(250,247,243,0.55)', lineHeight: 1.65,
+                        color: 'rgba(250,247,243,0.55)', lineHeight: 1.7,
                         animation: 'fadeIn 0.6s ease',
                       }}>
                         {horseFacts[horseFactIdx]}
