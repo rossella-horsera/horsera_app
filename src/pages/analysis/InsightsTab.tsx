@@ -1,3 +1,8 @@
+import { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { getRides } from '../../lib/storage';
+import { useCadence } from '../../context/CadenceContext';
+
 // ── Design tokens ──────────────────────────────────────────────────────────
 const C = {
   pa:    '#F5EFE6',
@@ -8,58 +13,58 @@ const C = {
   ideal: '#5B9E56',
   good:  '#E8A857',
   focus: '#C14A2A',
+  muted: 'rgba(28,28,30,0.38)',
 };
 
-// ── Biomechanics trend data ────────────────────────────────────────────────
-const BIO_TRENDS = [
-  { label: 'Core',      scores: [72,75,78,80,82,85,88,92], color: C.ideal, trend: '+8%',  dir: 'up'   },
-  { label: 'Lower Leg', scores: [80,78,75,72,70,72,71,71], color: C.focus, trend: '-5%',  dir: 'down' },
-  { label: 'Reins',     scores: [82,83,84,85,86,87,88,88], color: C.good,  trend: '+3%',  dir: 'up'   },
-  { label: 'Pelvis',    scores: [75,76,78,79,80,81,82,83], color: C.good,  trend: '+4%',  dir: 'up'   },
-  { label: 'Shoulder',  scores: [88,89,90,91,92,93,93,94], color: C.ideal, trend: '+2%',  dir: 'up'   },
-];
+function scoreColor(s: number) {
+  return s >= 80 ? C.ideal : s >= 60 ? C.good : C.focus;
+}
+function scoreLabel(s: number) {
+  return s >= 80 ? 'Good' : s >= 60 ? 'Working' : 'Focus area';
+}
 
-// ── Riding Quality data ────────────────────────────────────────────────────
-const RQ = [
-  { label: 'Rhythm',       stage: 'Developing',   pct: 62, note: 'Trunk angle variance limiting cycle' },
-  { label: 'Relaxation',   stage: 'Inconsistent', pct: 44, note: 'Lower leg brace → tension transfer'  },
-  { label: 'Contact',      stage: 'Developing',   pct: 68, note: 'Right rein 5° higher than left'      },
-  { label: 'Straightness', stage: 'Emerging',     pct: 38, note: 'Rein asymmetry → lateral drift'      },
-  { label: 'Balance',      stage: 'Consistent',   pct: 78, note: 'Core holding despite leg brace'      },
-  { label: 'Impulsion',    stage: 'Developing',   pct: 65, note: 'Rhythm disruption dampening push'    },
-];
-
-const STAGE_STYLES: Record<string, { bg: string; color: string }> = {
-  Emerging:     { bg: C.focus,           color: '#fff'   },
-  Inconsistent: { bg: C.good,            color: C.nk     },
-  Developing:   { bg: C.ch,              color: C.nk     },
-  Consistent:   { bg: C.ideal,           color: '#fff'   },
-  Mastering:    { bg: C.na,              color: '#fff'   },
+// ── Mock fallback data ─────────────────────────────────────────────────────
+const MOCK_BIO = {
+  coreStability: 0.88, lowerLegStability: 0.71, reinSteadiness: 0.85,
+  pelvisStability: 0.83, upperBodyAlignment: 0.92, reinSymmetry: 0.80,
 };
+const MOCK_RQ = {
+  rhythm: 0.62, relaxation: 0.44, contact: 0.68,
+  impulsion: 0.65, straightness: 0.38, balance: 0.78,
+};
+const MOCK_SCORES = [68, 71, 70, 73, 75, 74, 77, 78];
+const MOCK_LABELS = ['Jan 18','Jan 25','Feb 1','Feb 8','Feb 15','Feb 22','Mar 1','Mar 8'];
 
-// ── Chart data (8 sessions) ────────────────────────────────────────────────
-const SCORES   = [68, 71, 70, 73, 75, 74, 77, 78];
-const X_LABELS = ['Jan 18','Jan 25','Feb 1','Feb 8','Feb 15','Feb 22','Mar 1','Mar 8'];
+const BIO_METRICS: Array<{ label: string; key: keyof typeof MOCK_BIO }> = [
+  { label: 'Core', key: 'coreStability' },
+  { label: 'Lower Leg', key: 'lowerLegStability' },
+  { label: 'Reins', key: 'reinSteadiness' },
+  { label: 'Pelvis', key: 'pelvisStability' },
+  { label: 'Upper Body', key: 'upperBodyAlignment' },
+  { label: 'Symmetry', key: 'reinSymmetry' },
+];
 
-// Map score (60–100 range) to SVG y (top=20, bottom=150)
-function sy(score: number) {
-  return 20 + (100 - score) / 40 * 130;
+const RQ_METRICS = ['Rhythm','Relaxation','Contact','Impulsion','Straightness','Balance'] as const;
+const RQ_KEYS: Array<keyof typeof MOCK_RQ> = ['rhythm','relaxation','contact','impulsion','straightness','balance'];
+
+// ── Score Ring SVG ─────────────────────────────────────────────────────────
+function ScoreRing({ score, size = 52 }: { score: number; size?: number }) {
+  const r = 45;
+  const circ = 2 * Math.PI * r;
+  const dash = (score / 100) * circ;
+  const color = scoreColor(score);
+  return (
+    <svg width={size} height={size} viewBox="0 0 100 100">
+      <circle cx="50" cy="50" r={r} fill="none" stroke="#EDE7DF" strokeWidth="6" />
+      <circle cx="50" cy="50" r={r} fill="none" stroke={color} strokeWidth="6"
+        strokeDasharray={`${dash} ${circ}`} strokeLinecap="round" transform="rotate(-90 50 50)" />
+      <text x="50" y="50" textAnchor="middle" style={{ fontFamily: "'DM Mono', monospace", fontWeight: 600 }}>
+        <tspan fontSize="18" fill={color}>{score}</tspan>
+        <tspan fontSize="10" fill="#BBB">/100</tspan>
+      </text>
+    </svg>
+  );
 }
-// Map index to x
-function sx(i: number, n = 8, w = 280) {
-  return 30 + (i / (n - 1)) * (w - 40);
-}
-
-const polyPts = SCORES.map((s, i) => `${sx(i)},${sy(s)}`).join(' ');
-const areaPath = `M${sx(0)},${sy(SCORES[0])} ` +
-  SCORES.map((s, i) => `L${sx(i)},${sy(s)}`).join(' ') +
-  ` L${sx(SCORES.length - 1)},150 L${sx(0)},150 Z`;
-
-// Trend line (first to last)
-const trendX1 = sx(0);
-const trendY1 = sy(SCORES[0]);
-const trendX2 = sx(SCORES.length - 1);
-const trendY2 = sy(SCORES[SCORES.length - 1]);
 
 // ── Section header ─────────────────────────────────────────────────────────
 function SecHdr({ children }: { children: React.ReactNode }) {
@@ -75,25 +80,92 @@ function SecHdr({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ── Mini bar color by score ────────────────────────────────────────────────
-function barColor(s: number, themeColor: string) {
-  if (themeColor === C.focus) {
-    // Lower leg — lower = worse
-    if (s >= 80) return C.ideal;
-    if (s >= 70) return C.good;
-    return C.focus;
-  }
-  if (s >= 85) return C.ideal;
-  if (s >= 72) return C.good;
-  return C.focus;
+// ── Chart helpers ──────────────────────────────────────────────────────────
+function sy(score: number, scores: number[]) {
+  const min = Math.min(...scores) - 5;
+  const max = Math.max(...scores) + 5;
+  const range = max - min || 1;
+  return 10 + (max - score) / range * 120;
+}
+function sx(i: number, n: number, w = 280) {
+  if (n <= 1) return w / 2;
+  return 30 + (i / (n - 1)) * (w - 40);
 }
 
 // ── Component ───────────────────────────────────────────────────────────────
 export default function InsightsTab() {
+  const navigate = useNavigate();
+  const { openCadence } = useCadence();
+  const [intervalSize, setIntervalSize] = useState(8);
+
+  const allRides = useMemo(() =>
+    getRides().sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()),
+  []);
+
+  const hasReal = allRides.length > 0;
+  const rides = intervalSize === 0 ? allRides : allRides.slice(-intervalSize);
+
+  // Derived data
+  const overallScores = hasReal
+    ? rides.map(r => Math.round(r.overallScore * 100))
+    : MOCK_SCORES;
+  const xLabels = hasReal
+    ? rides.map(r => new Date(r.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))
+    : MOCK_LABELS;
+  const latestScore = overallScores[overallScores.length - 1] ?? 0;
+  const prevAvg = overallScores.length > 1
+    ? overallScores.slice(0, -1).reduce((a, b) => a + b, 0) / (overallScores.length - 1)
+    : null;
+
+  const trendBadge = prevAvg === null ? null
+    : latestScore > prevAvg + 3 ? { label: '↑ Building', color: C.ideal }
+    : latestScore < prevAvg - 3 ? { label: '↓ Dip', color: C.focus }
+    : { label: '→ Steady', color: C.good };
+
+  const totalChange = overallScores.length > 1
+    ? overallScores[overallScores.length - 1] - overallScores[0]
+    : 0;
+  const avgChange = overallScores.length > 1
+    ? Math.round(totalChange / (overallScores.length - 1))
+    : 0;
+
+  // Bio trend data
+  const bioData = BIO_METRICS.map(m => {
+    const scores = hasReal
+      ? rides.map(r => Math.round(r.biometrics[m.key] * 100))
+      : Array(8).fill(0).map(() => Math.round(MOCK_BIO[m.key] * 100));
+    const cur = scores[scores.length - 1];
+    const first = scores[0];
+    const trend = cur - first;
+    return { ...m, scores, cur, trend };
+  });
+
+  // Riding quality data
+  const latestRide = hasReal ? rides[rides.length - 1] : null;
+  const rqData = RQ_METRICS.map((name, i) => {
+    const key = RQ_KEYS[i];
+    const score = latestRide?.ridingQuality
+      ? Math.round(latestRide.ridingQuality[key] * 100)
+      : Math.round(MOCK_RQ[key] * 100);
+    return { name, score };
+  });
+
+  // Chart SVG
+  const n = overallScores.length;
+  const polyPts = overallScores.map((s, i) => `${sx(i, n)},${sy(s, overallScores)}`).join(' ');
+  const areaPath = n > 0
+    ? `M${sx(0, n)},${sy(overallScores[0], overallScores)} ` +
+      overallScores.map((s, i) => `L${sx(i, n)},${sy(s, overallScores)}`).join(' ') +
+      ` L${sx(n - 1, n)},135 L${sx(0, n)},135 Z`
+    : '';
+
+  const horseName = hasReal ? rides[rides.length - 1]?.horse ?? 'Your Horse' : 'Caviar';
+  const dateRange = xLabels.length > 1 ? `${xLabels[0]} – ${xLabels[xLabels.length - 1]}` : xLabels[0] ?? '';
+
   return (
     <div style={{ background: C.pa, paddingBottom: 100 }}>
 
-      {/* ── Ride header ─────────────────────────────────────────────────── */}
+      {/* ── Score header ───────────────────────────────────────────────── */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '10px 18px', background: '#fff',
@@ -101,23 +173,49 @@ export default function InsightsTab() {
       }}>
         <div>
           <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 15, fontWeight: 600, color: C.ch }}>
-            Your Progress
+            {horseName} · Your Progress
           </div>
-          <div style={{ fontSize: 10, letterSpacing: '1.2px', textTransform: 'uppercase', color: 'rgba(28,28,30,0.38)', marginTop: 1 }}>
-            Last 8 rides · Jan 18 – Mar 8
+          <div style={{ fontSize: 10, letterSpacing: '1.2px', textTransform: 'uppercase', color: C.muted, marginTop: 1 }}>
+            Last {n} rides · {dateRange}
           </div>
         </div>
-        <div style={{ textAlign: 'right' }}>
-          <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 20, fontWeight: 600, color: C.cg }}>78</div>
-          <div style={{ fontSize: 9.5, color: '#aaa', letterSpacing: '1px', textTransform: 'uppercase' }}>Latest</div>
+        <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', gap: 8 }}>
+          {trendBadge && (
+            <span style={{
+              fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px',
+              padding: '3px 8px', borderRadius: 8, background: `${trendBadge.color}18`, color: trendBadge.color,
+              fontFamily: "'DM Sans', sans-serif",
+            }}>{trendBadge.label}</span>
+          )}
+          <div>
+            <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 20, fontWeight: 600 }}>
+              <span style={{ color: C.cg }}>{latestScore}</span>
+              <span style={{ color: C.muted, fontSize: 13 }}>/100</span>
+            </div>
+            <div style={{ fontSize: 9.5, color: '#aaa', letterSpacing: '1px', textTransform: 'uppercase' }}>Latest</div>
+          </div>
         </div>
       </div>
 
       <div style={{ padding: '20px 18px 28px' }}>
 
-        {/* ────────────────────────────────────────────────────────────────
-            CARD 1 — Cadence Pattern Insight
-        ──────────────────────────────────────────────────────────────── */}
+        {/* ── Interval selector ────────────────────────────────────────── */}
+        <div style={{ display: 'flex', gap: 6, marginBottom: 18 }}>
+          {[{ label: '4', value: 4 }, { label: '8', value: 8 }, { label: '12', value: 12 }, { label: 'All', value: 0 }].map(opt => {
+            const active = intervalSize === opt.value;
+            return (
+              <button key={opt.value} onClick={() => setIntervalSize(opt.value)} style={{
+                height: 28, padding: '0 14px', borderRadius: 14, border: active ? 'none' : '1px solid rgba(28,28,30,0.15)',
+                background: active ? C.nk : 'transparent', color: active ? '#fff' : C.muted,
+                fontFamily: "'DM Mono', monospace", fontSize: 11, fontWeight: 600, cursor: 'pointer',
+              }}>
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* ── Cadence Pattern Insight ─────────────────────────────────── */}
         <div style={{ marginBottom: 22 }}>
           <SecHdr>Cadence · Pattern insight</SecHdr>
           <div style={{
@@ -134,192 +232,173 @@ export default function InsightsTab() {
                 width: 6, height: 6, borderRadius: '50%', background: C.good, flexShrink: 0,
                 animation: 'cadPulse 2.4s ease-in-out infinite',
               }}/>
-              8 rides · Jan–Mar 2026
+              {n} rides · {dateRange}
             </div>
             <p style={{
-              fontFamily: "'Playfair Display', serif", fontStyle: 'italic',
-              fontSize: 13.5, color: C.na, lineHeight: 1.88, margin: 0,
+              fontFamily: "'DM Sans', sans-serif",
+              fontSize: 13, color: C.na, lineHeight: 1.7, margin: 0,
             }}>
-              Across your last 8 rides, a consistent pattern is emerging: your core strength has improved 12%
-              since January, but your lower leg brace activates most strongly when working on right rein.
-              This compensation is masking real progress — your intrinsic balance is building even as the surface
-              score stays flat. The next breakthrough will come from addressing the brace directly.
+              <span style={{ fontFamily: "'Playfair Display', serif", fontStyle: 'italic' }}>
+                A consistent pattern is emerging.
+              </span>{' '}
+              Across your last {n} rides, your core strength has been your standout area,
+              while lower leg stability shows the most room for growth.
+              This compensation pattern is common — addressing the leg brace directly
+              will unlock improvements across all the training scales.
             </p>
           </div>
+          <button onClick={openCadence} style={{
+            width: '100%', height: 42, marginTop: 10,
+            border: '1px solid rgba(193,127,74,0.4)', borderRadius: 21,
+            background: 'transparent', color: C.cg, cursor: 'pointer',
+            fontFamily: "'DM Sans', sans-serif", fontSize: 12.5,
+          }}>
+            Ask Cadence about your progress →
+          </button>
         </div>
 
-        {/* ────────────────────────────────────────────────────────────────
-            CARD 2 — Ride Score Chart
-        ──────────────────────────────────────────────────────────────── */}
+        {/* ── Ride Score Chart ────────────────────────────────────────── */}
         <div style={{ marginBottom: 22 }}>
           <SecHdr>Ride score</SecHdr>
           <div style={{ background: '#fff', borderRadius: 12, padding: '17px 19px', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: C.nk }}>Score over 8 sessions</span>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: C.nk }}>Score over {n} sessions</span>
               <span style={{
                 fontSize: 10, fontWeight: 600, padding: '3px 10px', borderRadius: 9,
-                background: 'rgba(193,127,74,0.11)', color: C.cg,
-              }}>↑ +10 pts total</span>
+                background: totalChange >= 0 ? 'rgba(91,158,86,0.15)' : 'rgba(193,74,42,0.15)',
+                color: totalChange >= 0 ? C.ideal : C.focus,
+              }}>{totalChange >= 0 ? '↑' : '↓'} {totalChange >= 0 ? '+' : ''}{totalChange} pts total</span>
+            </div>
+            <div style={{ fontSize: 10, color: '#aaa', marginBottom: 12 }}>
+              {avgChange >= 0 ? '↑' : '↓'} {avgChange >= 0 ? '+' : ''}{avgChange} pt / session avg
             </div>
 
-            <svg viewBox="0 0 280 170" style={{ width: '100%', height: 'auto', display: 'block' }} preserveAspectRatio="xMidYMid meet">
-              <defs>
-                <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%"   stopColor={C.cg} stopOpacity="0.15"/>
-                  <stop offset="100%" stopColor={C.cg} stopOpacity="0"/>
-                </linearGradient>
-              </defs>
-
-              {/* Grid lines */}
-              {[60, 70, 80].map(v => (
-                <line key={v} x1="30" y1={sy(v)} x2="270" y2={sy(v)}
-                  stroke="rgba(0,0,0,0.06)" strokeDasharray="4,4"/>
-              ))}
-              {[60, 70, 80].map(v => (
-                <text key={v} x="26" y={sy(v) + 3} textAnchor="end"
-                  fontSize="8" fill="#ccc" fontFamily="Inter,sans-serif">{v}</text>
-              ))}
-
-              {/* Area fill */}
-              <path d={areaPath} fill="url(#areaGrad)"/>
-
-              {/* Dashed trend line */}
-              <line x1={trendX1} y1={trendY1} x2={trendX2} y2={trendY2}
-                stroke="rgba(0,0,0,0.2)" strokeWidth="1.5" strokeDasharray="5,4"/>
-
-              {/* Polyline */}
-              <polyline points={polyPts} fill="none" stroke={C.cg} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-
-              {/* Data points */}
-              {SCORES.map((s, i) => {
-                const last = i === SCORES.length - 1;
-                return (
-                  <g key={i}>
-                    {last
-                      ? <circle cx={sx(i)} cy={sy(s)} r="7" fill={C.cg} stroke="#fff" strokeWidth="2"/>
-                      : <circle cx={sx(i)} cy={sy(s)} r="4" fill="#fff" stroke={C.cg} strokeWidth="1.5"/>
-                    }
-                    {last && (
-                      <text x={sx(i)} y={sy(s) - 12} textAnchor="middle"
-                        fontSize="12" fontWeight="700" fill={C.cg}
-                        fontFamily="'Playfair Display',serif">{s}</text>
-                    )}
-                  </g>
-                );
-              })}
-
-              {/* "+1 pt / session" badge */}
-              <rect x="190" y="8" width="80" height="18" rx="9" fill="rgba(91,158,86,0.15)"/>
-              <text x="230" y="21" textAnchor="middle" fontSize="9" fontWeight="600" fill={C.ideal}
-                fontFamily="Inter,sans-serif">+1 pt / session</text>
-
-              {/* X-axis labels — every other one to avoid crowding */}
-              {X_LABELS.map((lbl, i) => {
-                if (i % 2 !== 0 && i !== X_LABELS.length - 1) return null;
-                const last = i === X_LABELS.length - 1;
-                return (
-                  <text key={i} x={sx(i)} y="165" textAnchor="middle"
-                    fontSize="7" fill={last ? C.cg : '#bbb'}
-                    fontFamily="Inter,sans-serif"
-                    fontWeight={last ? '600' : '400'}>{lbl}</text>
-                );
-              })}
-            </svg>
+            {n > 1 && (
+              <svg viewBox="0 0 280 145" style={{ width: '100%', height: 'auto', display: 'block' }} preserveAspectRatio="xMidYMid meet">
+                <defs>
+                  <linearGradient id="areaGradP" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={C.cg} stopOpacity="0.15"/>
+                    <stop offset="100%" stopColor={C.cg} stopOpacity="0"/>
+                  </linearGradient>
+                </defs>
+                <path d={areaPath} fill="url(#areaGradP)"/>
+                <line x1={sx(0, n)} y1={sy(overallScores[0], overallScores)} x2={sx(n - 1, n)} y2={sy(overallScores[n - 1], overallScores)}
+                  stroke="rgba(0,0,0,0.2)" strokeWidth="1.5" strokeDasharray="5,4"/>
+                <polyline points={polyPts} fill="none" stroke={C.cg} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+                {overallScores.map((s, i) => {
+                  const last = i === n - 1;
+                  return (
+                    <g key={i}>
+                      {last
+                        ? <circle cx={sx(i, n)} cy={sy(s, overallScores)} r="7" fill={C.cg} stroke="#fff" strokeWidth="2"/>
+                        : <circle cx={sx(i, n)} cy={sy(s, overallScores)} r="4" fill="#fff" stroke={C.cg} strokeWidth="1.5"/>
+                      }
+                      {last && (
+                        <text x={sx(i, n)} y={sy(s, overallScores) - 12} textAnchor="middle"
+                          fontSize="12" fontWeight="700" fill={C.cg}
+                          fontFamily="'Playfair Display',serif">{s}</text>
+                      )}
+                    </g>
+                  );
+                })}
+                {xLabels.map((lbl, i) => {
+                  if (n > 6 && i % 2 !== 0 && i !== n - 1) return null;
+                  const last = i === n - 1;
+                  return (
+                    <text key={i} x={sx(i, n)} y="142" textAnchor="middle"
+                      fontSize="7" fill={last ? C.cg : '#bbb'}
+                      fontFamily="Inter,sans-serif"
+                      fontWeight={last ? '600' : '400'}>{lbl}</text>
+                  );
+                })}
+              </svg>
+            )}
           </div>
         </div>
 
-        {/* ────────────────────────────────────────────────────────────────
-            CARD 3 — Biomechanics Trends (horizontal scroll)
-        ──────────────────────────────────────────────────────────────── */}
+        {/* ── Biomechanics Trends ─────────────────────────────────────── */}
         <div style={{ marginBottom: 22 }}>
           <SecHdr>Biomechanics trends</SecHdr>
-          <div
-            style={{
+          <div style={{ position: 'relative' }}>
+            <div style={{
               display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 8,
               WebkitOverflowScrolling: 'touch',
-            } as React.CSSProperties}
-          >
-            {BIO_TRENDS.map(m => {
-              const cur = m.scores[m.scores.length - 1];
-              const maxS = Math.max(...m.scores);
-              return (
-                <div key={m.label} style={{
-                  flexShrink: 0, width: 130, background: '#fff',
-                  borderRadius: 10, padding: '12px 12px 10px',
-                  boxShadow: '0 1px 8px rgba(0,0,0,0.06)',
-                }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.8px', textTransform: 'uppercase', color: C.na, marginBottom: 8 }}>
-                    {m.label}
-                  </div>
-                  {/* Mini bar chart */}
-                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 28, marginBottom: 8 }}>
-                    {m.scores.map((s, i) => (
-                      <div key={i} style={{
-                        flex: 1, borderRadius: 2,
-                        background: barColor(s, m.color),
-                        height: `${(s / maxS) * 100}%`,
-                      }}/>
-                    ))}
-                  </div>
-                  {/* Current score */}
-                  <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'Inter', sans-serif", color: C.nk, lineHeight: 1 }}>
-                    {cur}
-                  </div>
-                  {/* Trend */}
-                  <div style={{
-                    fontSize: 11, fontWeight: 500, marginTop: 4,
-                    color: m.dir === 'up' ? C.ideal : C.focus,
+            } as React.CSSProperties}>
+              {bioData.map(m => {
+                const maxS = Math.max(...m.scores, 1);
+                return (
+                  <div key={m.label} style={{
+                    flexShrink: 0, width: 130, background: '#fff',
+                    borderRadius: 10, padding: '12px 12px 10px',
+                    boxShadow: '0 1px 8px rgba(0,0,0,0.06)',
                   }}>
-                    {m.dir === 'up' ? '↑' : '↓'} {m.trend}
+                    <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.8px', textTransform: 'uppercase', color: C.na, marginBottom: 8 }}>
+                      {m.label}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 28, marginBottom: 8 }}>
+                      {m.scores.map((s, i) => (
+                        <div key={i} style={{
+                          flex: 1, borderRadius: 2,
+                          background: scoreColor(s),
+                          height: `${(s / maxS) * 100}%`,
+                        }}/>
+                      ))}
+                    </div>
+                    <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 24, fontWeight: 700, color: C.nk, lineHeight: 1 }}>
+                      {m.cur}<span style={{ fontSize: 13, color: '#bbb' }}>/100</span>
+                    </div>
+                    <div style={{
+                      fontSize: 11, fontWeight: 500, marginTop: 4,
+                      color: m.trend >= 0 ? C.ideal : C.focus,
+                    }}>
+                      {m.trend >= 0 ? '↑' : '↓'} {m.trend >= 0 ? '+' : ''}{m.trend}%
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
+            {/* Scroll fade indicator */}
+            <div style={{
+              position: 'absolute', top: 0, right: 0, bottom: 8, width: 40,
+              background: `linear-gradient(to right, transparent, ${C.pa})`,
+              pointerEvents: 'none', borderRadius: '0 10px 10px 0',
+            }}/>
           </div>
+          {bioData.length > 3 && (
+            <div style={{ fontSize: 10, color: C.muted, marginTop: 4, textAlign: 'right' }}>
+              → {bioData.length} metrics
+            </div>
+          )}
         </div>
 
-        {/* ────────────────────────────────────────────────────────────────
-            CARD 4 — Riding Quality Assessment
-        ──────────────────────────────────────────────────────────────── */}
+        {/* ── Riding Quality (rings) ─────────────────────────────────── */}
         <div style={{ marginBottom: 22 }}>
           <SecHdr>Riding Quality</SecHdr>
-          <p style={{ fontSize: 12, color: 'rgba(28,28,30,0.45)', marginBottom: 14, lineHeight: 1.6 }}>
-            How your riding looks from the outside — the dimensions a judge or trainer evaluates.
+          <p style={{ fontSize: 12, color: C.muted, marginBottom: 14, lineHeight: 1.6 }}>
+            The Training Scales — how your riding looks from the outside.
           </p>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            {RQ.map(rq => {
-              const st = STAGE_STYLES[rq.stage] ?? STAGE_STYLES.Developing;
-              return (
-                <div key={rq.label} style={{
-                  background: '#fff', borderRadius: 10, padding: '13px 14px',
-                  boxShadow: '0 1px 8px rgba(0,0,0,0.06)',
-                }}>
-                  <div style={{ fontSize: 11.5, fontWeight: 600, color: C.na, marginBottom: 5 }}>
-                    {rq.label}
-                  </div>
-                  <span style={{
-                    fontSize: 10, fontWeight: 500, letterSpacing: '0.5px',
-                    padding: '3px 9px', borderRadius: 8,
-                    background: st.bg, color: st.color,
-                    display: 'inline-block', marginBottom: 8,
-                  }}>
-                    {rq.stage}
-                  </span>
-                  <div style={{ height: 4, borderRadius: 2, background: 'rgba(28,28,30,0.09)' }}>
-                    <div style={{ height: '100%', borderRadius: 2, background: st.bg, width: `${rq.pct}%` }}/>
-                  </div>
-                  <div style={{ fontSize: 10.5, color: 'rgba(28,28,30,0.42)', marginTop: 6, lineHeight: 1.5 }}>
-                    {rq.note}
-                  </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+            {rqData.map(m => (
+              <div key={m.name} style={{
+                background: '#fff', borderRadius: 16, padding: 14, textAlign: 'center',
+                boxShadow: '0 2px 12px rgba(0,0,0,0.06)',
+              }}>
+                <ScoreRing score={m.score} />
+                <div style={{ fontSize: 12, color: '#888', fontFamily: "'DM Sans', sans-serif", marginTop: 6 }}>
+                  {m.name}
                 </div>
-              );
-            })}
+                <div style={{
+                  fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px',
+                  color: scoreColor(m.score), fontFamily: "'DM Sans', sans-serif", marginTop: 2,
+                }}>
+                  {scoreLabel(m.score)}
+                </div>
+              </div>
+            ))}
           </div>
         </div>
 
-        {/* ────────────────────────────────────────────────────────────────
-            CARD 5 — Progression Signal
-        ──────────────────────────────────────────────────────────────── */}
+        {/* ── Progression Signal ──────────────────────────────────────── */}
         <div>
           <SecHdr>Progression signal</SecHdr>
           <div style={{
@@ -337,7 +416,6 @@ export default function InsightsTab() {
               <span style={{ fontSize: 32, fontWeight: 700, color: '#fff', fontFamily: "'Inter', sans-serif" }}>68%</span>
               <span style={{ fontSize: 13, color: C.ch }}>of milestone tasks at Consistent or above</span>
             </div>
-            {/* Progress bar */}
             <div style={{ height: 5, borderRadius: 3, background: 'rgba(255,255,255,0.13)', marginBottom: 16 }}>
               <div style={{
                 height: '100%', borderRadius: 3, width: '68%',
@@ -346,15 +424,43 @@ export default function InsightsTab() {
             </div>
             <p style={{
               fontFamily: "'Playfair Display', serif", fontStyle: 'italic',
-              fontSize: 13, color: `rgba(212,175,118,0.82)`, lineHeight: 1.78, margin: 0,
+              fontSize: 13, color: 'rgba(212,175,118,0.82)', lineHeight: 1.78, margin: 0,
             }}>
               Relaxation and Straightness are the remaining barriers to Training Level. Once your lower leg
               releases, both will follow naturally.
             </p>
+
+            {/* CTAs */}
+            <button onClick={() => navigate('/journey')} style={{
+              width: '100%', height: 44, marginTop: 16,
+              background: C.cg, color: '#fff', border: 'none', borderRadius: 22,
+              fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, cursor: 'pointer',
+            }}>
+              Explore your Journey →
+            </button>
+            <button style={{
+              width: '100%', height: 40, marginTop: 8,
+              background: 'transparent', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 22,
+              color: 'rgba(255,255,255,0.4)', fontFamily: "'DM Sans', sans-serif", fontSize: 12,
+              cursor: 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+            }}>
+              Run the Test
+              <span style={{
+                fontSize: 9, fontWeight: 600, padding: '2px 8px', borderRadius: 8,
+                background: C.ch, color: C.nk,
+              }}>Coming soon</span>
+            </button>
           </div>
         </div>
 
       </div>
+
+      <style>{`
+        @keyframes cadPulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.3; }
+        }
+      `}</style>
     </div>
   );
 }

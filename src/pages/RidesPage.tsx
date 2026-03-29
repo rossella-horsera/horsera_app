@@ -77,6 +77,34 @@ const PROCESSING_MESSAGES = [
   'Calculating scores…',
 ];
 
+const HORSE_FACTS = [
+  "Horses can sleep both lying down and standing up — they lock their legs to doze.",
+  "A horse's heart weighs about 9 lbs — nearly 3× the size of a human heart.",
+  "Horses have the largest eyes of any land mammal.",
+  "Horses have an excellent memory — they recognise people and horses for years.",
+  "The frog of the hoof acts as a natural shock absorber and circulatory pump.",
+  "Dressage comes from the French word 'dresser' — to train.",
+  "Horses can sense your emotional state through subtle body language and breathing.",
+  "A horse's teeth take up more space in its skull than its brain.",
+  "Horses have nearly 360° vision — they can see almost all the way around.",
+  "The walk is the most difficult gait to improve, and the most revealing of training quality.",
+  "Grand Prix dressage movements like piaffe and passage occur naturally in the wild.",
+  "Horses can run within hours of being born.",
+  "Impulsion isn't speed — it's energy flowing from the hindquarters through a supple back.",
+  "A horse can drink up to 10 gallons of water a day.",
+  "The fastest recorded horse speed was 55 mph — clocked over a quarter mile.",
+  "Horses communicate through facial expressions, ear position, and tail movement.",
+  "'On the bit' describes the whole topline engaged and round — not just the head position.",
+  "Horses have 205 bones — just one more than the human skeleton.",
+  "In competition, a score of 10 means 'excellent' — and it's exceptionally rare.",
+  "The shoulder angle affects a horse's range of motion more than almost any other conformation point.",
+  "Horses can't vomit — their digestive system only goes one direction.",
+  "A horse's hooves grow about 1 cm per month and fully regenerate in about a year.",
+  "The Lusitano and Andalusian are among the oldest classical dressage breeds.",
+  "Cadence in riding means the rhythm and energy of the gait — your horse's musical tempo.",
+  "Submission in dressage means willingness and confidence — not dominance.",
+];
+
 
 // ─────────────────────────────────────────────────────────
 // BRANDED PULSE (#60)
@@ -816,6 +844,8 @@ export default function RidesPage() {
   const [fileSizeWarning, setFileSizeWarning] = useState<string | null>(null);
   const [processingMsgIdx, setProcessingMsgIdx] = useState(0);
   const [showSuccessAnim, setShowSuccessAnim] = useState(false);
+  const [horseFacts, setHorseFacts] = useState<string[]>([]);
+  const [horseFactIdx, setHorseFactIdx] = useState(0);
 
   // Detail view for ride history
   const [selectedRide, setSelectedRide] = useState<Ride | null>(null);
@@ -836,6 +866,18 @@ export default function RidesPage() {
     const interval = setInterval(() => {
       setProcessingMsgIdx(i => (i + 1) % PROCESSING_MESSAGES.length);
     }, 2000);
+    return () => clearInterval(interval);
+  }, [isAnalyzing]);
+
+  // Horse fun facts — shuffle on analysis start, cycle every 4s
+  useEffect(() => {
+    if (!isAnalyzing) return;
+    const shuffled = [...HORSE_FACTS].sort(() => Math.random() - 0.5).slice(0, 3);
+    setHorseFacts(shuffled);
+    setHorseFactIdx(0);
+    const interval = setInterval(() => {
+      setHorseFactIdx(i => (i + 1) % 3);
+    }, 4000);
     return () => clearInterval(interval);
   }, [isAnalyzing]);
 
@@ -1337,6 +1379,23 @@ export default function RidesPage() {
                     background: COLORS.champagne,
                     animation: 'pulse 1.5s ease-in-out infinite',
                   }} />
+
+                  {/* Horse fun fact */}
+                  {horseFacts.length > 0 && (
+                    <div style={{ marginTop: 12, textAlign: 'center', maxWidth: 280, padding: '0 20px' }}>
+                      <div style={{
+                        fontSize: '9px', fontWeight: 700, letterSpacing: '1.2px',
+                        textTransform: 'uppercase', color: COLORS.champagne, marginBottom: 6,
+                      }}>Did you know?</div>
+                      <div key={horseFactIdx} style={{
+                        fontFamily: FONTS.body, fontSize: '12px', fontStyle: 'italic',
+                        color: 'rgba(250,247,243,0.55)', lineHeight: 1.6,
+                        animation: 'fadeIn 0.6s ease',
+                      }}>
+                        {horseFacts[horseFactIdx]}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
