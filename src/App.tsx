@@ -9,6 +9,7 @@ import RidesPage from "./pages/RidesPage";
 import RideDetailPage from "./pages/RideDetailPage";
 import InsightsPage from "./pages/InsightsPage";
 import NotFound from "./pages/NotFound";
+import RideDetailPage2 from "./pages/RideDetailPage2";
 import AnalysisShell from "./pages/analysis/AnalysisShell";
 import RideTab from "./pages/analysis/RideTab";
 import ReportTab from "./pages/analysis/ReportTab";
@@ -28,11 +29,8 @@ const App = () => (
             <Route path="/" element={<RidesPage />} />
             <Route path="/rides" element={<Navigate to="/" replace />} />
 
-            {/* Ride detail — AnalysisShell replaces old RideDetailPage */}
-            <Route path="/rides/:id" element={<AnalysisShell />}>
-              <Route index element={<RideTab />} />
-              <Route path="report" element={<ReportTab />} />
-            </Route>
+            {/* Ride detail — single-scroll page */}
+            <Route path="/rides/:id" element={<RideDetailPage2 />} />
 
             {/* Progress tab — InsightsTab content promoted to main nav */}
             <Route path="/progress" element={<InsightsTab />} />
