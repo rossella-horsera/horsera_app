@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { getUserProfile } from '../lib/userProfile';
 import { getRides } from '../lib/storage';
 
@@ -32,7 +32,30 @@ const COLLECTIVE_MARKS = [
   { label: "Submission", sub: "Steady contact, attention, confidence", metrics: ["contact"], coeff: 2 },
   { label: "Rider's position", sub: "Keeping in balance with horse", metrics: ["upperBodyAlignment", "coreStability", "pelvisStability", "lowerLegStability"] },
   { label: "Effectiveness of aids", sub: "Correct bend, preparation of transitions", metrics: ["reinSteadiness", "reinSymmetry", "lowerLegStability"] },
-  { label: "Geometry & accuracy", sub: "Size and shape of circles and turns", metrics: [], note: "Spatial tracking coming soon" },
+  { label: "Geometry & accuracy", sub: "Size and shape of circles and turns", metrics: [] as string[], note: "Spatial tracking coming soon" },
+];
+
+const DRESSAGE_LEVELS = [
+  { key: 'intro', label: 'Intro' },
+  { key: 'training', label: 'Training' },
+  { key: 'first', label: 'First' },
+  { key: 'second', label: 'Second' },
+  { key: 'third', label: 'Third' },
+];
+
+const LEVEL_TABS = [
+  { key: 'intro', label: 'Intro A', locked: false },
+  { key: 'training', label: 'Training 1', locked: false },
+  { key: 'first', label: 'First 1', locked: true },
+  { key: 'second', label: 'Second 1', locked: true },
+  { key: 'third', label: 'Third 1', locked: true },
+];
+
+const DISCIPLINE_OPTIONS = [
+  { key: 'usdf-dressage', label: 'USDF Dressage' },
+  { key: 'hunter-jumper', label: 'Hunter / Jumper' },
+  { key: 'pony-club', label: 'Pony Club' },
+  { key: 'a-bit-of-everything', label: 'All-Round' },
 ];
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -55,6 +78,12 @@ const METRIC_LABELS: Record<string, string> = {
   impulsion: 'Impulsion', straightness: 'Straightness', balance: 'Balance',
 };
 
+const DISCIPLINE_LABELS: Record<string, string> = {
+  'usdf-dressage': 'USDF Dressage', 'usdf': 'USDF Dressage',
+  'pony-club': 'Pony Club', 'hunter-jumper': 'Hunter / Jumper',
+  'a-bit-of-everything': 'All-Round',
+};
+
 // ── Section Header ─────────────────────────────────────────────────────────
 function SecHdr({ children }: { children: React.ReactNode }) {
   return (
@@ -74,42 +103,29 @@ const card = (extra: React.CSSProperties = {}): React.CSSProperties => ({
   boxShadow: '0 2px 12px rgba(0,0,0,0.06)', ...extra,
 });
 
-// ── Journey nodes ──────────────────────────────────────────────────────────
-interface PathNode { label: string; sublabel: string; state: 'done' | 'active' | 'future' | 'far'; }
-
-function getDressageNodes(): PathNode[] {
-  return [
-    { label: 'Intro Level', sublabel: 'Walk, trot, rhythm, relaxation', state: 'active' },
-    { label: 'Training Level', sublabel: 'Steady contact, balanced canter', state: 'future' },
-    { label: 'First Level', sublabel: 'Bend, balance, leg yield', state: 'future' },
-    { label: 'Second Level', sublabel: 'Collection, shoulder-in, travers', state: 'far' },
-    { label: 'Third Level', sublabel: 'Flying changes, half-pass', state: 'far' },
-  ];
-}
-
-const DISCIPLINE_LABELS: Record<string, string> = {
-  'usdf-dressage': 'USDF Dressage', 'usdf': 'USDF Dressage',
-  'pony-club': 'Pony Club', 'hunter-jumper': 'Hunter / Jumper',
-  'a-bit-of-everything': 'All-Round',
-};
-
 // ════════════════════════════════════════════════════════════════════════════
 export default function JourneyPage() {
   const profile = getUserProfile();
-  const disciplineLabel = DISCIPLINE_LABELS[profile.discipline] ?? 'Equestrian';
-  const isDressage = profile.discipline === 'usdf' || profile.discipline === 'usdf-dressage';
+
+  const [selectedDiscipline, setSelectedDiscipline] = useState(profile.discipline ?? 'usdf-dressage');
+  const [showDisciplineSelector, setShowDisciplineSelector] = useState(false);
+  const [selectedLevel, setSelectedLevel] = useState('intro');
+  const [expandedMvt, setExpandedMvt] = useState(0);
+  const [showPurpose, setShowPurpose] = useState(false);
+
+  const disciplineLabel = DISCIPLINE_LABELS[selectedDiscipline] ?? 'Equestrian';
+  const isDressage = selectedDiscipline === 'usdf' || selectedDiscipline === 'usdf-dressage';
 
   const allRides = getRides().sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   const latest = allRides.length > 0 ? allRides[allRides.length - 1] : null;
 
-  const [expandedMvt, setExpandedMvt] = useState(0); // first expanded by default
-  const [showPurpose, setShowPurpose] = useState(false);
-
-  // Readiness
   const mvtScores = MOVEMENTS.map(m => movementReadiness(latest, m.metrics));
   const overallReadiness = latest
     ? Math.round((mvtScores.reduce((a, b) => a + b, 0) / mvtScores.length) * 10)
     : null;
+
+  const activeIndex = DRESSAGE_LEVELS.findIndex(l => l.key === selectedLevel);
+  const levelLabel = LEVEL_TABS.find(t => t.key === selectedLevel)?.label ?? '';
 
   // Non-dressage fallback
   if (!isDressage) {
@@ -122,55 +138,152 @@ export default function JourneyPage() {
         <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, color: '#7A6B5D', textAlign: 'center', lineHeight: 1.65, maxWidth: 290 }}>
           We're building progression paths for every discipline. Dressage is live — yours is next.
         </p>
+        <button onClick={() => { setSelectedDiscipline('usdf-dressage'); }} style={{
+          marginTop: 16, background: 'none', border: `1px solid ${C.cg}`, borderRadius: 20,
+          padding: '8px 20px', color: C.cg, fontSize: 12, fontFamily: "'DM Sans', sans-serif",
+          fontWeight: 500, cursor: 'pointer',
+        }}>Switch to Dressage →</button>
       </div>
     );
   }
-
-  const journeyNodes = getDressageNodes();
 
   return (
     <div style={{ background: C.pa, minHeight: '100dvh', paddingBottom: 120 }}>
 
       <style>{`
-        @keyframes jPulse { 0%,100%{transform:scale(1);opacity:0.5} 70%{transform:scale(1.6);opacity:0} }
         @keyframes jFade { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
       `}</style>
 
       {/* ── Header ──────────────────────────────────────────────────── */}
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '12px 18px', background: '#fff',
-        borderBottom: '0.5px solid rgba(28,28,30,0.08)',
-      }}>
-        <div>
-          <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: C.ch, fontFamily: "'DM Sans', sans-serif" }}>
-            Your Journey
+      <div style={{ padding: '12px 18px', background: '#fff', borderBottom: '0.5px solid rgba(28,28,30,0.08)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: C.ch, fontFamily: "'DM Sans', sans-serif" }}>
+              Your Journey
+            </div>
+            <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 16, fontWeight: 600, color: C.nk, marginTop: 2 }}>
+              USDF {DRESSAGE_LEVELS[activeIndex]?.label ?? 'Intro'} Level · {levelLabel}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', marginTop: 4 }}>
+              <span style={{
+                fontSize: 10, color: C.muted, fontFamily: "'DM Mono', monospace",
+                letterSpacing: '0.10em', textTransform: 'uppercase',
+                background: 'rgba(201,169,110,0.08)', border: '1px solid rgba(201,169,110,0.18)',
+                borderRadius: 20, padding: '2px 10px',
+              }}>
+                {disciplineLabel}
+              </span>
+              <button onClick={() => setShowDisciplineSelector(d => !d)} style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                fontSize: 10, color: C.cg, fontFamily: "'DM Sans', sans-serif",
+                fontWeight: 500, marginLeft: 8, padding: 0,
+              }}>
+                Change ›
+              </button>
+            </div>
           </div>
-          <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 16, fontWeight: 600, color: C.nk, marginTop: 2 }}>
-            USDF Intro Level · Test A
-          </div>
-          <div style={{
-            fontSize: 10, color: C.muted, fontFamily: "'DM Mono', monospace",
-            letterSpacing: '0.10em', textTransform: 'uppercase', marginTop: 2,
-            background: 'rgba(201,169,110,0.08)', border: '1px solid rgba(201,169,110,0.18)',
-            borderRadius: 20, padding: '2px 10px', display: 'inline-block',
-          }}>
-            {disciplineLabel}
-          </div>
+          {/* Readiness ring */}
+          <svg width="52" height="52" viewBox="0 0 52 52">
+            <circle cx="26" cy="26" r="22" fill="none" stroke="#EDE7DF" strokeWidth="3" />
+            {overallReadiness !== null && (
+              <circle cx="26" cy="26" r="22" fill="none" stroke={C.cg} strokeWidth="3"
+                strokeDasharray={`${(overallReadiness / 100) * 2 * Math.PI * 22} ${2 * Math.PI * 22}`}
+                strokeLinecap="round" transform="rotate(-90 26 26)" />
+            )}
+            <text x="26" y="28" textAnchor="middle" style={{ fontFamily: "'DM Mono', monospace", fontWeight: 600 }}>
+              <tspan fontSize="13" fill={C.cg}>{overallReadiness ?? '–'}</tspan>
+              <tspan fontSize="8" fill="#BBB">%</tspan>
+            </text>
+          </svg>
         </div>
-        {/* Readiness ring */}
-        <svg width="52" height="52" viewBox="0 0 52 52">
-          <circle cx="26" cy="26" r="22" fill="none" stroke="#EDE7DF" strokeWidth="3" />
-          {overallReadiness !== null && (
-            <circle cx="26" cy="26" r="22" fill="none" stroke={C.cg} strokeWidth="3"
-              strokeDasharray={`${(overallReadiness / 100) * 2 * Math.PI * 22} ${2 * Math.PI * 22}`}
-              strokeLinecap="round" transform="rotate(-90 26 26)" />
-          )}
-          <text x="26" y="28" textAnchor="middle" style={{ fontFamily: "'DM Mono', monospace", fontWeight: 600 }}>
-            <tspan fontSize="13" fill={C.cg}>{overallReadiness ?? '–'}</tspan>
-            <tspan fontSize="8" fill="#BBB">%</tspan>
-          </text>
-        </svg>
+
+        {/* Discipline selector */}
+        {showDisciplineSelector && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+            {DISCIPLINE_OPTIONS.map(d => (
+              <button key={d.key} onClick={() => {
+                setSelectedDiscipline(d.key);
+                try {
+                  // eslint-disable-next-line @typescript-eslint/no-require-imports
+                  const { setUserProfile } = require('../lib/userProfile');
+                  setUserProfile({ ...profile, discipline: d.key });
+                } catch { /* noop */ }
+                setShowDisciplineSelector(false);
+              }} style={{
+                fontSize: 10, padding: '4px 12px', borderRadius: 14,
+                border: `1px solid ${selectedDiscipline === d.key ? C.cg : 'rgba(28,28,30,0.15)'}`,
+                background: selectedDiscipline === d.key ? `${C.cg}12` : 'transparent',
+                color: selectedDiscipline === d.key ? C.cg : C.muted,
+                fontFamily: "'DM Sans', sans-serif", fontWeight: 500, cursor: 'pointer',
+              }}>
+                {d.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Horizontal level stepper */}
+        <div style={{ display: 'flex', alignItems: 'center', width: '100%', marginTop: 14 }}>
+          {DRESSAGE_LEVELS.map((level, i) => {
+            const isActive = level.key === selectedLevel;
+            const isPast = i < activeIndex;
+            const isFuture = i > activeIndex;
+            return (
+              <React.Fragment key={level.key}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                  <span style={{
+                    fontSize: 8, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase',
+                    color: isActive ? C.cg : 'transparent', fontFamily: "'DM Sans', sans-serif", height: 10,
+                  }}>You</span>
+                  <div onClick={() => setSelectedLevel(level.key)} style={{
+                    width: isActive ? 14 : isPast ? 10 : 8,
+                    height: isActive ? 14 : isPast ? 10 : 8,
+                    borderRadius: '50%', cursor: 'pointer',
+                    background: isActive ? C.cg : isPast ? '#8C5A3C' : 'transparent',
+                    border: isFuture ? '1.5px solid rgba(193,127,74,0.3)' : 'none',
+                    boxShadow: isActive ? '0 0 0 3px rgba(193,127,74,0.18)' : 'none',
+                    transition: 'all 0.2s ease',
+                  }} />
+                  <span onClick={() => setSelectedLevel(level.key)} style={{
+                    fontSize: 9, whiteSpace: 'nowrap', cursor: 'pointer',
+                    fontWeight: isActive ? 600 : 400,
+                    color: isActive ? C.cg : isPast ? 'rgba(28,28,30,0.55)' : 'rgba(28,28,30,0.25)',
+                    fontFamily: "'DM Sans', sans-serif",
+                  }}>
+                    {level.label}
+                  </span>
+                </div>
+                {i < DRESSAGE_LEVELS.length - 1 && (
+                  <div style={{
+                    flex: 1, height: 1.5, marginBottom: 14, marginLeft: 2, marginRight: 2,
+                    background: i < activeIndex
+                      ? 'linear-gradient(to right, #8C5A3C, rgba(193,127,74,0.4))'
+                      : 'rgba(193,127,74,0.15)',
+                  }} />
+                )}
+              </React.Fragment>
+            );
+          })}
+        </div>
+
+        {/* Level test tabs */}
+        <div style={{ display: 'flex', gap: 6, marginTop: 12, flexWrap: 'wrap' }}>
+          {LEVEL_TABS.map(tab => {
+            const isActive = tab.key === selectedLevel;
+            return (
+              <button key={tab.key} onClick={() => setSelectedLevel(tab.key)} style={{
+                background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0',
+                fontSize: 11, fontFamily: "'DM Sans', sans-serif",
+                fontWeight: isActive ? 600 : 400,
+                color: isActive ? C.cg : tab.locked ? 'rgba(28,28,30,0.2)' : C.muted,
+                borderBottom: isActive ? `2px solid ${C.cg}` : '2px solid transparent',
+                paddingBottom: 4,
+              }}>
+                {tab.label}{tab.locked ? ' 🔒' : ''}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div style={{ padding: '20px 18px' }}>
@@ -229,189 +342,148 @@ export default function JourneyPage() {
           </div>
         </div>
 
-        {/* ── Movements ───────────────────────────────────────────── */}
-        <SecHdr>Movements</SecHdr>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 24 }}>
-          {MOVEMENTS.map((m, idx) => {
-            const score = mvtScores[idx];
-            const expanded = expandedMvt === idx;
-            const dotColor = scoreColor(score);
-            const lowestMetric = latest
-              ? m.metrics.reduce((low, k) => getMetricScore(latest, k) < getMetricScore(latest, low) ? k : low, m.metrics[0])
-              : null;
-            const lowestScore = lowestMetric ? getMetricScore(latest!, lowestMetric) : 0;
+        {/* ── Level-specific content ──────────────────────────────── */}
+        {selectedLevel === 'intro' ? (
+          <>
+            {/* ── Movements ─────────────────────────────────────── */}
+            <SecHdr>Movements</SecHdr>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 24 }}>
+              {MOVEMENTS.map((m, idx) => {
+                const score = mvtScores[idx];
+                const expanded = expandedMvt === idx;
+                const dotColor = scoreColor(score);
+                const lowestMetric = latest
+                  ? m.metrics.reduce((low, k) => getMetricScore(latest, k) < getMetricScore(latest, low) ? k : low, m.metrics[0])
+                  : null;
+                const lowestScore = lowestMetric ? getMetricScore(latest!, lowestMetric) : 0;
 
-            return (
-              <div key={m.num} style={{ ...card({ padding: 0, overflow: 'hidden' }) }}>
-                <button onClick={() => setExpandedMvt(expanded ? -1 : idx)} style={{
-                  width: '100%', background: 'none', border: 'none', cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px',
-                }}>
-                  <div style={{
-                    width: 28, height: 28, borderRadius: '50%', background: `${C.cg}12`,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                    fontSize: 12, fontWeight: 700, color: C.cg, fontFamily: "'DM Mono', monospace",
-                  }}>{m.num}</div>
-                  <div style={{ flex: 1, textAlign: 'left' }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: C.nk, fontFamily: "'DM Sans', sans-serif" }}>
-                      {m.movement}
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                    <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 14, fontWeight: 600, color: C.nk }}>
-                      {latest ? score.toFixed(1) : '–'}
-                    </span>
-                    <span style={{ fontSize: 9, color: C.muted }}>/10</span>
-                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: latest ? dotColor : '#ddd' }} />
-                  </div>
-                </button>
-
-                {expanded && (
-                  <div style={{ padding: '0 16px 14px', borderTop: '1px solid #f0ece6', animation: 'jFade 0.2s ease' }}>
-                    <p style={{ fontFamily: "'DM Sans', sans-serif", fontStyle: 'italic', fontSize: 12, color: C.na, lineHeight: 1.55, margin: '10px 0' }}>
-                      {m.directive}
-                    </p>
-                    {latest && (
-                      <>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
-                          {m.metrics.map(k => {
-                            const val = Math.round(getMetricScore(latest, k) * 10 * 10) / 10;
-                            return (
-                              <span key={k} style={{
-                                fontSize: 10, padding: '3px 8px', borderRadius: 8,
-                                background: `${scoreColor(val)}14`, color: scoreColor(val),
-                                fontFamily: "'DM Mono', monospace", fontWeight: 600,
-                              }}>
-                                {METRIC_LABELS[k] ?? k} {val.toFixed(1)}
-                              </span>
-                            );
-                          })}
-                        </div>
-                        <div style={{ fontSize: 12, color: C.na, fontFamily: "'DM Sans', sans-serif", borderLeft: `2px solid ${C.cg}`, paddingLeft: 10 }}>
-                          {lowestScore < 0.6
-                            ? `Focus on ${METRIC_LABELS[lowestMetric!] ?? lowestMetric} to improve this movement.`
-                            : 'This movement looks strong — keep building.'}
-                        </div>
-                      </>
-                    )}
-                    {!latest && (
-                      <div style={{ fontSize: 12, color: C.muted }}>Upload a ride to see metric breakdown.</div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        {/* ── Collective Marks ────────────────────────────────────── */}
-        <SecHdr>Collective Marks</SecHdr>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 24 }}>
-          {COLLECTIVE_MARKS.map(cm => {
-            const hasMetrics = cm.metrics.length > 0 && !cm.note;
-            const score = hasMetrics && latest
-              ? Math.min(10, Math.round((cm.metrics.reduce((s, k) => s + getMetricScore(latest, k), 0) / cm.metrics.length) * 10 * 10) / 10)
-              : null;
-
-            return (
-              <div key={cm.label} style={{ ...card({ padding: '14px 16px' }) }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                  <div>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: C.nk, fontFamily: "'DM Sans', sans-serif" }}>
-                      {cm.label}
-                    </span>
-                    {cm.coeff && (
-                      <span style={{
-                        marginLeft: 8, fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 6,
-                        background: `${C.cg}14`, color: C.cg,
-                      }}>×{cm.coeff}</span>
-                    )}
-                  </div>
-                  {score !== null && (
-                    <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 14, fontWeight: 600, color: C.nk }}>
-                      {score.toFixed(1)}<span style={{ fontSize: 9, color: C.muted }}>/10</span>
-                    </span>
-                  )}
-                  {score === null && !cm.note && (
-                    <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 14, color: '#ccc' }}>–</span>
-                  )}
-                </div>
-                <div style={{ fontSize: 11, color: C.muted, marginBottom: hasMetrics && score !== null ? 8 : 0 }}>
-                  {cm.sub}
-                </div>
-                {hasMetrics && score !== null && (
-                  <div style={{ height: 4, borderRadius: 2, background: '#EDE7DF' }}>
-                    <div style={{ width: `${score * 10}%`, height: '100%', borderRadius: 2, background: scoreColor(score), transition: 'width 0.6s ease' }} />
-                  </div>
-                )}
-                {cm.note && (
-                  <div style={{ fontSize: 11, color: C.cg, fontStyle: 'italic', marginTop: 4 }}>
-                    {cm.note}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        {/* ── Level Progression Path ─────────────────────────────── */}
-        <SecHdr>Progression</SecHdr>
-        <div style={{ marginBottom: 24 }}>
-          {journeyNodes.map((node, i) => {
-            const isLast = i === journeyNodes.length - 1;
-            const isActive = node.state === 'active';
-            const isFar = node.state === 'far';
-            const nodeColor = isActive ? C.ch : isFar ? '#D4C9BC' : '#C4B8AC';
-            const nodeSize = isActive ? 16 : isFar ? 8 : 10;
-            const labelColor = isActive ? C.cg : isFar ? '#C4B8AC' : '#B5A898';
-
-            return (
-              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 14, opacity: isFar ? 0.45 : 1 }}>
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 2 }}>
-                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {isActive && (
+                return (
+                  <div key={m.num} style={{ ...card({ padding: 0, overflow: 'hidden' }) }}>
+                    <button onClick={() => setExpandedMvt(expanded ? -1 : idx)} style={{
+                      width: '100%', background: 'none', border: 'none', cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px',
+                    }}>
                       <div style={{
-                        position: 'absolute', width: nodeSize + 10, height: nodeSize + 10,
-                        borderRadius: '50%', border: '1.5px solid rgba(201,169,110,0.4)',
-                        animation: 'jPulse 2.4s ease-out infinite',
-                      }} />
-                    )}
-                    <div style={{
-                      width: nodeSize, height: nodeSize, borderRadius: '50%',
-                      background: isActive ? `linear-gradient(135deg, #E2C384, ${C.ch})` : 'transparent',
-                      border: `2px solid ${nodeColor}`, flexShrink: 0,
-                      boxShadow: isActive ? '0 0 12px rgba(201,169,110,0.35)' : 'none',
-                    }} />
-                  </div>
-                  {!isLast && (
-                    <div style={{
-                      width: 2, height: 36, marginTop: 4,
-                      background: `linear-gradient(180deg, rgba(201,169,110,0.2) 0%, transparent 100%)`,
-                      borderRadius: 1,
-                    }} />
-                  )}
-                </div>
-                <div style={{ paddingBottom: isLast ? 0 : 24 }}>
-                  <div style={{ fontSize: 13, fontWeight: isActive ? 600 : 500, color: labelColor, fontFamily: "'DM Sans', sans-serif" }}>
-                    {node.label}
-                    {isActive && (
-                      <span style={{
-                        marginLeft: 8, fontSize: 10, color: C.ch,
-                        background: 'rgba(201,169,110,0.12)', padding: '1px 7px',
-                        borderRadius: 10, fontWeight: 600,
-                      }}>Now · Test A</span>
-                    )}
-                  </div>
-                  <div style={{ fontSize: 11.5, color: isFar ? '#C4B8AC' : '#B5A898', lineHeight: 1.4 }}>
-                    {node.sublabel}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+                        width: 28, height: 28, borderRadius: '50%', background: `${C.cg}12`,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                        fontSize: 12, fontWeight: 700, color: C.cg, fontFamily: "'DM Mono', monospace",
+                      }}>{m.num}</div>
+                      <div style={{ flex: 1, textAlign: 'left' }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: C.nk, fontFamily: "'DM Sans', sans-serif" }}>
+                          {m.movement}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                        <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 14, fontWeight: 600, color: C.nk }}>
+                          {latest ? score.toFixed(1) : '–'}
+                        </span>
+                        <span style={{ fontSize: 9, color: C.muted }}>/10</span>
+                        <div style={{ width: 8, height: 8, borderRadius: '50%', background: latest ? dotColor : '#ddd' }} />
+                      </div>
+                    </button>
 
-        {/* ── Test Simulation CTA ────────────────────────────────── */}
+                    {expanded && (
+                      <div style={{ padding: '0 16px 14px', borderTop: '1px solid #f0ece6', animation: 'jFade 0.2s ease' }}>
+                        <p style={{ fontFamily: "'DM Sans', sans-serif", fontStyle: 'italic', fontSize: 12, color: C.na, lineHeight: 1.55, margin: '10px 0' }}>
+                          {m.directive}
+                        </p>
+                        {latest && (
+                          <>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+                              {m.metrics.map(k => {
+                                const val = Math.round(getMetricScore(latest, k) * 10 * 10) / 10;
+                                return (
+                                  <span key={k} style={{
+                                    fontSize: 10, padding: '3px 8px', borderRadius: 8,
+                                    background: `${scoreColor(val)}14`, color: scoreColor(val),
+                                    fontFamily: "'DM Mono', monospace", fontWeight: 600,
+                                  }}>
+                                    {METRIC_LABELS[k] ?? k} {val.toFixed(1)}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                            <div style={{ fontSize: 12, color: C.na, fontFamily: "'DM Sans', sans-serif", borderLeft: `2px solid ${C.cg}`, paddingLeft: 10 }}>
+                              {lowestScore < 0.6
+                                ? `Focus on ${METRIC_LABELS[lowestMetric!] ?? lowestMetric} to improve this movement.`
+                                : 'This movement looks strong — keep building.'}
+                            </div>
+                          </>
+                        )}
+                        {!latest && (
+                          <div style={{ fontSize: 12, color: C.muted }}>Upload a ride to see metric breakdown.</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* ── Collective Marks ──────────────────────────────── */}
+            <SecHdr>Collective Marks</SecHdr>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 24 }}>
+              {COLLECTIVE_MARKS.map(cm => {
+                const hasMetrics = cm.metrics.length > 0 && !cm.note;
+                const score = hasMetrics && latest
+                  ? Math.min(10, Math.round((cm.metrics.reduce((s, k) => s + getMetricScore(latest, k), 0) / cm.metrics.length) * 10 * 10) / 10)
+                  : null;
+
+                return (
+                  <div key={cm.label} style={{ ...card({ padding: '14px 16px' }) }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                      <div>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: C.nk, fontFamily: "'DM Sans', sans-serif" }}>
+                          {cm.label}
+                        </span>
+                        {cm.coeff && (
+                          <span style={{
+                            marginLeft: 8, fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 6,
+                            background: `${C.cg}14`, color: C.cg,
+                          }}>×{cm.coeff}</span>
+                        )}
+                      </div>
+                      {score !== null && (
+                        <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 14, fontWeight: 600, color: C.nk }}>
+                          {score.toFixed(1)}<span style={{ fontSize: 9, color: C.muted }}>/10</span>
+                        </span>
+                      )}
+                      {score === null && !cm.note && (
+                        <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 14, color: '#ccc' }}>–</span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 11, color: C.muted, marginBottom: hasMetrics && score !== null ? 8 : 0 }}>
+                      {cm.sub}
+                    </div>
+                    {hasMetrics && score !== null && (
+                      <div style={{ height: 4, borderRadius: 2, background: '#EDE7DF' }}>
+                        <div style={{ width: `${score * 10}%`, height: '100%', borderRadius: 2, background: scoreColor(score), transition: 'width 0.6s ease' }} />
+                      </div>
+                    )}
+                    {cm.note && (
+                      <div style={{ fontSize: 11, color: C.cg, fontStyle: 'italic', marginTop: 4 }}>
+                        {cm.note}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        ) : (
+          /* Non-intro level placeholder */
+          <div style={{ ...card({ padding: 20, textAlign: 'center' }), marginBottom: 24 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: C.nk, fontFamily: "'DM Sans', sans-serif", marginBottom: 8 }}>
+              {DRESSAGE_LEVELS[activeIndex]?.label ?? ''} Level — Coming soon
+            </div>
+            <p style={{ fontSize: 12, color: C.muted, fontFamily: "'DM Sans', sans-serif", lineHeight: 1.6, margin: 0 }}>
+              Full movement breakdown for this level is on its way.
+              Keep building at Intro A — your scores here will carry forward.
+            </p>
+          </div>
+        )}
+
+        {/* ── Simulate the Test CTA ──────────────────────────────── */}
         <div style={{ ...card({ background: C.na, padding: 20 }) }}>
           <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
             <div style={{
@@ -424,11 +496,20 @@ export default function JourneyPage() {
             </div>
             <div>
               <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 16, color: '#fff', marginBottom: 6 }}>
-                Run the Test
+                Simulate the Test
               </div>
               <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: 'rgba(212,175,118,0.75)', lineHeight: 1.6, margin: 0 }}>
-                Ride through the Intro A movements and get a predicted judge's score for each.
+                Ride through all 9 Intro A movements in order and receive a predicted judge's score for each — just like competition day. See exactly where you stand today.
               </p>
+              <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
+                {['9 movements', 'Predicted scores', 'Full scorecard'].map(chip => (
+                  <span key={chip} style={{
+                    fontSize: 9, fontWeight: 500, padding: '3px 10px', borderRadius: 10,
+                    background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.6)',
+                    fontFamily: "'DM Sans', sans-serif",
+                  }}>{chip}</span>
+                ))}
+              </div>
               <span style={{
                 display: 'inline-block', marginTop: 10,
                 fontSize: 9, fontWeight: 600, padding: '3px 10px', borderRadius: 8,
