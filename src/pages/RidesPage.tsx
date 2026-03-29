@@ -850,6 +850,7 @@ export default function RidesPage() {
   // Detail view for ride history
   const [selectedRide, setSelectedRide] = useState<Ride | null>(null);
   const [selectedStoredRide, setSelectedStoredRide] = useState<StoredRide | undefined>(undefined);
+  const [sortBy, setSortBy] = useState<'date' | 'score' | 'horse'>('date');
   const [storedRides, setStoredRides] = useState<StoredRide[]>(getRides);
 
   // Refresh stored rides on mount
@@ -1041,13 +1042,27 @@ export default function RidesPage() {
     return [...fromStorage, ...mockRides];
   }, [storedRides]);
 
-  const grouped = allRides.reduce((acc, ride) => {
-    const d = new Date(ride.date);
-    const key = d.toLocaleDateString('en', { month: 'long', year: 'numeric' });
+  const sortedRides = useMemo(() => {
+    const sorted = [...allRides];
+    if (sortBy === 'score') sorted.sort((a, b) => (b.biometrics?.upperBodyAlignment ?? 0) - (a.biometrics?.upperBodyAlignment ?? 0));
+    else if (sortBy === 'horse') sorted.sort((a, b) => a.horse.localeCompare(b.horse));
+    else sorted.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    return sorted;
+  }, [allRides, sortBy]);
+
+  const grouped = sortedRides.reduce((acc, ride) => {
+    const parseLocalDate = (d: string) => {
+      const [y, m, day] = d.split('-').map(Number);
+      return new Date(y, m - 1, day);
+    };
+    const date = parseLocalDate(ride.date);
+    const key = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
     if (!acc[key]) acc[key] = [];
     acc[key].push(ride);
     return acc;
   }, {} as Record<string, Ride[]>);
+
+  const monthCount = Object.keys(grouped).length;
 
   // Status message for analysis progress — compression phase shows a fixed label,
   // all other phases cycle through PROCESSING_MESSAGES (#59)
@@ -1545,6 +1560,25 @@ export default function RidesPage() {
           Ride History
         </div>
 
+        {/* Sort pills — only show if rides span multiple months */}
+        {monthCount > 1 && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 4, marginBottom: 12 }}>
+            {([['date', 'Newest ↓'], ['score', 'Score ↓'], ['horse', 'Horse']] as const).map(([key, label]) => {
+              const active = sortBy === key;
+              return (
+                <button key={key} onClick={() => setSortBy(key)} style={{
+                  background: active ? COLORS.charcoal : 'transparent',
+                  color: active ? '#fff' : 'rgba(28,28,30,0.3)',
+                  border: 'none', borderRadius: 12, padding: '3px 10px',
+                  fontSize: 10, fontFamily: FONTS.body, fontWeight: 500, cursor: 'pointer',
+                }}>
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {/* ── Full-screen fixed loading overlay ── */}
         {isAnalyzing && (
           <div style={{
@@ -1641,14 +1675,16 @@ export default function RidesPage() {
           </div>
         )}
 
-                {Object.entries(grouped).map(([month, rides]) => (
+                {Object.entries(grouped).map(([month, rides], groupIdx) => (
           <div key={month}>
             <div style={{
-              fontSize: '10px', fontWeight: 600, letterSpacing: '0.14em',
-              textTransform: 'uppercase', color: COLORS.muted,
-              fontFamily: FONTS.body, marginBottom: '10px', marginTop: '8px',
+              fontSize: '11px', fontWeight: 600, letterSpacing: '0.12em',
+              textTransform: 'uppercase', color: 'rgba(28,28,30,0.45)',
+              fontFamily: FONTS.body, marginBottom: '8px',
+              marginTop: groupIdx === 0 ? '8px' : '24px',
             }}>
               {month}
+              <span style={{ opacity: 0.6 }}>  · {rides.length} ride{rides.length !== 1 ? 's' : ''}</span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
               {rides.map(ride => {
