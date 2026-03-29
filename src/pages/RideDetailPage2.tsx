@@ -154,14 +154,14 @@ export default function RideDetailPage2() {
             {dateStr}
           </div>
         </div>
-        <svg width="46" height="46" viewBox="0 0 100 100">
-          <circle cx="50" cy="50" r="42" fill="none" stroke="#EDE7DF" strokeWidth="5" />
-          <circle cx="50" cy="50" r="42" fill="none" stroke={C.cg} strokeWidth="5"
-            strokeDasharray={`${(displayScore / 100) * 2 * Math.PI * 42} ${2 * Math.PI * 42}`}
-            strokeLinecap="round" transform="rotate(-90 50 50)" />
-          <text x="50" y="55" textAnchor="middle" fill={C.cg}
-            style={{ fontSize: '26px', fontFamily: "'DM Mono', monospace", fontWeight: 700 }}>
-            {displayScore}
+        <svg width="52" height="52" viewBox="0 0 52 52">
+          <circle cx="26" cy="26" r="22" fill="none" stroke="#EDE7DF" strokeWidth="3" />
+          <circle cx="26" cy="26" r="22" fill="none" stroke={C.cg} strokeWidth="3"
+            strokeDasharray={`${(displayScore / 100) * 2 * Math.PI * 22} ${2 * Math.PI * 22}`}
+            strokeLinecap="round" transform="rotate(-90 26 26)" />
+          <text x="26" y="29" textAnchor="middle" style={{ fontFamily: "'DM Mono', monospace" }}>
+            <tspan fontSize="13" fontWeight="600" fill={C.cg}>{displayScore}</tspan>
+            <tspan fontSize="9" fill="rgba(28,28,30,0.4)">/100</tspan>
           </text>
         </svg>
       </div>

@@ -848,6 +848,14 @@ export default function RidesPage() {
     }
   }, [isDone]);
 
+  // Auto-save and navigate to detail page when analysis completes
+  useEffect(() => {
+    if (isDone && !sessionSaved) {
+      handleSaveSession();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDone]);
+
   const handleLogSubmit = () => {
     setLogSubmitted(true);
     setTimeout(() => {
