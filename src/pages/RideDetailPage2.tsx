@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getRides, updateRide, type StoredRide } from '@/lib/storage';
 import VideoWithSkeleton from '../components/VideoWithSkeleton';
@@ -89,25 +89,22 @@ const card = (extra: React.CSSProperties = {}): React.CSSProperties => ({
 export default function RideDetailPage2() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [editMode, setEditMode] = useState(false);
+  const [editingDate, setEditingDate] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [, forceUpdate] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const emptyFileInputRef = useRef<HTMLInputElement>(null);
+  const emptyDateRef = useRef<HTMLInputElement>(null);
+
+  // Auto-dismiss upload error after 4s
+  useEffect(() => {
+    if (!uploadError) return;
+    const t = setTimeout(() => setUploadError(null), 4000);
+    return () => clearTimeout(t);
+  }, [uploadError]);
 
   const ride: StoredRide | undefined = getRides().find(r => r.id === id);
-
-  if (!ride) {
-    return (
-      <div style={{ background: C.pa, minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16 }}>
-        <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 20, color: C.nk }}>Ride not found</div>
-        <button onClick={() => navigate('/')} style={{
-          background: C.cg, color: '#fff', border: 'none', borderRadius: 8,
-          padding: '10px 24px', fontFamily: "'DM Sans', sans-serif", fontWeight: 600, cursor: 'pointer',
-        }}>Back to Rides</button>
-      </div>
-    );
-  }
 
   async function handleVideoReplace(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -132,6 +129,71 @@ export default function RideDetailPage2() {
     } finally {
       setUploading(false);
     }
+  }
+
+  if (!ride) {
+    return (
+      <div style={{
+        minHeight: '100dvh', background: C.pa,
+        display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center',
+        padding: '40px 28px', gap: 24, position: 'relative',
+      }}>
+        <button onClick={() => navigate('/')} style={{
+          position: 'absolute', top: 20, left: 20,
+          background: 'none', border: 'none', cursor: 'pointer',
+          fontSize: 20, color: 'rgba(28,28,30,0.4)',
+        }}>←</button>
+
+        <div style={{
+          width: 72, height: 72, borderRadius: '50%',
+          background: 'rgba(193,127,74,0.08)',
+          border: '1.5px dashed rgba(193,127,74,0.3)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="13" r="4" stroke={C.cg} strokeWidth="1.5"/>
+            <path d="M3 9h2l2-3h10l2 3h2a1 1 0 011 1v9a1 1 0 01-1 1H3a1 1 0 01-1-1v-9a1 1 0 011-1z"
+              stroke={C.cg} strokeWidth="1.5" strokeLinejoin="round"/>
+          </svg>
+        </div>
+
+        <div style={{ textAlign: 'center', maxWidth: 280 }}>
+          <p style={{ fontFamily: "'Playfair Display', serif", fontSize: 20, color: C.nk, marginBottom: 8 }}>
+            No video yet
+          </p>
+          <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: 'rgba(28,28,30,0.5)', lineHeight: 1.6 }}>
+            Upload a video to get your position scores, riding quality analysis, and Cadence insights.
+          </p>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+          <label style={{ fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'rgba(28,28,30,0.4)', fontFamily: "'DM Sans', sans-serif" }}>
+            Ride date
+          </label>
+          <input type="date" ref={emptyDateRef}
+            defaultValue={new Date().toISOString().slice(0, 10)}
+            style={{
+              border: 'none', borderBottom: '1px solid rgba(193,127,74,0.4)',
+              background: 'transparent', fontSize: 14,
+              color: C.nk, fontFamily: "'DM Mono', monospace",
+              padding: '4px 8px', outline: 'none', textAlign: 'center',
+            }}
+          />
+        </div>
+
+        <button onClick={() => navigate('/')} style={{
+          background: C.cg, color: 'white', border: 'none',
+          borderRadius: 24, padding: '13px 32px', fontSize: 13,
+          fontWeight: 600, fontFamily: "'DM Sans', sans-serif",
+          cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          ↑ Upload ride video
+        </button>
+
+        <input type="file" accept="video/*" style={{ display: 'none' }} ref={emptyFileInputRef} />
+      </div>
+    );
   }
 
   const bio = ride.biometrics;
@@ -178,34 +240,39 @@ export default function RideDetailPage2() {
             <path d="M10 3L5 8L10 13" stroke={C.nk} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
         </button>
-        <button onClick={() => setEditMode(e => !e)} style={{
-          background: 'none', border: 'none', cursor: 'pointer',
-          padding: '4px 8px', borderRadius: 8,
-          color: editMode ? C.cg : 'rgba(28,28,30,0.35)',
-          fontSize: 11, fontFamily: "'DM Sans', sans-serif", fontWeight: 500,
-        }}>
-          {editMode ? 'Done' : 'Edit'}
-        </button>
         <div style={{ flex: 1 }}>
           <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 16, color: C.nk }}>
             {ride.type.charAt(0).toUpperCase() + ride.type.slice(1)} · {ride.horse}
           </div>
-          {editMode ? (
-            <input type="date"
-              defaultValue={ride.date.slice(0, 10)}
-              onChange={e => {
-                updateRide(ride.id, { date: e.target.value });
-              }}
-              style={{
-                border: 'none', borderBottom: '1px solid rgba(193,127,74,0.4)',
-                background: 'transparent', fontSize: 10, letterSpacing: '0.1em',
-                color: C.nk, fontFamily: "'DM Mono', monospace",
-                padding: '2px 4px', outline: 'none',
-              }}
-            />
+          {editingDate ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <input type="date"
+                autoFocus
+                defaultValue={ride.date.slice(0, 10)}
+                onChange={e => updateRide(ride.id, { date: e.target.value })}
+                onBlur={() => { setEditingDate(false); forceUpdate(n => n + 1); }}
+                style={{
+                  border: 'none', borderBottom: '1px solid rgba(193,127,74,0.4)',
+                  background: 'transparent', fontSize: 10, letterSpacing: '0.1em',
+                  color: C.nk, fontFamily: "'DM Mono', monospace",
+                  padding: '2px 4px', outline: 'none',
+                }}
+              />
+              <button onClick={() => { setEditingDate(false); forceUpdate(n => n + 1); }} style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: C.ideal, fontSize: 14, lineHeight: 1, padding: '0 4px',
+              }}>✓</button>
+            </div>
           ) : (
-            <div style={{ fontSize: 10, color: '#999', fontFamily: "'DM Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+            <div onClick={() => setEditingDate(true)} style={{
+              fontSize: 10, color: '#999', fontFamily: "'DM Mono', monospace",
+              textTransform: 'uppercase', letterSpacing: '0.5px',
+              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
+            }}>
               {dateStr}
+              <svg width="10" height="10" viewBox="0 0 12 12" fill="none" style={{ opacity: 0.3 }}>
+                <path d="M8.5 1.5l2 2-7 7H1.5v-2l7-7z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
             </div>
           )}
         </div>
@@ -222,48 +289,75 @@ export default function RideDetailPage2() {
       </div>
 
       {/* ── S2: VIDEO ── */}
-      {ride.videoUrl ? (
-        <VideoWithSkeleton
-          videoUrl={ride.videoUrl}
-          keyframes={ride.keyframes ?? []}
-          biometrics={ride.biometrics}
-        />
-      ) : (
-        <div style={{
-          width: '100%', aspectRatio: '16/9', background: '#1a1a1a',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          color: '#666', fontFamily: "'DM Sans', sans-serif", fontSize: 13,
-        }}>
-          No video for this ride
-        </div>
-      )}
-
-      {/* ── Edit: Replace video ── */}
-      {editMode && (
-        <div style={{ padding: '4px 18px' }}>
-          {!uploading && (
+      <div style={{ position: 'relative' }}>
+        {ride.videoUrl ? (
+          <VideoWithSkeleton
+            videoUrl={ride.videoUrl}
+            keyframes={ride.keyframes ?? []}
+            biometrics={ride.biometrics}
+          />
+        ) : (
+          <div style={{
+            width: '100%', aspectRatio: '16/9', background: '#1a1a1a',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8,
+            position: 'relative',
+          }}>
             <button onClick={() => fileInputRef.current?.click()} style={{
-              display: 'flex', alignItems: 'center', gap: 6, margin: '6px auto',
-              background: 'none', border: '1px solid rgba(193,127,74,0.35)',
-              borderRadius: 20, padding: '7px 16px', cursor: 'pointer', color: C.cg,
-              fontSize: 11.5, fontWeight: 500, fontFamily: "'DM Sans', sans-serif",
+              width: 48, height: 48, borderRadius: '50%',
+              background: 'rgba(255,255,255,0.1)',
+              border: '1px solid rgba(255,255,255,0.2)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              cursor: 'pointer',
             }}>
-              ↑ {ride.videoUrl ? 'Replace video' : 'Upload video'}
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="13" r="4" stroke="rgba(255,255,255,0.85)" strokeWidth="1.5"/>
+                <path d="M3 9h2l2-3h10l2 3h2a1 1 0 011 1v9a1 1 0 01-1 1H3a1 1 0 01-1-1v-9a1 1 0 011-1z"
+                  stroke="rgba(255,255,255,0.85)" strokeWidth="1.5" strokeLinejoin="round"/>
+              </svg>
             </button>
-          )}
-          {uploading && (
-            <p style={{ textAlign: 'center', fontSize: 11, color: 'rgba(28,28,30,0.4)', fontFamily: "'DM Sans', sans-serif" }}>
-              Uploading…
-            </p>
-          )}
-          {uploadError && (
-            <p style={{ textAlign: 'center', fontSize: 11, color: C.focus, fontFamily: "'DM Sans', sans-serif" }}>
-              {uploadError}
-            </p>
-          )}
-          <input type="file" accept="video/*" style={{ display: 'none' }} ref={fileInputRef} onChange={handleVideoReplace} />
-        </div>
-      )}
+            <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, fontFamily: "'DM Sans', sans-serif" }}>
+              Tap to add video
+            </span>
+          </div>
+        )}
+
+        {/* Camera icon overlay on video */}
+        {ride.videoUrl && (
+          <button onClick={() => fileInputRef.current?.click()} title="Replace video" style={{
+            position: 'absolute', top: 12, right: 12, zIndex: 10,
+            width: 36, height: 36, borderRadius: '50%',
+            background: uploading ? 'rgba(0,0,0,0.7)' : 'rgba(0,0,0,0.55)',
+            border: '1px solid rgba(255,255,255,0.2)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: 'pointer', backdropFilter: 'blur(4px)',
+          }}>
+            {uploading ? (
+              <div style={{ width: 14, height: 14, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+            ) : (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="13" r="4" stroke="rgba(255,255,255,0.85)" strokeWidth="1.5"/>
+                <path d="M3 9h2l2-3h10l2 3h2a1 1 0 011 1v9a1 1 0 01-1 1H3a1 1 0 01-1-1v-9a1 1 0 011-1z"
+                  stroke="rgba(255,255,255,0.85)" strokeWidth="1.5" strokeLinejoin="round"/>
+              </svg>
+            )}
+          </button>
+        )}
+
+        {/* Upload error toast */}
+        {uploadError && (
+          <div style={{
+            position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)',
+            zIndex: 10, background: C.focus, color: '#fff',
+            fontSize: 11, borderRadius: 8, padding: '6px 12px',
+            fontFamily: "'DM Sans', sans-serif",
+            animation: 'fadeIn 0.3s ease',
+          }}>
+            {uploadError}
+          </div>
+        )}
+
+        <input type="file" accept="video/*" style={{ display: 'none' }} ref={fileInputRef} onChange={handleVideoReplace} />
+      </div>
 
       {/* ── S3: SESSION INFO STRIP ── */}
       <div style={{
@@ -425,11 +519,18 @@ export default function RideDetailPage2() {
         </div>
       </div>
 
-      {/* Pulse animation */}
+      {/* Animations */}
       <style>{`
         @keyframes pulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.4; }
+        }
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
         }
       `}</style>
     </div>
