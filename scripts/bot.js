@@ -945,20 +945,14 @@ function detectAgent(text, channelName) {
 // ── Slack channel history ───────────────────────────────────────────────────
 // Read recent messages from a Slack channel to give agents same-day context.
 
-const channelIdCache = new Map(); // channelName -> channelId
+// Known channel IDs — avoids needing channels:read scope
+const KNOWN_CHANNELS = {
+  "horsera-social": "C0APGA93ESV",
+  "horsera-agents": "C0AL668US2Z",
+};
 
-async function getChannelId(channelName) {
-  if (channelIdCache.has(channelName)) return channelIdCache.get(channelName);
-  try {
-    const result = await app.client.conversations.list({ types: "public_channel,private_channel", limit: 200 });
-    for (const ch of result.channels || []) {
-      channelIdCache.set(ch.name, ch.id);
-    }
-    return channelIdCache.get(channelName) || null;
-  } catch (err) {
-    log("Failed to list channels:", err.message);
-    return null;
-  }
+function getChannelId(channelName) {
+  return KNOWN_CHANNELS[channelName] || null;
 }
 
 /**
@@ -1543,12 +1537,8 @@ ${docText}`;
       return;
     }
 
-    // Find #horsera-social channel ID
-    const socialChannelId = await getChannelId("horsera-social");
-    if (!socialChannelId) {
-      log("Could not find #horsera-social channel for morning check");
-      return;
-    }
+    // Known channel IDs (avoids needing conversations.list scope)
+    const socialChannelId = ENV.SAGE_SLACK_CHANNEL_ID || "C0APGA93ESV"; // #horsera-social
 
     // Post the morning summary
     await app.client.chat.postMessage({
@@ -1578,6 +1568,8 @@ setInterval(() => {
   log("Listening for messages...");
 
   // Run morning check on startup (in case bot restarts after the check hour)
+  // Reset lastMorningCheck so a fresh deploy always tries
+  lastMorningCheck = null;
   setTimeout(() => {
     morningContentCheck().catch(err => log("Startup morning check error:", err.message));
   }, 10_000); // Wait 10s for connections to stabilize
