@@ -556,17 +556,26 @@ async function linkedinUploadImage(imageBuffer) {
  * For Slack files, uses the bot token for auth.
  */
 async function downloadImage(imageUrl) {
+  log(`Downloading image from: ${imageUrl.slice(0, 100)}...`);
   const headers = {};
   // Slack file URLs need bot token auth
-  if (imageUrl.includes("files.slack.com")) {
+  if (imageUrl.includes("files.slack.com") || imageUrl.includes("slack.com/files")) {
     headers.Authorization = `Bearer ${SLACK_BOT_TOKEN}`;
   }
-  const res = await fetch(imageUrl, { headers });
-  if (!res.ok) throw new Error(`Failed to download image (${res.status}): ${imageUrl}`);
-  return Buffer.from(await res.arrayBuffer());
+  try {
+    const res = await fetch(imageUrl, { headers });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text().catch(() => "no body")}`);
+    const buffer = Buffer.from(await res.arrayBuffer());
+    log(`Image downloaded: ${buffer.length} bytes`);
+    return buffer;
+  } catch (err) {
+    log(`Image download failed: ${err.message}`);
+    throw new Error(`Failed to download image: ${err.message} (URL: ${imageUrl.slice(0, 100)})`);
+  }
 }
 
 async function linkedinPublish(text, { linkUrl, imageUrl } = {}) {
+  log(`LinkedIn publish — token length: ${LINKEDIN_ACCESS_TOKEN.length}, URN: ${LINKEDIN_PERSON_URN}, imageUrl: ${imageUrl ? "yes" : "no"}, linkUrl: ${linkUrl ? "yes" : "no"}`);
   if (!LINKEDIN_ACCESS_TOKEN || !LINKEDIN_PERSON_URN) {
     throw new Error("LinkedIn not configured — missing LINKEDIN_ACCESS_TOKEN or LINKEDIN_PERSON_URN");
   }
