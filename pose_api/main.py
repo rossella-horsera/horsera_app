@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -301,8 +302,20 @@ def _jsonable(value: Any) -> Any:
         return value.value
     if isinstance(value, dict):
         return {k: _jsonable(v) for k, v in value.items()}
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple, set)):
         return [_jsonable(v) for v in value]
+    # Convert numpy scalar/array values to plain Python so Firestore can store
+    # inference outputs (np.float32, np.int64, ndarray, etc.).
+    try:
+        import numpy as np
+        if isinstance(value, np.ndarray):
+            return _jsonable(value.tolist())
+        if isinstance(value, np.generic):
+            return _jsonable(value.item())
+    except Exception:
+        pass
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
     return value
 
 
@@ -640,6 +653,9 @@ def analyze_video_object_endpoint(
                     "POSE_OBJECT_PATH": req.object_path,
                     "POSE_FILENAME": req.filename,
                     "POSE_SIZE_MB": str(size_mb),
+                    # Keep worker job-state persistence explicit for run() overrides.
+                    "JOB_STORE_BACKEND": JOB_STORE_BACKEND,
+                    "FIRESTORE_COLLECTION": FIRESTORE_COLLECTION,
                 },
             )
             _update_job(

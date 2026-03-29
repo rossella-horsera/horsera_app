@@ -9,8 +9,6 @@ import argparse
 import logging
 import os
 
-import main as api_main
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -23,6 +21,14 @@ def _arg_or_env(cli_value: str | None, env_key: str, required: bool = True) -> s
 
 
 def main() -> int:
+    # Cloud Run Job executions may provide per-run env overrides. Ensure
+    # worker status persistence defaults to Firestore even if job-level envs
+    # are missing.
+    os.environ.setdefault("JOB_STORE_BACKEND", "firestore")
+    os.environ.setdefault("FIRESTORE_COLLECTION", "pose_jobs")
+
+    import main as api_main
+
     parser = argparse.ArgumentParser(description="Run one Horsera pose analysis job from GCS")
     parser.add_argument("--job-id")
     parser.add_argument("--object-path")
