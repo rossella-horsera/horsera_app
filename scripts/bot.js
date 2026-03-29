@@ -586,12 +586,11 @@ async function linkedinPublish(text, { linkUrl, imageUrl } = {}) {
   let media = [];
 
   if (imageUrl) {
-    // Download and upload image to LinkedIn
-    const imageBuffer = await downloadImage(imageUrl);
-    const asset = await linkedinUploadImage(imageBuffer);
-    shareMediaCategory = "IMAGE";
-    media = [{ status: "READY", media: asset }];
-  } else if (linkUrl) {
+    // Image posts are currently suppressed by LinkedIn on this account.
+    // Skip image upload and publish as text-only until Community Management API is approved.
+    log("Skipping image upload — LinkedIn suppresses image posts on this account. Publishing text-only.");
+  }
+  if (linkUrl) {
     shareMediaCategory = "ARTICLE";
     media = [{ status: "READY", originalUrl: linkUrl }];
   }
