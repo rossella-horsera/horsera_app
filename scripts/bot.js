@@ -575,6 +575,8 @@ async function downloadImage(imageUrl) {
 }
 
 async function linkedinPublish(text, { linkUrl, imageUrl } = {}) {
+  // Strip markdown formatting — LinkedIn uses plain text only
+  text = text.replace(/\*\*(.+?)\*\*/g, "$1").replace(/__(.+?)__/g, "$1").replace(/\*(.+?)\*/g, "$1").replace(/_(.+?)_/g, "$1");
   log(`LinkedIn publish — token length: ${LINKEDIN_ACCESS_TOKEN.length}, URN: ${LINKEDIN_PERSON_URN}, imageUrl: ${imageUrl ? "yes" : "no"}, linkUrl: ${linkUrl ? "yes" : "no"}`);
   if (!LINKEDIN_ACCESS_TOKEN || !LINKEDIN_PERSON_URN) {
     throw new Error("LinkedIn not configured — missing LINKEDIN_ACCESS_TOKEN or LINKEDIN_PERSON_URN");
