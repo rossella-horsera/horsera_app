@@ -1279,12 +1279,22 @@ async function getChannelName(channelId) {
 app.event("message", async ({ event, context }) => {
   let thinkingMsg = null;
   try {
-    // Ignore bot messages, message_changed, etc.
-    if (event.subtype) return;
+    // Ignore bot messages, message_changed, etc. (but allow file_share — user uploading images)
+    if (event.subtype && event.subtype !== "file_share") return;
     // Ignore messages from the bot itself
     if (event.bot_id || event.user === context.botUserId) return;
 
-    const text = event.text || "";
+    // Build text content — include file attachment info
+    let text = event.text || "";
+    const files = (event.files || []).map(f => ({
+      name: f.name || f.title || "file",
+      url: f.url_private || f.url_private_download || "",
+      mimetype: f.mimetype || "",
+    }));
+    if (files.length > 0) {
+      const fileInfo = files.map(f => `[attached file: ${f.name} (${f.mimetype}) — ${f.url}]`).join("\n");
+      text = text ? `${text}\n${fileInfo}` : fileInfo;
+    }
     if (!text.trim()) return;
 
     const channelId = event.channel;
