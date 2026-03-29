@@ -4,36 +4,29 @@ const navItems = [
   {
     path: '/',
     label: 'Rides',
+    subtitle: 'upload & review',
     icon: (active: boolean) => (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-        {/* Play/video icon — represents video analysis */}
-        <rect
-          x="3" y="4" width="18" height="16" rx="3"
-          stroke={active ? '#8C5A3C' : '#C4B8AC'}
-          strokeWidth="1.7"
-          fill={active ? 'rgba(140,90,60,0.08)' : 'none'}
-        />
-        <path
-          d="M10 8.5V15.5L16 12L10 8.5Z"
-          fill={active ? '#8C5A3C' : '#C4B8AC'}
-        />
+        <rect x="3" y="4" width="18" height="16" rx="3"
+          stroke={active ? '#8C5A3C' : '#C4B8AC'} strokeWidth="1.7"
+          fill={active ? 'rgba(140,90,60,0.08)' : 'none'} />
+        <path d="M10 8.5V15.5L16 12L10 8.5Z"
+          fill={active ? '#8C5A3C' : '#C4B8AC'} />
       </svg>
     ),
   },
   {
-    path: '/insights',
-    label: 'Insights',
+    path: '/progress',
+    label: 'Progress',
+    subtitle: 'trends over time',
     icon: (active: boolean) => (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-        <path
-          d="M4 18L8 12L12 15L16 8L20 11"
-          stroke={active ? '#8C5A3C' : '#C4B8AC'}
-          strokeWidth="1.7"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
+        <path d="M4 18L8 12L12 15L16 8L20 11"
+          stroke={active ? '#8C5A3C' : '#C4B8AC'} strokeWidth="1.7"
+          strokeLinecap="round" strokeLinejoin="round" />
         {active && (
-          <path d="M4 18L8 12L12 15L16 8L20 11V18H4Z" fill="#8C5A3C" opacity="0.08" />
+          <path d="M4 18L8 12L12 15L16 8L20 11V18H4Z"
+            fill="#8C5A3C" opacity="0.08" />
         )}
       </svg>
     ),
@@ -41,57 +34,18 @@ const navItems = [
   {
     path: '/journey',
     label: 'Journey',
+    subtitle: 'tests & mastery',
     icon: (active: boolean) => (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-        {/* Path/road icon — represents the journey concept */}
-        <path
-          d="M12 3C12 3 5 10 5 15C5 18.87 8.13 22 12 22C15.87 22 19 18.87 19 15C19 10 12 3 12 3Z"
-          stroke={active ? '#8C5A3C' : '#C4B8AC'}
-          strokeWidth="1.7"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          fill={active ? 'rgba(140,90,60,0.08)' : 'none'}
-        />
-        {/* Winding path inside */}
-        <path
-          d="M9.5 14C10.5 13 13.5 13 14.5 14"
-          stroke={active ? '#8C5A3C' : '#C4B8AC'}
-          strokeWidth="1.3"
-          strokeLinecap="round"
-        />
-        <path
-          d="M10 17C11 16 13 16 14 17"
-          stroke={active ? '#8C5A3C' : '#C4B8AC'}
-          strokeWidth="1.3"
-          strokeLinecap="round"
-        />
+        <path d="M12 3C12 3 5 10 5 15C5 18.87 8.13 22 12 22C15.87 22 19 18.87 19 15C19 10 12 3 12 3Z"
+          stroke={active ? '#8C5A3C' : '#C4B8AC'} strokeWidth="1.7"
+          strokeLinecap="round" strokeLinejoin="round"
+          fill={active ? 'rgba(140,90,60,0.08)' : 'none'} />
+        <path d="M9.5 14C10.5 13 13.5 13 14.5 14"
+          stroke={active ? '#8C5A3C' : '#C4B8AC'} strokeWidth="1.3" strokeLinecap="round" />
+        <path d="M10 17C11 16 13 16 14 17"
+          stroke={active ? '#8C5A3C' : '#C4B8AC'} strokeWidth="1.3" strokeLinecap="round" />
         <circle cx="12" cy="10.5" r="1.2" fill={active ? '#8C5A3C' : '#C4B8AC'} />
-      </svg>
-    ),
-  },
-  {
-    path: '/analysis',
-    label: 'Analysis',
-    icon: (active: boolean) => (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-        <polygon
-          points="5,19 5,9 9,9 9,19"
-          stroke={active ? '#8C5A3C' : '#C4B8AC'}
-          strokeWidth="1.7"
-          fill={active ? 'rgba(140,90,60,0.08)' : 'none'}
-        />
-        <polygon
-          points="10,19 10,5 14,5 14,19"
-          stroke={active ? '#8C5A3C' : '#C4B8AC'}
-          strokeWidth="1.7"
-          fill={active ? 'rgba(140,90,60,0.08)' : 'none'}
-        />
-        <polygon
-          points="15,19 15,12 19,12 19,19"
-          stroke={active ? '#8C5A3C' : '#C4B8AC'}
-          strokeWidth="1.7"
-          fill={active ? 'rgba(140,90,60,0.08)' : 'none'}
-        />
       </svg>
     ),
   },
@@ -121,12 +75,10 @@ export default function BottomNav() {
       }}
     >
       {navItems.map((item) => {
-        // Rides tab is active for both / and /rides
-        const active = item.path === '/'
-          ? location.pathname === '/' || location.pathname === '/rides' || location.pathname.startsWith('/rides/')
-          : item.path === '/analysis'
-          ? location.pathname.startsWith('/analysis')
-          : location.pathname === item.path;
+        const active =
+          item.path === '/'
+            ? location.pathname === '/' || location.pathname.startsWith('/rides')
+            : location.pathname.startsWith(item.path);
         return (
           <button
             key={item.path}
@@ -155,6 +107,16 @@ export default function BottomNav() {
               }}
             >
               {item.label}
+            </span>
+            <span style={{
+              fontSize: '9px',
+              fontWeight: 400,
+              color: active ? 'rgba(140,90,60,0.55)' : 'rgba(196,184,172,0.65)',
+              fontFamily: "'DM Sans', sans-serif",
+              fontStyle: 'italic',
+              lineHeight: 1,
+            }}>
+              {item.subtitle}
             </span>
           </button>
         );

@@ -24,16 +24,30 @@ const App = () => (
       <HashRouter>
         <AppShell>
           <Routes>
+            {/* Rides list — RidesPage UNCHANGED, video upload stays here */}
             <Route path="/" element={<RidesPage />} />
             <Route path="/rides" element={<Navigate to="/" replace />} />
-            <Route path="/rides/:id" element={<RideDetailPage />} />
+
+            {/* Ride detail — AnalysisShell replaces old RideDetailPage */}
+            <Route path="/rides/:id" element={<AnalysisShell />}>
+              <Route index element={<RideTab />} />
+              <Route path="report" element={<ReportTab />} />
+            </Route>
+
+            {/* Progress tab — InsightsTab content promoted to main nav */}
+            <Route path="/progress" element={<InsightsTab />} />
+            <Route path="/insights" element={<Navigate to="/progress" replace />} />
+
+            {/* Journey — unchanged */}
             <Route path="/journey" element={<JourneyPage />} />
-            <Route path="/insights" element={<InsightsPage />} />
+
+            {/* Analysis sandbox — keep URL accessible but remove from nav */}
             <Route path="/analysis" element={<AnalysisShell />}>
               <Route index element={<RideTab />} />
               <Route path="report" element={<ReportTab />} />
               <Route path="insights" element={<InsightsTab />} />
             </Route>
+
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AppShell>
