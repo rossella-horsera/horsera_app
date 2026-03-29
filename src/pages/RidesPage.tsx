@@ -1548,11 +1548,15 @@ export default function RidesPage() {
         {/* ── Full-screen fixed loading overlay ── */}
         {isAnalyzing && (
           <div style={{
-            position: 'fixed', inset: 0, zIndex: 999,
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 999,
             background: 'rgba(20, 16, 12, 0.96)',
             display: 'flex', flexDirection: 'column',
             alignItems: 'center', justifyContent: 'center',
             padding: '40px 32px',
+            overscrollBehavior: 'none',
+            WebkitOverflowScrolling: 'touch',
+            maxHeight: '100%',
+            overflowY: 'auto',
           }}>
             {/* Progress ring */}
             <div style={{ position: 'relative', width: 96, height: 96 }}>
