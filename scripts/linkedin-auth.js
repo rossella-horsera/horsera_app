@@ -33,7 +33,7 @@ const ENV = loadEnv();
 const CLIENT_ID = ENV.LINKEDIN_CLIENT_ID;
 const CLIENT_SECRET = ENV.LINKEDIN_CLIENT_SECRET;
 const REDIRECT_URI = "http://localhost:3939/callback";
-const SCOPES = "openid profile w_member_social";
+const SCOPES = "w_organization_social";
 
 if (!CLIENT_ID || !CLIENT_SECRET) {
   console.error("Missing LINKEDIN_CLIENT_ID or LINKEDIN_CLIENT_SECRET in .env.local");
