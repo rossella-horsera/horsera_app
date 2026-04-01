@@ -1,9 +1,15 @@
 """
-Horsera Pose Pipeline — v5 (ONNX Runtime)
-YOLOv8s-pose inference via ONNX Runtime — no PyTorch at runtime.
-Horse-aware detection, CAE preprocessing, APS v4 scoring.
+Horsera Pose Pipeline — v6 (ONNX Runtime + Smart Crop)
+YOLOv8m-pose inference via ONNX Runtime — no PyTorch at runtime.
+Smart cropping for improved pose accuracy, horse-aware detection, CAE preprocessing, APS v4 scoring.
 
-Memory budget: ~200 MB peak (vs ~500 MB with torch on Railway Hobby 512 MB).
+Key improvements over v5:
+- Upgraded to YOLOv8m (medium) models for better accuracy
+- Smart cropping: detect horse bbox, expand with padding, scale up for higher effective resolution
+- Rolling/adaptive crop with optional EMA smoothing for temporal stability
+- ~3-4x effective resolution increase on rider pose estimation
+
+Memory budget: ~300 MB peak (medium models are larger than small/nano).
 """
 from __future__ import annotations
 
@@ -11,7 +17,7 @@ import logging
 import math
 import os
 from dataclasses import dataclass, asdict
-from typing import Optional
+from typing import Optional, Tuple
 
 import cv2
 import numpy as np
@@ -32,9 +38,16 @@ KP = {
 
 HORSE_CLASS_ID = 17      # COCO class 17 = horse
 CONF_THRESH    = 0.35    # minimum keypoint confidence accepted
-DET_CONF       = 0.40    # minimum horse detection confidence
+DET_CONF       = 0.30    # minimum horse detection confidence (lowered for better recall)
 SAMPLE_FPS     = 1       # default sampling rate for full-video analysis
 INPUT_SIZE     = 640     # YOLO input resolution
+
+# Smart crop configuration
+CROP_PADDING_FACTOR = 0.20    # expand horse bbox by 20%
+CROP_TOP_PADDING    = 0.50    # extra top padding for rider's head (50% of bbox height)
+CROP_EMA_ALPHA      = 0.3     # EMA smoothing factor (0 = no smoothing, 1 = no memory)
+CROP_JUMP_THRESHOLD = 0.15    # reset EMA if bbox jumps > 15% of frame dimension
+CROP_OUTPUT_HEIGHT  = 640     # target height for cropped region (maintains aspect ratio)
 
 _MODEL_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -101,8 +114,8 @@ def _get_sessions():
     global _horse_sess, _pose_sess
     import onnxruntime as ort  # lazy — ~100 MB, loaded on first analysis request
 
-    horse_path = os.path.join(_MODEL_DIR, "yolov8n.onnx")
-    pose_path  = os.path.join(_MODEL_DIR, "yolov8s-pose.onnx")
+    horse_path = os.path.join(_MODEL_DIR, "yolov8m.onnx")
+    pose_path  = os.path.join(_MODEL_DIR, "yolov8m-pose.onnx")
 
     opts = ort.SessionOptions()
     opts.intra_op_num_threads  = 2
@@ -112,18 +125,18 @@ def _get_sessions():
 
     if _horse_sess is None:
         if os.path.exists(horse_path):
-            logger.info(f"[models] Loading horse detector: {horse_path}")
+            logger.info(f"[models] Loading horse detector (yolov8m): {horse_path}")
         else:
-            logger.error(f"[models] yolov8n.onnx NOT FOUND at {horse_path}")
+            logger.error(f"[models] yolov8m.onnx NOT FOUND at {horse_path}")
         _horse_sess = ort.InferenceSession(horse_path, opts, providers=providers)
         for o in _horse_sess.get_outputs():
             logger.info(f"[models] horse output: {o.name} {o.shape}")
 
     if _pose_sess is None:
         if os.path.exists(pose_path):
-            logger.info(f"[models] Loading pose model: {pose_path}")
+            logger.info(f"[models] Loading pose model (yolov8m-pose): {pose_path}")
         else:
-            logger.error(f"[models] yolov8s-pose.onnx NOT FOUND at {pose_path}")
+            logger.error(f"[models] yolov8m-pose.onnx NOT FOUND at {pose_path}")
         _pose_sess = ort.InferenceSession(pose_path, opts, providers=providers)
         for o in _pose_sess.get_outputs():
             logger.info(f"[models] pose output: {o.name} {o.shape}")
@@ -196,6 +209,195 @@ def _scale_back(coords_x, coords_y, ratio, dw, dh, W, H):
     return x, y
 
 
+# ── Smart Cropper ─────────────────────────────────────────────────────────────
+
+class SmartCropper:
+    """
+    Smart cropping strategy for maximizing pose estimation accuracy.
+
+    Detects horse bounding box, expands with padding (especially upward for rider),
+    and optionally applies EMA smoothing for temporal stability across frames.
+
+    The cropped region is scaled up to a target height, providing ~3-4x effective
+    resolution increase for pose estimation on the rider.
+    """
+
+    def __init__(
+        self,
+        padding_factor: float = CROP_PADDING_FACTOR,
+        top_padding: float = CROP_TOP_PADDING,
+        ema_alpha: float = CROP_EMA_ALPHA,
+        jump_threshold: float = CROP_JUMP_THRESHOLD,
+        output_height: int = CROP_OUTPUT_HEIGHT,
+        use_smoothing: bool = True,
+    ):
+        self.padding_factor = padding_factor
+        self.top_padding = top_padding
+        self.ema_alpha = ema_alpha
+        self.jump_threshold = jump_threshold
+        self.output_height = output_height
+        self.use_smoothing = use_smoothing
+
+        # State for EMA smoothing
+        self.prev_bbox: Optional[np.ndarray] = None
+        self.smoothed_bbox: Optional[np.ndarray] = None
+
+    def reset(self) -> None:
+        """Reset smoothing state (call when starting a new video)."""
+        self.prev_bbox = None
+        self.smoothed_bbox = None
+
+    def _expand_bbox(
+        self,
+        bbox: Tuple[int, int, int, int],
+        frame_h: int,
+        frame_w: int,
+    ) -> Tuple[int, int, int, int]:
+        """Expand bbox by padding factor, with extra top padding for rider."""
+        x1, y1, x2, y2 = bbox
+        box_w = x2 - x1
+        box_h = y2 - y1
+
+        # Standard padding on all sides
+        pad_x = int(box_w * self.padding_factor)
+        pad_y = int(box_h * self.padding_factor)
+
+        # Extra top padding for rider's head/upper body
+        pad_y_top = int(box_h * self.top_padding)
+
+        new_x1 = max(0, x1 - pad_x)
+        new_y1 = max(0, y1 - pad_y - pad_y_top)
+        new_x2 = min(frame_w, x2 + pad_x)
+        new_y2 = min(frame_h, y2 + pad_y)
+
+        return (new_x1, new_y1, new_x2, new_y2)
+
+    def _smooth_bbox(
+        self,
+        bbox: Tuple[int, int, int, int],
+        frame_h: int,
+        frame_w: int,
+    ) -> Tuple[int, int, int, int]:
+        """Apply EMA smoothing with jump detection."""
+        if not self.use_smoothing:
+            return bbox
+
+        curr = np.array(bbox, dtype=float)
+
+        if self.smoothed_bbox is None:
+            self.smoothed_bbox = curr.copy()
+            self.prev_bbox = curr.copy()
+            return bbox
+
+        # Check for abrupt jump (> threshold of frame dimension)
+        delta = np.abs(curr - self.prev_bbox)
+        frame_dims = np.array([frame_w, frame_h, frame_w, frame_h])
+        relative_jump = delta / frame_dims
+
+        if np.any(relative_jump > self.jump_threshold):
+            # Abrupt jump detected - reset tracking
+            self.smoothed_bbox = curr.copy()
+            logger.debug(f"[SmartCropper] Jump detected, resetting bbox tracking")
+        else:
+            # Apply EMA smoothing
+            self.smoothed_bbox = self.ema_alpha * curr + (1 - self.ema_alpha) * self.smoothed_bbox
+
+        self.prev_bbox = curr.copy()
+        return tuple(self.smoothed_bbox.astype(int))
+
+    def get_crop_region(
+        self,
+        frame: np.ndarray,
+        horse_sess,
+        horse_bbox: Optional[Tuple[int, int, int, int]] = None,
+    ) -> Optional[Tuple[int, int, int, int]]:
+        """
+        Get the smart crop region for the frame.
+
+        Args:
+            frame: BGR image
+            horse_sess: ONNX session for horse detection
+            horse_bbox: Pre-computed horse bbox (if available, skips detection)
+
+        Returns:
+            (x1, y1, x2, y2) crop region in original frame coordinates, or None if no horse detected
+        """
+        frame_h, frame_w = frame.shape[:2]
+
+        # Use provided bbox or detect horse
+        if horse_bbox is None:
+            horse_bboxes = _horse_bboxes(frame, horse_sess)
+            if not horse_bboxes:
+                # Fall back to previous bbox if available (for temporal continuity)
+                if self.smoothed_bbox is not None:
+                    return tuple(self.smoothed_bbox.astype(int))
+                return None
+            # Use the largest horse detection
+            areas = [(b[2] - b[0]) * (b[3] - b[1]) for b in horse_bboxes]
+            horse_bbox = tuple(horse_bboxes[np.argmax(areas)].astype(int))
+
+        # Expand bbox with padding
+        expanded = self._expand_bbox(horse_bbox, frame_h, frame_w)
+
+        # Apply smoothing if enabled
+        smoothed = self._smooth_bbox(expanded, frame_h, frame_w)
+
+        return smoothed
+
+    def crop_and_scale(
+        self,
+        frame: np.ndarray,
+        crop_region: Tuple[int, int, int, int],
+    ) -> Tuple[np.ndarray, float, Tuple[int, int]]:
+        """
+        Crop frame to region and scale up to target height.
+
+        Returns:
+            cropped_frame: Scaled cropped image
+            scale: Scale factor applied
+            offset: (x, y) offset of crop region in original frame
+        """
+        x1, y1, x2, y2 = crop_region
+        cropped = frame[y1:y2, x1:x2]
+
+        crop_h = y2 - y1
+        crop_w = x2 - x1
+
+        if crop_h <= 0 or crop_w <= 0:
+            return frame, 1.0, (0, 0)
+
+        # Scale to target height, maintaining aspect ratio
+        scale = self.output_height / crop_h
+        new_w = int(crop_w * scale)
+        new_h = self.output_height
+
+        scaled = cv2.resize(cropped, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+
+        return scaled, scale, (x1, y1)
+
+    def transform_keypoints_to_original(
+        self,
+        keypoints: np.ndarray,
+        scale: float,
+        offset: Tuple[int, int],
+    ) -> np.ndarray:
+        """
+        Transform keypoints from cropped/scaled coordinates back to original frame.
+
+        Args:
+            keypoints: (17, 3) array [x, y, conf] in cropped frame coordinates
+            scale: Scale factor that was applied to the crop
+            offset: (x, y) offset of crop region in original frame
+
+        Returns:
+            keypoints: (17, 3) array in original frame coordinates
+        """
+        kps = keypoints.copy()
+        kps[:, 0] = kps[:, 0] / scale + offset[0]
+        kps[:, 1] = kps[:, 1] / scale + offset[1]
+        return kps
+
+
 # ── Horse Detection ───────────────────────────────────────────────────────────
 
 def _horse_bboxes(frame: np.ndarray, sess) -> list[np.ndarray]:
@@ -203,7 +405,7 @@ def _horse_bboxes(frame: np.ndarray, sess) -> list[np.ndarray]:
     H, W = frame.shape[:2]
     inp, ratio, dw, dh = _preprocess(frame)
 
-    # YOLOv8n ONNX output: [1, 84, 8400]  →  [8400, 84]
+    # YOLOv8m ONNX output: [1, 84, 8400]  →  [8400, 84]
     raw  = sess.run(None, {sess.get_inputs()[0].name: inp})[0][0]
     pred = raw.T  # [8400, 84]
 
@@ -229,10 +431,10 @@ def _horse_bboxes(frame: np.ndarray, sess) -> list[np.ndarray]:
 
 def _run_pose(frame: np.ndarray, sess) -> list[np.ndarray]:
     """
-    Run YOLOv8s-pose ONNX inference.
+    Run YOLOv8m-pose ONNX inference.
     Returns list of (17, 3) arrays [x, y, conf] in original image coordinates.
 
-    YOLOv8s-pose ONNX output: [1, 56, 8400]
+    YOLOv8m-pose ONNX output: [1, 56, 8400]
       56 = 4 (bbox xywh) + 1 (person confidence) + 51 (17 keypoints × 3)
     """
     H, W = frame.shape[:2]
@@ -257,6 +459,114 @@ def _run_pose(frame: np.ndarray, sess) -> list[np.ndarray]:
         kp[:, 0], kp[:, 1] = _scale_back(kp[:, 0], kp[:, 1], ratio, dw, dh, W, H)
         results.append(kp)
     return results
+
+
+def _run_pose_with_crop(
+    frame: np.ndarray,
+    pose_sess,
+    horse_sess,
+    cropper: SmartCropper,
+) -> Tuple[list[np.ndarray], Optional[Tuple[int, int, int, int]]]:
+    """
+    Run pose estimation with smart cropping for improved accuracy.
+
+    1. Detect horse and compute crop region (with optional EMA smoothing)
+    2. Crop and scale up the region for higher effective resolution
+    3. Run pose estimation on the cropped region
+    4. Transform keypoints back to original frame coordinates
+
+    Returns:
+        (keypoints_list, crop_region): List of (17, 3) keypoint arrays in original
+        frame coordinates, and the crop region used (for debugging/visualization)
+    """
+    # Get crop region (uses horse detection internally)
+    crop_region = cropper.get_crop_region(frame, horse_sess)
+
+    if crop_region is None:
+        # No horse detected and no fallback - run on full frame
+        return _run_pose(frame, pose_sess), None
+
+    # Crop and scale up
+    cropped_frame, scale, offset = cropper.crop_and_scale(frame, crop_region)
+
+    # Run pose on cropped frame
+    kps_list = _run_pose(cropped_frame, pose_sess)
+
+    # Transform keypoints back to original frame coordinates
+    transformed = []
+    for kps in kps_list:
+        transformed.append(cropper.transform_keypoints_to_original(kps, scale, offset))
+
+    return transformed, crop_region
+
+
+def _select_mounted_rider(
+    kps_list: list[np.ndarray],
+    crop_region: Optional[Tuple[int, int, int, int]],
+) -> Optional[np.ndarray]:
+    """
+    Select the person most likely to be the mounted rider.
+
+    Uses the "mounted rider priority" heuristic: prefer the person whose hip
+    centroid is in the upper portion of the crop region (rider on horse vs
+    person standing on ground).
+
+    Falls back to APS v4 scoring if no clear mounted rider is found.
+    """
+    if not kps_list:
+        return None
+
+    if len(kps_list) == 1:
+        kps = kps_list[0]
+        _, valid = aps_v4(kps)
+        return kps if valid else None
+
+    # Use crop region height as reference, or fall back to y-coordinate analysis
+    if crop_region is not None:
+        crop_y1, crop_y2 = crop_region[1], crop_region[3]
+        crop_h = crop_y2 - crop_y1
+        upper_threshold = crop_y1 + crop_h * 0.6  # Upper 60% of crop
+    else:
+        # Fall back to using the minimum hip y-coordinate as reference
+        all_hip_y = []
+        for kps in kps_list:
+            lh = kps[KP["left_hip"]]
+            rh = kps[KP["right_hip"]]
+            if lh[2] >= CONF_THRESH and rh[2] >= CONF_THRESH:
+                all_hip_y.append((lh[1] + rh[1]) / 2)
+        if all_hip_y:
+            upper_threshold = min(all_hip_y) + (max(all_hip_y) - min(all_hip_y)) * 0.6
+        else:
+            upper_threshold = float('inf')
+
+    # Find candidates in upper portion (mounted riders)
+    candidates = []
+    for kps in kps_list:
+        lh = kps[KP["left_hip"]]
+        rh = kps[KP["right_hip"]]
+        aps_score, valid = aps_v4(kps)
+
+        if not valid:
+            continue
+
+        if lh[2] >= CONF_THRESH and rh[2] >= CONF_THRESH:
+            hip_y = (lh[1] + rh[1]) / 2
+            is_upper = hip_y < upper_threshold
+            candidates.append((kps, aps_score, hip_y, is_upper))
+        else:
+            candidates.append((kps, aps_score, float('inf'), False))
+
+    if not candidates:
+        return None
+
+    # Prefer upper candidates (mounted riders)
+    upper_candidates = [(kps, score, hip_y) for kps, score, hip_y, is_upper in candidates if is_upper]
+    if upper_candidates:
+        # Among upper candidates, pick the one with lowest hip_y (highest on screen)
+        return min(upper_candidates, key=lambda x: x[2])[0]
+
+    # No upper candidates - fall back to best APS score
+    return max(candidates, key=lambda x: x[1])[0]
 
 
 # ── Horse/rider isolation ─────────────────────────────────────────────────────
@@ -489,7 +799,21 @@ def _video_meta(video_path: str, sample_fps: int = SAMPLE_FPS) -> tuple[float, i
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
-def analyze_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> PipelineResult:
+def analyze_video(
+    video_path: str,
+    sample_fps: int = SAMPLE_FPS,
+    use_smart_crop: bool = True,
+    use_smoothing: bool = True,
+) -> PipelineResult:
+    """
+    Analyze a video for rider biomechanics.
+
+    Args:
+        video_path: Path to the video file
+        sample_fps: Frame sampling rate (default 1 fps)
+        use_smart_crop: Enable smart cropping for better pose accuracy (default True)
+        use_smoothing: Enable EMA smoothing for crop region stability (default True)
+    """
     horse_sess, pose_sess = _get_sessions()
 
     native_fps, total_frames, step = _video_meta(video_path, sample_fps)
@@ -497,6 +821,12 @@ def analyze_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> PipelineResu
         f"[analyze_video] {total_frames} frames @ {native_fps:.1f} fps — "
         f"sampling every {step} frames (~{sample_fps} fps effective)"
     )
+    logger.info(
+        f"[analyze_video] smart_crop={use_smart_crop} smoothing={use_smoothing}"
+    )
+
+    # Initialize smart cropper for rolling/adaptive crop
+    cropper = SmartCropper(use_smoothing=use_smoothing) if use_smart_crop else None
 
     # Stream frames one at a time — never buffer the full list in RAM.
     valid_kps:     list[np.ndarray] = []
@@ -504,6 +834,7 @@ def analyze_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> PipelineResu
     cae_per_frame: list[float]      = []
     sampled_count  = 0
     horse_count    = 0
+    crop_count     = 0
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -523,25 +854,38 @@ def analyze_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> PipelineResu
                 frame = np.ascontiguousarray(raw_frame, dtype=np.uint8)
                 del raw_frame
 
-                horse_boxes = _horse_bboxes(frame, horse_sess)
-                if horse_boxes:
-                    horse_count += 1
+                # Run pose estimation (with or without smart cropping)
+                if cropper is not None:
+                    kps_list, crop_region = _run_pose_with_crop(
+                        frame, pose_sess, horse_sess, cropper
+                    )
+                    if crop_region is not None:
+                        crop_count += 1
+                        horse_count += 1
+                    # Use mounted rider selection for better accuracy
+                    kps = _select_mounted_rider(kps_list, crop_region)
+                else:
+                    # Legacy path: no smart cropping
+                    horse_boxes = _horse_bboxes(frame, horse_sess)
+                    if horse_boxes:
+                        horse_count += 1
+                    kps_list = _run_pose(frame, pose_sess)
+                    kps = extract_keypoints(kps_list)
+                    if kps is not None and horse_boxes and not _rider_overlaps_horse(kps, horse_boxes):
+                        kps = None
 
-                kps_list = _run_pose(frame, pose_sess)
                 del frame
 
-                kps = extract_keypoints(kps_list)
                 if kps is not None:
-                    if not horse_boxes or _rider_overlaps_horse(kps, horse_boxes):
-                        valid_kps.append(kps)
-                        valid_times.append(idx / native_fps)
-                        ls = _pt(kps, "left_shoulder")
-                        rs = _pt(kps, "right_shoulder")
-                        cae_per_frame.append(
-                            abs(ls[0] - rs[0])
-                            if ls is not None and rs is not None
-                            else 0.0
-                        )
+                    valid_kps.append(kps)
+                    valid_times.append(idx / native_fps)
+                    ls = _pt(kps, "left_shoulder")
+                    rs = _pt(kps, "right_shoulder")
+                    cae_per_frame.append(
+                        abs(ls[0] - rs[0])
+                        if ls is not None and rs is not None
+                        else 0.0
+                    )
             else:
                 del raw_frame
 
@@ -552,7 +896,7 @@ def analyze_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> PipelineResu
     det_rate = len(valid_kps) / max(sampled_count, 1)
     logger.info(
         f"[analyze_video] sampled={sampled_count} horse_frames={horse_count} "
-        f"valid_poses={len(valid_kps)} det_rate={det_rate:.1%}"
+        f"cropped_frames={crop_count} valid_poses={len(valid_kps)} det_rate={det_rate:.1%}"
     )
 
     max_cae_w = max(cae_per_frame) if cae_per_frame else 1.0
@@ -598,25 +942,53 @@ def analyze_video(video_path: str, sample_fps: int = SAMPLE_FPS) -> PipelineResu
     )
 
 
-def analyze_frame(frame_bgr: np.ndarray) -> dict:
-    """Synchronous single-frame analysis. Used by POST /analyze/frame."""
+def analyze_frame(frame_bgr: np.ndarray, use_smart_crop: bool = True) -> dict:
+    """
+    Synchronous single-frame analysis. Used by POST /analyze/frame.
+
+    Args:
+        frame_bgr: BGR image (OpenCV format)
+        use_smart_crop: Enable smart cropping for better pose accuracy (default True)
+    """
     horse_sess, pose_sess = _get_sessions()
 
-    horse_boxes = _horse_bboxes(frame_bgr, horse_sess)
-    kps_list    = _run_pose(frame_bgr, pose_sess)
-    kps         = extract_keypoints(kps_list)
+    if use_smart_crop:
+        # Use stateless smart cropping (no EMA smoothing for single frame)
+        cropper = SmartCropper(use_smoothing=False)
+        kps_list, crop_region = _run_pose_with_crop(
+            frame_bgr, pose_sess, horse_sess, cropper
+        )
+        # Use mounted rider selection
+        kps = _select_mounted_rider(kps_list, crop_region)
 
-    if kps is None:
-        return {"detected": False, "keypoints": None, "apsScore": 0.0}
+        if kps is None:
+            return {"detected": False, "keypoints": None, "apsScore": 0.0}
 
-    if horse_boxes and not _rider_overlaps_horse(kps, horse_boxes):
-        return {"detected": False, "keypoints": None, "apsScore": 0.0,
-                "reason": "skeleton_not_on_horse"}
+        aps, valid = aps_v4(kps)
+        return {
+            "detected":  True,
+            "valid":     valid,
+            "apsScore":  round(aps, 3),
+            "keypoints": kps.tolist(),
+            "cropRegion": list(crop_region) if crop_region else None,
+        }
+    else:
+        # Legacy path: no smart cropping
+        horse_boxes = _horse_bboxes(frame_bgr, horse_sess)
+        kps_list    = _run_pose(frame_bgr, pose_sess)
+        kps         = extract_keypoints(kps_list)
 
-    aps, valid = aps_v4(kps)
-    return {
-        "detected":  True,
-        "valid":     valid,
-        "apsScore":  round(aps, 3),
-        "keypoints": kps.tolist(),
-    }
+        if kps is None:
+            return {"detected": False, "keypoints": None, "apsScore": 0.0}
+
+        if horse_boxes and not _rider_overlaps_horse(kps, horse_boxes):
+            return {"detected": False, "keypoints": None, "apsScore": 0.0,
+                    "reason": "skeleton_not_on_horse"}
+
+        aps, valid = aps_v4(kps)
+        return {
+            "detected":  True,
+            "valid":     valid,
+            "apsScore":  round(aps, 3),
+            "keypoints": kps.tolist(),
+        }
