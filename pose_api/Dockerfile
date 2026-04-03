@@ -16,15 +16,15 @@ RUN pip install --no-cache-dir ultralytics==8.4.22 onnx==1.16.0
 
 RUN python -c "\
 from ultralytics import YOLO; \
-print('Exporting yolov8n → ONNX...'); \
-YOLO('yolov8n.pt').export(format='onnx', opset=12, simplify=False); \
-print('Exporting yolov8s-pose → ONNX...'); \
-YOLO('yolov8s-pose.pt').export(format='onnx', opset=12, simplify=False); \
+print('Exporting yolov8m → ONNX (horse detection)...'); \
+YOLO('yolov8m.pt').export(format='onnx', opset=12, simplify=False); \
+print('Exporting yolov8m-pose → ONNX (pose estimation)...'); \
+YOLO('yolov8m-pose.pt').export(format='onnx', opset=12, simplify=False); \
 print('ONNX export complete.')"
 
 # ── Stage 2: Runtime — no torch, no ultralytics ───────────────────────────────
 # Runtime upgraded to Python 3.14 for newer onnxruntime wheels.
-# Memory budget at startup: ~200 MB (vs ~500 MB with torch).
+# Memory budget at startup: ~300 MB (medium models are larger than nano/small).
 FROM python:3.14-slim
 
 WORKDIR /app
@@ -36,8 +36,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy only the ONNX weights from the exporter stage — no torch binary
-COPY --from=exporter /export/yolov8n.onnx .
-COPY --from=exporter /export/yolov8s-pose.onnx .
+COPY --from=exporter /export/yolov8m.onnx .
+COPY --from=exporter /export/yolov8m-pose.onnx .
 
 COPY . .
 
