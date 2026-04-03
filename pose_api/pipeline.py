@@ -42,6 +42,27 @@ DET_CONF       = 0.30    # minimum horse detection confidence (lowered for bette
 SAMPLE_FPS     = 1       # default sampling rate for full-video analysis
 INPUT_SIZE     = 640     # YOLO input resolution
 
+# Keypoint indices for occlusion handling
+LEFT_BODY = [5, 7, 9, 11, 13, 15]    # left shoulder through ankle
+RIGHT_BODY = [6, 8, 10, 12, 14, 16]  # right shoulder through ankle
+LEFT_LOWER_BODY = [11, 13, 15]       # left hip, knee, ankle
+RIGHT_LOWER_BODY = [12, 14, 16]      # right hip, knee, ankle
+
+# Skeleton drawing configuration
+SKELETON_CONNECTIONS = [
+    (0, 1), (0, 2), (1, 3), (2, 4),           # Head
+    (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),  # Arms
+    (5, 11), (6, 12), (11, 12),               # Torso
+    (11, 13), (13, 15), (12, 14), (14, 16),   # Legs
+]
+
+DRAW_COLORS = {
+    'bone': (60, 90, 140),
+    'keypoint': (110, 169, 201),
+    'low_conf': (163, 127, 107),
+    'crop_box': (255, 255, 0),
+}
+
 # Smart crop configuration
 CROP_PADDING_FACTOR = 0.20    # expand horse bbox by 20%
 CROP_TOP_PADDING    = 0.50    # extra top padding for rider's head (50% of bbox height)
@@ -118,10 +139,18 @@ def _get_sessions():
     pose_path  = os.path.join(_MODEL_DIR, "yolov8m-pose.onnx")
 
     opts = ort.SessionOptions()
-    opts.intra_op_num_threads  = 2
-    opts.inter_op_num_threads  = 1
     opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-    providers = ["CPUExecutionProvider"]
+
+    # Auto-detect GPU support
+    available = ort.get_available_providers()
+    if "CUDAExecutionProvider" in available:
+        providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        logger.info("[models] Using CUDA GPU acceleration")
+    else:
+        providers = ["CPUExecutionProvider"]
+        opts.intra_op_num_threads = 2
+        opts.inter_op_num_threads = 1
+        logger.info("[models] Using CPU (CUDA not available)")
 
     if _horse_sess is None:
         if os.path.exists(horse_path):
@@ -396,6 +425,118 @@ class SmartCropper:
         kps[:, 0] = kps[:, 0] / scale + offset[0]
         kps[:, 1] = kps[:, 1] / scale + offset[1]
         return kps
+
+
+# ── Occlusion Detection ───────────────────────────────────────────────────────
+
+def detect_camera_side(keypoints: np.ndarray, threshold: float = 0.12) -> str:
+    """
+    Detect which side of the horse the camera is on FOR THIS FRAME.
+
+    Uses confidence asymmetry - higher confidence side is more visible.
+    Works even when horse is circling (camera side changes per frame).
+
+    Args:
+        keypoints: (17, 3) array [x, y, conf]
+        threshold: Confidence difference to trigger occlusion marking
+
+    Returns:
+        'left': Camera on left, left legs likely occluded
+        'right': Camera on right, right legs likely occluded
+        'front': Roughly centered, both sides visible
+    """
+    # Get mean confidence for left vs right body
+    left_confs = [keypoints[i, 2] for i in LEFT_BODY if keypoints[i, 2] > 0.1]
+    right_confs = [keypoints[i, 2] for i in RIGHT_BODY if keypoints[i, 2] > 0.1]
+
+    left_conf = np.mean(left_confs) if left_confs else 0.0
+    right_conf = np.mean(right_confs) if right_confs else 0.0
+
+    diff = right_conf - left_conf
+
+    if diff > threshold:
+        # Right side more visible -> camera on LEFT -> left legs occluded
+        return 'left'
+    elif diff < -threshold:
+        # Left side more visible -> camera on RIGHT -> right legs occluded
+        return 'right'
+    else:
+        return 'front'
+
+
+def mark_occluded_keypoints(
+    keypoints: np.ndarray,
+    camera_side: str,
+    conf_boost_visible: float = 0.0,
+) -> np.ndarray:
+    """
+    Mark far-side lower body keypoints as occluded (conf=0).
+
+    Only marks legs (hip, knee, ankle) - upper body usually visible above horse.
+
+    Args:
+        keypoints: (17, 3) array [x, y, conf]
+        camera_side: 'left', 'right', or 'front'
+        conf_boost_visible: Optional boost to visible side confidence
+
+    Returns:
+        Keypoints with occluded points marked (conf=0)
+    """
+    kps = keypoints.copy()
+
+    if camera_side == 'left':
+        # Camera on left -> LEFT legs behind horse
+        for i in LEFT_LOWER_BODY:
+            kps[i, 2] = 0.0
+    elif camera_side == 'right':
+        # Camera on right -> RIGHT legs behind horse
+        for i in RIGHT_LOWER_BODY:
+            kps[i, 2] = 0.0
+    # 'front' -> no occlusion
+
+    return kps
+
+
+def process_keypoints_with_occlusion(keypoints: np.ndarray) -> tuple[np.ndarray, str]:
+    """
+    Detect camera side and mark occluded keypoints in one call.
+
+    Returns:
+        (processed_keypoints, camera_side)
+    """
+    camera_side = detect_camera_side(keypoints)
+    processed = mark_occluded_keypoints(keypoints, camera_side)
+    return processed, camera_side
+
+
+# ── Skeleton Drawing ──────────────────────────────────────────────────────────
+
+def draw_skeleton(
+    frame: np.ndarray,
+    keypoints: np.ndarray,
+    conf_thresh: float = 0.3,
+    thickness: int = 2,
+    radius: int = 4,
+) -> np.ndarray:
+    """Draw skeleton. Occluded keypoints (conf=0) are automatically skipped."""
+    kps = np.array(keypoints)
+
+    # Draw bones - only if BOTH endpoints visible
+    for (i, j) in SKELETON_CONNECTIONS:
+        if kps[i, 2] > conf_thresh and kps[j, 2] > conf_thresh:
+            pt1 = (int(kps[i, 0]), int(kps[i, 1]))
+            pt2 = (int(kps[j, 0]), int(kps[j, 1]))
+            cv2.line(frame, pt1, pt2, DRAW_COLORS['bone'], thickness, cv2.LINE_AA)
+
+    # Draw keypoints
+    for i in range(17):
+        if kps[i, 2] > conf_thresh:
+            pt = (int(kps[i, 0]), int(kps[i, 1]))
+            color = DRAW_COLORS['keypoint'] if kps[i, 2] > 0.5 else DRAW_COLORS['low_conf']
+            cv2.circle(frame, pt, radius, color, -1, cv2.LINE_AA)
+            cv2.circle(frame, pt, radius + 1, (255, 255, 255), 1, cv2.LINE_AA)
+
+    return frame
 
 
 # ── Horse Detection ───────────────────────────────────────────────────────────
@@ -877,6 +1018,8 @@ def analyze_video(
                 del frame
 
                 if kps is not None:
+                    # Apply occlusion detection per frame
+                    kps, camera_side = process_keypoints_with_occlusion(kps)
                     valid_kps.append(kps)
                     valid_times.append(idx / native_fps)
                     ls = _pt(kps, "left_shoulder")
@@ -964,13 +1107,17 @@ def analyze_frame(frame_bgr: np.ndarray, use_smart_crop: bool = True) -> dict:
         if kps is None:
             return {"detected": False, "keypoints": None, "apsScore": 0.0}
 
+        # Apply occlusion detection
+        kps, camera_side = process_keypoints_with_occlusion(kps)
+
         aps, valid = aps_v4(kps)
         return {
-            "detected":  True,
-            "valid":     valid,
-            "apsScore":  round(aps, 3),
-            "keypoints": kps.tolist(),
+            "detected":   True,
+            "valid":      valid,
+            "apsScore":   round(aps, 3),
+            "keypoints":  kps.tolist(),
             "cropRegion": list(crop_region) if crop_region else None,
+            "cameraSide": camera_side,
         }
     else:
         # Legacy path: no smart cropping
@@ -985,10 +1132,99 @@ def analyze_frame(frame_bgr: np.ndarray, use_smart_crop: bool = True) -> dict:
             return {"detected": False, "keypoints": None, "apsScore": 0.0,
                     "reason": "skeleton_not_on_horse"}
 
+        # Apply occlusion detection
+        kps, camera_side = process_keypoints_with_occlusion(kps)
+
         aps, valid = aps_v4(kps)
         return {
-            "detected":  True,
-            "valid":     valid,
-            "apsScore":  round(aps, 3),
-            "keypoints": kps.tolist(),
+            "detected":   True,
+            "valid":      valid,
+            "apsScore":   round(aps, 3),
+            "keypoints":  kps.tolist(),
+            "cameraSide": camera_side,
         }
+
+
+# ── Annotated Video Export ────────────────────────────────────────────────────
+
+def save_annotated_video(
+    video_path: str,
+    result: PipelineResult,
+    output_path: str,
+    show_crop_region: bool = False,
+    conf_thresh: float = 0.3,
+) -> str:
+    """
+    Save annotated video with skeleton overlays.
+    Occluded keypoints are already marked in result.frames_data.
+
+    Args:
+        video_path: Path to the original video
+        result: PipelineResult from analyze_video()
+        output_path: Path to save the annotated video
+        show_crop_region: Draw the crop region box (for debugging)
+        conf_thresh: Minimum confidence to draw keypoints
+
+    Returns:
+        output_path on success
+    """
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise IOError(f"Cannot open video: {video_path}")
+
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(output_path, fourcc, fps, (frame_w, frame_h))
+
+    # Build time -> keypoints lookup
+    frame_lookup = {round(fd['frame_time'], 3): fd for fd in result.frames_data}
+
+    cropper, horse_sess = None, None
+    if show_crop_region:
+        try:
+            horse_sess, _ = _get_sessions()
+            cropper = SmartCropper(use_smoothing=True)
+        except Exception:
+            show_crop_region = False
+
+    frame_idx = 0
+    annotated = 0
+
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            t = round(frame_idx / fps, 3)
+
+            if t in frame_lookup:
+                kps = np.array(frame_lookup[t]['keypoints'])
+                # Denormalize from 0-1 to pixel coords
+                kps[:, 0] *= frame_w
+                kps[:, 1] *= frame_h
+                draw_skeleton(frame, kps, conf_thresh)
+                annotated += 1
+
+            if show_crop_region and cropper and horse_sess:
+                crop = cropper.get_crop_region(frame, horse_sess)
+                if crop:
+                    cv2.rectangle(
+                        frame,
+                        (crop[0], crop[1]),
+                        (crop[2], crop[3]),
+                        DRAW_COLORS['crop_box'],
+                        2
+                    )
+
+            out.write(frame)
+            frame_idx += 1
+    finally:
+        cap.release()
+        out.release()
+
+    logger.info(f"[save_annotated_video] Saved {output_path} ({annotated} frames with skeleton)")
+    return output_path
