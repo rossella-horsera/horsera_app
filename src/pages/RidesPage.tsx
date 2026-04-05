@@ -829,6 +829,7 @@ export default function RidesPage() {
   const [logFocus, setLogFocus] = useState(mockGoal.milestones[0].id);
   const [logDuration, setLogDuration] = useState('45');
   const [logType, setLogType] = useState<'training' | 'lesson' | 'hack'>('training');
+  const [logDate, setLogDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [logSubmitted, setLogSubmitted] = useState(false);
 
   // Video analysis
@@ -950,9 +951,13 @@ export default function RidesPage() {
     const horse = getUserProfile().horseName || 'Your Horse';
     const duration = parseInt(logDuration, 10) || 45;
 
+    // If a ride already exists for this date + horse + type, reuse its id so saveRide() overwrites it.
+    const existing = getRides().find(r => r.date === logDate && r.horse === horse && r.type === logType);
+    const rideId = existing?.id ?? sessionId ?? `stored-${Date.now()}`;
+
     const ride: StoredRide = {
-      id: sessionId ?? `stored-${Date.now()}`,
-      date: new Date().toISOString().split('T')[0],
+      id: rideId,
+      date: logDate,
       horse,
       type: logType,
       duration,
@@ -1039,7 +1044,9 @@ export default function RidesPage() {
       videoUploaded: true,
       milestoneId: '',
     }));
-    return [...fromStorage, ...mockRides];
+    // Only show real uploaded rides. Mock rides (mockRides) are kept for
+    // Home/Insights/Journey defaults but are no longer mixed into the Rides list.
+    return fromStorage;
   }, [storedRides]);
 
   const sortedRides = useMemo(() => {
@@ -1421,6 +1428,45 @@ export default function RidesPage() {
 
                 {/* ── Insights Summary Card ──────────────────── */}
                 <InsightsCard insights={result.insights} />
+
+                {/* ── Ride date (editable before save) ─────────── */}
+                {!sessionSaved && (() => {
+                  const horse = getUserProfile().horseName || 'Your Horse';
+                  const existing = storedRides.find(r => r.date === logDate && r.horse === horse && r.type === logType);
+                  return (
+                    <div style={{ marginTop: '16px' }}>
+                      <label style={{
+                        fontSize: '11px', fontWeight: 600, color: COLORS.muted,
+                        letterSpacing: '0.1em', textTransform: 'uppercase',
+                        fontFamily: FONTS.body, display: 'block', marginBottom: '8px',
+                      }}>
+                        Ride date
+                      </label>
+                      <input
+                        type="date"
+                        value={logDate}
+                        max={new Date().toISOString().split('T')[0]}
+                        onChange={e => setLogDate(e.target.value)}
+                        style={{
+                          width: '100%', padding: '10px 12px',
+                          borderRadius: '10px', border: `1.5px solid ${COLORS.border}`,
+                          fontSize: '14px', color: COLORS.charcoal,
+                          fontFamily: FONTS.mono,
+                          outline: 'none', background: COLORS.parchment,
+                          boxSizing: 'border-box',
+                        }}
+                      />
+                      {existing && (
+                        <div style={{
+                          marginTop: '8px', fontSize: '12px', color: COLORS.cognac,
+                          fontFamily: FONTS.body, fontStyle: 'italic',
+                        }}>
+                          ↻ Will replace your existing {logType} ride from this date.
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* ── Save Session / Reset buttons ───────────── */}
                 <div style={{ display: 'flex', gap: '10px', marginTop: '16px' }}>

@@ -36,7 +36,12 @@ const STORAGE_KEY = 'horsera_rides';
 
 export function saveRide(ride: StoredRide): void {
   const rides = getRides();
-  rides.unshift(ride);
+  const existingIdx = rides.findIndex(r => r.id === ride.id);
+  if (existingIdx >= 0) {
+    rides[existingIdx] = ride;  // upsert by id
+  } else {
+    rides.unshift(ride);  // new ride, prepend
+  }
   safeStorage.setItem(STORAGE_KEY, JSON.stringify(rides));
 }
 
