@@ -2391,7 +2391,12 @@ function SwipeRideRow({ ride, storedRide, trendDelta, onNavigate, onDelete }: {
               />
               {/* Score ring overlay — bottom-right corner */}
               {score !== null && (() => {
-                const bandColor = score >= 75 ? RC.ideal : score >= 60 ? '#C9A96E' : RC.focus;
+                const bandColor =
+                score >= 90 ? '#5B9E56' :
+                score >= 75 ? '#7D9B76' :
+                score >= 60 ? '#C9A96E' :
+                score >= 40 ? '#C17F4A' :
+                '#C4714A';
                 const r = 14;
                 const c = 2 * Math.PI * r;
                 const dash = (score / 100) * c;
@@ -2419,7 +2424,12 @@ function SwipeRideRow({ ride, storedRide, trendDelta, onNavigate, onDelete }: {
           ) : score !== null ? (
             // No video — show score ring alone
             (() => {
-              const bandColor = score >= 75 ? RC.ideal : score >= 60 ? '#C9A96E' : RC.focus;
+              const bandColor =
+                score >= 90 ? '#5B9E56' :
+                score >= 75 ? '#7D9B76' :
+                score >= 60 ? '#C9A96E' :
+                score >= 40 ? '#C17F4A' :
+                '#C4714A';
               const r = 26;
               const c = 2 * Math.PI * r;
               const dash = (score / 100) * c;

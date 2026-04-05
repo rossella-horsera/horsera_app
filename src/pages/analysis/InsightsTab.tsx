@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getRides } from '../../lib/storage';
+import { getUserProfile } from '../../lib/userProfile';
 import { useCadence } from '../../context/CadenceContext';
 
 // ── Design tokens ──────────────────────────────────────────────────────────
@@ -16,11 +17,20 @@ const C = {
   muted: 'rgba(28,28,30,0.38)',
 };
 
+// 5-band scale — matches the rest of the app
 function scoreColor(s: number) {
-  return s >= 80 ? C.ideal : s >= 60 ? C.good : C.focus;
+  if (s >= 90) return '#5B9E56';  // Excellent
+  if (s >= 75) return '#7D9B76';  // On target
+  if (s >= 60) return '#C9A96E';  // Working
+  if (s >= 40) return '#C17F4A';  // Building
+  return '#C4714A';                // Focus area
 }
 function scoreLabel(s: number) {
-  return s >= 80 ? 'Good' : s >= 60 ? 'Working' : 'Focus area';
+  if (s >= 90) return 'Excellent';
+  if (s >= 75) return 'On target';
+  if (s >= 60) return 'Working';
+  if (s >= 40) return 'Building';
+  return 'Focus area';
 }
 
 // ── Mock fallback data ─────────────────────────────────────────────────────
@@ -58,9 +68,9 @@ function ScoreRing({ score, size = 52 }: { score: number; size?: number }) {
       <circle cx="50" cy="50" r={r} fill="none" stroke="#EDE7DF" strokeWidth="6" />
       <circle cx="50" cy="50" r={r} fill="none" stroke={color} strokeWidth="6"
         strokeDasharray={`${dash} ${circ}`} strokeLinecap="round" transform="rotate(-90 50 50)" />
-      <text x="50" y="50" textAnchor="middle" style={{ fontFamily: "'DM Mono', monospace", fontWeight: 600 }}>
-        <tspan fontSize="18" fill={color}>{score}</tspan>
-        <tspan fontSize="10" fill="#BBB">/100</tspan>
+      <text x="50" y="58" textAnchor="middle" dominantBaseline="middle"
+        style={{ fontFamily: "'DM Mono', monospace", fontWeight: 700 }}>
+        <tspan fontSize="30" fill={color}>{score}</tspan>
       </text>
     </svg>
   );
@@ -218,7 +228,7 @@ export default function InsightsTab() {
       ` L${sx(n - 1, n)},135 L${sx(0, n)},135 Z`
     : '';
 
-  const horseName = hasReal ? rides[rides.length - 1]?.horse ?? 'Your Horse' : 'Caviar';
+  const riderName = getUserProfile().firstName || 'Your';
   const dateRange = xLabels.length > 1 ? `${xLabels[0]} – ${xLabels[xLabels.length - 1]}` : xLabels[0] ?? '';
 
   const headerSubtext = timeMode === 'months'
@@ -236,13 +246,13 @@ export default function InsightsTab() {
       }}>
         <div>
           <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 15, fontWeight: 600, color: C.ch }}>
-            {horseName} · Your Progress
+            {riderName === 'Your' ? 'Your Progress' : `${riderName} · Your Progress`}
           </div>
           <div style={{ fontSize: 10, letterSpacing: '1.2px', textTransform: 'uppercase', color: C.muted, marginTop: 1 }}>
             {headerSubtext}
           </div>
         </div>
-        <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', gap: 10 }}>
           {trendBadge && (
             <span style={{
               fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px',
@@ -250,13 +260,36 @@ export default function InsightsTab() {
               fontFamily: "'DM Sans', sans-serif",
             }}>{trendBadge.label}</span>
           )}
-          <div>
-            <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 20, fontWeight: 600 }}>
-              <span style={{ color: C.cg }}>{latestScore}</span>
-              <span style={{ color: C.muted, fontSize: 13 }}>/100</span>
-            </div>
-            <div style={{ fontSize: 9.5, color: '#aaa', letterSpacing: '1px', textTransform: 'uppercase' }}>Latest</div>
-          </div>
+          {/* Score ring — consistent with ride cards + month headers */}
+          {(() => {
+            const bandColor =
+              latestScore >= 90 ? '#5B9E56' :
+              latestScore >= 75 ? '#7D9B76' :
+              latestScore >= 60 ? '#C9A96E' :
+              latestScore >= 40 ? '#C17F4A' :
+              '#C4714A';
+            const r = 22;
+            const circ = 2 * Math.PI * r;
+            const dash = (latestScore / 100) * circ;
+            return (
+              <div style={{ position: 'relative', width: 52, height: 52 }}>
+                <svg width="52" height="52" viewBox="0 0 52 52" style={{ transform: 'rotate(-90deg)' }}>
+                  <circle cx="26" cy="26" r={r} fill="none" stroke="rgba(28,28,30,0.08)" strokeWidth="3"/>
+                  <circle cx="26" cy="26" r={r} fill="none" stroke={bandColor} strokeWidth="3"
+                    strokeDasharray={`${dash} ${circ}`} strokeLinecap="round"/>
+                </svg>
+                <div style={{
+                  position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+                  alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <span style={{
+                    fontSize: 16, fontWeight: 700, color: bandColor,
+                    fontFamily: "'DM Mono', monospace", lineHeight: 1,
+                  }}>{latestScore}</span>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       </div>
 
@@ -525,16 +558,38 @@ export default function InsightsTab() {
             }}>
               Intro Level → Training Level
             </div>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 6 }}>
-              <span style={{ fontSize: 32, fontWeight: 700, color: '#fff', fontFamily: "'Inter', sans-serif" }}>68%</span>
-              <span style={{ fontSize: 13, color: C.ch }}>of milestone tasks at Consistent or above</span>
-            </div>
-            <div style={{ height: 5, borderRadius: 3, background: 'rgba(255,255,255,0.13)', marginBottom: 16 }}>
-              <div style={{
-                height: '100%', borderRadius: 3, width: '68%',
-                background: `linear-gradient(to right, ${C.cg}, ${C.ch})`,
-              }}/>
-            </div>
+            {(() => {
+              // Compute progression signal from the latest ride's biometrics:
+              // percentage of metrics at "On target" (>=75) or higher.
+              const latestRide = hasReal ? allRides[allRides.length - 1] : null;
+              const metricsArr = latestRide
+                ? [
+                    Math.round((latestRide.biometrics.upperBodyAlignment ?? 0) * 100),
+                    Math.round((latestRide.biometrics.lowerLegStability ?? 0) * 100),
+                    Math.round((latestRide.biometrics.coreStability ?? 0) * 100),
+                    Math.round((latestRide.biometrics.pelvisStability ?? 0) * 100),
+                    Math.round((latestRide.biometrics.reinSteadiness ?? 0) * 100),
+                    Math.round((latestRide.biometrics.reinSymmetry ?? 0) * 100),
+                  ]
+                : [];
+              const atConsistent = metricsArr.filter(s => s >= 75).length;
+              const total = Math.max(metricsArr.length, 1);
+              const pct = metricsArr.length > 0 ? Math.round((atConsistent / total) * 100) : 68;
+              return (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 6 }}>
+                    <span style={{ fontSize: 32, fontWeight: 700, color: '#fff', fontFamily: "'Inter', sans-serif" }}>{pct}%</span>
+                    <span style={{ fontSize: 13, color: C.ch }}>of biomechanics at On target or above</span>
+                  </div>
+                  <div style={{ height: 5, borderRadius: 3, background: 'rgba(255,255,255,0.13)', marginBottom: 16 }}>
+                    <div style={{
+                      height: '100%', borderRadius: 3, width: `${pct}%`,
+                      background: `linear-gradient(to right, ${C.cg}, ${C.ch})`,
+                    }}/>
+                  </div>
+                </>
+              );
+            })()}
             <p style={{
               fontFamily: "'Playfair Display', serif", fontStyle: 'italic',
               fontSize: 13, color: 'rgba(212,175,118,0.82)', lineHeight: 1.78, margin: 0,

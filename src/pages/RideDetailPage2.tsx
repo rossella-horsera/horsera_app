@@ -17,21 +17,28 @@ const C = {
   na: '#2C3E50',
 };
 
+// 5-band score scale — more granularity at both ends so 100 ≠ 80 and 0 ≠ 49.
 function scoreColor(score: number): string {
-  if (score >= 80) return C.ideal;
-  if (score >= 60) return C.good;
-  return C.focus;
+  if (score >= 90) return '#5B9E56'; // Excellent — deep ideal green
+  if (score >= 75) return '#7D9B76'; // On target — sage
+  if (score >= 60) return '#C9A96E'; // Working — champagne
+  if (score >= 40) return '#C17F4A'; // Building — cognac
+  return '#C4714A';                   // Focus area — attention
 }
 
 function scoreLabel(score: number): string {
-  if (score >= 80) return 'Good';
+  if (score >= 90) return 'Excellent';
+  if (score >= 75) return 'On target';
   if (score >= 60) return 'Working';
+  if (score >= 40) return 'Building';
   return 'Focus area';
 }
 
 function qualityLabel(score: number): string {
-  if (score >= 80) return 'Consistent';
+  if (score >= 90) return 'Mastered';
+  if (score >= 75) return 'Consistent';
   if (score >= 60) return 'Developing';
+  if (score >= 40) return 'Emerging';
   return 'Focus';
 }
 
