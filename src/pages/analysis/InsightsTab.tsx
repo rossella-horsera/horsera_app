@@ -338,13 +338,78 @@ export default function InsightsTab() {
               fontFamily: "'DM Sans', sans-serif",
               fontSize: 13, color: C.na, lineHeight: 1.7, margin: 0,
             }}>
-              <span style={{ fontFamily: "'Playfair Display', serif", fontStyle: 'italic' }}>
-                A consistent pattern is emerging.
-              </span>{' '}
-              Across your last {n} rides, your core strength has been your standout area,
-              while lower leg stability shows the most room for growth.
-              This compensation pattern is common — addressing the leg brace directly
-              will unlock improvements across all the training scales.
+              {(() => {
+                // Derive strongest + weakest metrics from actual rides in the window
+                if (!hasReal || rides.length === 0) {
+                  return (
+                    <>
+                      <span style={{ fontFamily: "'Playfair Display', serif", fontStyle: 'italic' }}>
+                        Your pattern will emerge here.
+                      </span>{' '}
+                      Upload a handful of rides and Cadence will show you which biomechanics
+                      are your strengths and which are holding you back.
+                    </>
+                  );
+                }
+                // Average each biomechanic across the windowed rides
+                const avgBy = (key: keyof typeof MOCK_BIO) => {
+                  const vals = rides.map(r => Math.round((r.biometrics[key] ?? 0) * 100)).filter(v => v > 0);
+                  if (vals.length === 0) return { avg: 0, count: 0 };
+                  return { avg: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length), count: vals.length };
+                };
+                const metricRows = BIO_METRICS.map(m => ({
+                  label: m.label,
+                  key: m.key,
+                  ...avgBy(m.key),
+                })).filter(m => m.count > 0);
+
+                if (metricRows.length < 2) {
+                  return (
+                    <>
+                      <span style={{ fontFamily: "'Playfair Display', serif", fontStyle: 'italic' }}>
+                        Early days.
+                      </span>{' '}
+                      Upload a few more rides to surface the pattern in your biomechanics —
+                      Cadence needs at least two metrics with data to compare strengths and gaps.
+                    </>
+                  );
+                }
+                const sorted = [...metricRows].sort((a, b) => b.avg - a.avg);
+                const strongest = sorted[0];
+                const weakest = sorted[sorted.length - 1];
+                const spread = strongest.avg - weakest.avg;
+
+                // Trend: compare first-half avg vs second-half avg for weakest
+                const halfIdx = Math.floor(rides.length / 2);
+                const weakFirst = rides.slice(0, halfIdx).map(r => Math.round((r.biometrics[weakest.key] ?? 0) * 100)).filter(v => v > 0);
+                const weakSecond = rides.slice(halfIdx).map(r => Math.round((r.biometrics[weakest.key] ?? 0) * 100)).filter(v => v > 0);
+                const weakFirstAvg = weakFirst.length ? weakFirst.reduce((a,b)=>a+b,0)/weakFirst.length : 0;
+                const weakSecondAvg = weakSecond.length ? weakSecond.reduce((a,b)=>a+b,0)/weakSecond.length : 0;
+                const weakDelta = Math.round(weakSecondAvg - weakFirstAvg);
+
+                const trendPhrase = weakDelta >= 3
+                  ? `and ${weakest.label.toLowerCase()} is already climbing (+${weakDelta} pts in the second half of this window).`
+                  : weakDelta <= -3
+                  ? `and ${weakest.label.toLowerCase()} has dipped ${weakDelta} pts recently — worth flagging with your trainer.`
+                  : `addressing ${weakest.label.toLowerCase()} will unlock improvements across the training scales.`;
+
+                const headline = spread >= 25
+                  ? 'A clear compensation pattern is emerging.'
+                  : spread >= 12
+                  ? 'A consistent pattern is emerging.'
+                  : 'Your biomechanics are tracking close together.';
+
+                return (
+                  <>
+                    <span style={{ fontFamily: "'Playfair Display', serif", fontStyle: 'italic' }}>
+                      {headline}
+                    </span>{' '}
+                    Across your last {n} ride{n !== 1 ? 's' : ''},
+                    {' '}<strong style={{ color: C.nk }}>{strongest.label.toLowerCase()}</strong> is your standout at {strongest.avg}%,
+                    while <strong style={{ color: C.nk }}>{weakest.label.toLowerCase()}</strong> sits at {weakest.avg}% — {trendPhrase}
+                  </>
+                );
+              })()}
             </p>
           </div>
           <button onClick={openCadence} style={{
@@ -416,104 +481,90 @@ export default function InsightsTab() {
           </div>
         </div>
 
-        {/* ── Biomechanics Trends ─────────────────────────────────────── */}
+        {/* ── Biomechanics Trends — small-multiples sparkline grid ────── */}
         <div style={{ marginBottom: 22 }}>
           <SecHdr>Biomechanics trends</SecHdr>
-          <div style={{ position: 'relative' }}>
-            <div
-              ref={bioScrollRef}
-              style={{
-                display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 8,
-                WebkitOverflowScrolling: 'touch',
-              } as React.CSSProperties}
-            >
-              {bioData.map(m => {
-                const maxS = Math.max(...m.scores.filter(s => s > 0), 1);
-                const nonZeroCount = m.scores.filter(s => s > 0).length;
-                const showDash = m.cur === 0 && nonZeroCount <= 1;
-                return (
-                  <div key={m.label} style={{
-                    flexShrink: 0, width: 130, background: '#fff',
-                    borderRadius: 10, padding: '12px 12px 10px',
-                    boxShadow: '0 1px 8px rgba(0,0,0,0.06)',
-                  }}>
-                    <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.8px', textTransform: 'uppercase', color: C.na, marginBottom: 8 }}>
+          <div style={{ fontSize: 10, color: C.muted, marginBottom: 10, letterSpacing: '0.05em' }}>
+            {headerSubtext} · oldest → newest
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            {bioData.map(m => {
+              const nonZero = m.scores.filter(s => s > 0);
+              const hasData = nonZero.length > 0;
+              const cur = hasData ? nonZero[nonZero.length - 1] : 0;
+              const bandColor = scoreColor(cur);
+              const minS = hasData ? Math.min(...nonZero) : 0;
+              const maxS = hasData ? Math.max(...nonZero) : 0;
+              const rangeS = Math.max(maxS - minS, 1);
+              // Sparkline points (zeros are treated as "no data" gaps)
+              const W = 120, H = 34;
+              const yFor = (s: number) => H - 4 - ((s - minS) / rangeS) * (H - 10);
+              const N = m.scores.length;
+              const xFor = (i: number) => N === 1 ? W / 2 : (i / (N - 1)) * (W - 6) + 3;
+              const segments: string[] = [];
+              let pts: string[] = [];
+              m.scores.forEach((s, i) => {
+                if (s > 0) {
+                  pts.push(`${xFor(i)},${yFor(s)}`);
+                } else if (pts.length > 0) {
+                  segments.push(pts.join(' '));
+                  pts = [];
+                }
+              });
+              if (pts.length > 0) segments.push(pts.join(' '));
+
+              return (
+                <div key={m.label} style={{
+                  background: '#fff', borderRadius: 12, padding: '12px 14px',
+                  boxShadow: '0 1px 8px rgba(0,0,0,0.06)',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <div style={{
+                      fontSize: 10, fontWeight: 600, letterSpacing: '0.08em',
+                      textTransform: 'uppercase', color: C.muted, fontFamily: "'DM Sans', sans-serif",
+                    }}>
                       {m.label}
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 28, marginBottom: 8 }}>
-                      {m.scores.map((s, i) => (
-                        s === 0 ? (
-                          <div key={i} style={{
-                            flex: 1, borderRadius: 2, height: 4,
-                            background: 'transparent',
-                            border: '1.5px dashed rgba(28,28,30,0.15)',
-                          }}/>
-                        ) : (
-                          <div key={i} style={{
-                            flex: 1, borderRadius: 2,
-                            background: scoreColor(s),
-                            height: `${(s / maxS) * 100}%`,
-                          }}/>
-                        )
-                      ))}
-                    </div>
-                    <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 24, fontWeight: 700, color: showDash ? '#ccc' : C.nk, lineHeight: 1 }}>
-                      {showDash ? '–' : m.cur}<span style={{ fontSize: 13, color: '#bbb' }}>/100</span>
-                    </div>
-                    <div style={{
-                      fontSize: 11, fontWeight: 500, marginTop: 4,
-                      color: m.trend !== null ? (m.trend >= 0 ? C.ideal : C.focus) : '#ccc',
-                    }}>
-                      {m.trend !== null
-                        ? `${m.trend >= 0 ? '↑' : '↓'} ${m.trend >= 0 ? '+' : ''}${m.trend}%`
-                        : '–'}
-                    </div>
+                    {m.trend !== null && hasData && (
+                      <span style={{
+                        fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 5,
+                        background: `${m.trend >= 0 ? C.ideal : C.focus}12`,
+                        color: m.trend >= 0 ? C.ideal : C.focus,
+                        fontFamily: "'DM Sans', sans-serif",
+                      }}>
+                        {m.trend >= 0 ? '↑' : '↓'} {m.trend >= 0 ? '+' : ''}{m.trend}
+                      </span>
+                    )}
                   </div>
-                );
-              })}
-            </div>
-
-            {/* Scroll arrow overlay */}
-            {showLeftArrow && (
-              <div style={{
-                position: 'absolute', left: 0, top: 0, bottom: 8, width: 48,
-                background: `linear-gradient(to left, transparent, rgba(245,239,230,0.95))`,
-                display: 'flex', alignItems: 'center', justifyContent: 'flex-start',
-                paddingLeft: 8, pointerEvents: 'none',
-              }}>
-                <button onClick={scrollBioLeft} aria-label="Scroll left" style={{
-                  width: 28, height: 28, borderRadius: '50%',
-                  background: '#fff', border: '0.5px solid rgba(28,28,30,0.15)',
-                  boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  cursor: 'pointer', pointerEvents: 'auto',
-                }}>
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                    <path d="M7.5 2L3.5 6L7.5 10" stroke={C.cg} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                </button>
-              </div>
-            )}
-            {showScrollArrow && (
-              <div style={{
-                position: 'absolute', right: 0, top: 0, bottom: 8, width: 48,
-                background: `linear-gradient(to right, transparent, rgba(245,239,230,0.95))`,
-                display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
-                paddingRight: 8, pointerEvents: 'none',
-              }}>
-                <button onClick={scrollBioRight} aria-label="Scroll right" style={{
-                  width: 28, height: 28, borderRadius: '50%',
-                  background: '#fff', border: '0.5px solid rgba(28,28,30,0.15)',
-                  boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  cursor: 'pointer', pointerEvents: 'auto',
-                }}>
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                    <path d="M4.5 2L8.5 6L4.5 10" stroke={C.cg} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                </button>
-              </div>
-            )}
+                  <div style={{
+                    fontFamily: "'DM Mono', monospace", fontSize: 28, fontWeight: 700,
+                    color: hasData ? bandColor : '#ccc', lineHeight: 1, marginBottom: 6,
+                  }}>
+                    {hasData ? cur : '–'}
+                  </div>
+                  {/* Sparkline */}
+                  {hasData && nonZero.length > 1 ? (
+                    <svg width={W} height={H} style={{ display: 'block', width: '100%' }} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
+                      {/* baseline */}
+                      <line x1="0" y1={H - 1} x2={W} y2={H - 1} stroke="rgba(0,0,0,0.04)" strokeWidth="1"/>
+                      {segments.map((seg, i) => (
+                        <polyline key={i} points={seg} fill="none" stroke={bandColor} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+                      ))}
+                      {/* endpoint dot */}
+                      {(() => {
+                        const lastIdx = m.scores.findLastIndex ? m.scores.findLastIndex(s => s > 0) : m.scores.map(s => s > 0).lastIndexOf(true);
+                        if (lastIdx < 0) return null;
+                        return <circle cx={xFor(lastIdx)} cy={yFor(m.scores[lastIdx])} r="2.5" fill={bandColor}/>;
+                      })()}
+                    </svg>
+                  ) : (
+                    <div style={{ height: H, display: 'flex', alignItems: 'center', fontSize: 10, color: '#ccc', fontStyle: 'italic' }}>
+                      {nonZero.length === 1 ? 'Need more rides for trend' : 'No data yet'}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
 

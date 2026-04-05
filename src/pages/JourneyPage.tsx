@@ -155,11 +155,42 @@ const card = (extra: React.CSSProperties = {}): React.CSSProperties => ({
 });
 
 // ════════════════════════════════════════════════════════════════════════════
+// Infer a USDF level from a rider's overall biomechanics scores.
+// This is a BETA heuristic — we use it when the rider hasn't set a level
+// manually. Thresholds are intentionally generous on the low end: a new
+// rider needs encouraging placement, not perfection.
+function inferLevelFromRides(rides: Array<{ overallScore: number }>): {
+  level: string;
+  confidence: 'low' | 'medium' | 'high';
+} {
+  if (rides.length === 0) return { level: 'intro', confidence: 'low' };
+  // Use the latest 3 rides (or all if fewer) for recency
+  const recent = rides.slice(-3);
+  const avg = Math.round(
+    (recent.reduce((a, r) => a + r.overallScore, 0) / recent.length) * 100
+  );
+  const confidence = recent.length >= 3 ? 'medium' : 'low';
+  if (avg >= 85) return { level: 'third', confidence };
+  if (avg >= 75) return { level: 'second', confidence };
+  if (avg >= 65) return { level: 'first', confidence };
+  if (avg >= 50) return { level: 'training', confidence };
+  return { level: 'intro', confidence };
+}
+
 export default function JourneyPage() {
   const profile = getUserProfile();
   const [selectedDiscipline, setSelectedDiscipline] = useState(profile.discipline ?? 'usdf-dressage');
   const [showDisciplineSelector, setShowDisciplineSelector] = useState(false);
-  const [selectedLevel, setSelectedLevel] = useState('intro');
+
+  // Seed the level from profile if set, else infer from ride data (beta)
+  const _seedRides = getRides().sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  const _profileLevel = (profile.level || '').toLowerCase();
+  const _knownLevels = ['intro', 'training', 'first', 'second', 'third', 'fourth'];
+  const _inferred = inferLevelFromRides(_seedRides);
+  const _initialLevel = _knownLevels.includes(_profileLevel) ? _profileLevel : _inferred.level;
+  const [levelWasInferred] = useState(() => !_knownLevels.includes(_profileLevel) && _seedRides.length > 0);
+
+  const [selectedLevel, setSelectedLevel] = useState(_initialLevel);
   const [selectedTest, setSelectedTest] = useState('A');
   const [expandedMvt, setExpandedMvt] = useState(0);
   const [showPurpose, setShowPurpose] = useState(false);
@@ -213,8 +244,22 @@ export default function JourneyPage() {
             <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: C.ch, fontFamily: "'DM Sans', sans-serif" }}>
               Your Journey
             </div>
-            <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 16, fontWeight: 600, color: C.nk, marginTop: 2 }}>
+            <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 16, fontWeight: 600, color: C.nk, marginTop: 2, display: 'flex', alignItems: 'center', gap: 8 }}>
               {levelInfo?.levelName ?? 'Intro Level'} · Test {selectedTest}
+              {levelWasInferred && (
+                <span
+                  title="Level inferred from your biomechanics scores. Set your level in Profile for better accuracy."
+                  style={{
+                    fontSize: 8, fontWeight: 700, letterSpacing: '0.08em',
+                    color: C.cg, background: 'rgba(193,127,74,0.1)',
+                    padding: '2px 6px', borderRadius: 4,
+                    fontFamily: "'DM Sans', sans-serif",
+                    textTransform: 'uppercase', cursor: 'help',
+                  }}
+                >
+                  Inferred · Beta
+                </span>
+              )}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
               <span style={{
