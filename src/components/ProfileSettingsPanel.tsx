@@ -462,9 +462,23 @@ export default function ProfileSettingsPanel({ open, onClose }: ProfileSettingsP
             <div style={{ fontFamily: FONTS.mono, fontSize: '11px', color: COLORS.muted, marginBottom: '6px' }}>
               Horsera MVP 0.1
             </div>
-            <div style={{ fontFamily: FONTS.body, fontSize: '12px', color: '#6B5E50' }}>
-              Made with ♞ for riders
+            <div style={{ fontFamily: FONTS.body, fontSize: '13px', color: '#6B5E50', marginBottom: '8px' }}>
+              Made with 💖 from riders, for riders.
             </div>
+            <a
+              href="mailto:contact@horsera.ai"
+              style={{
+                fontFamily: FONTS.body, fontSize: '12px',
+                color: COLORS.cognac, textDecoration: 'none',
+                display: 'inline-flex', alignItems: 'center', gap: '5px',
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" strokeWidth="1.6"/>
+                <path d="M3 7l9 6 9-6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              contact@horsera.ai
+            </a>
           </div>
         </div>
       </div>

@@ -517,7 +517,8 @@ function RideDetailView({
   const effectiveBio = bio || MOCK_DETAIL_BIO;
 
   const qualities = computeRidingQualities(effectiveBio);
-  const d = new Date(ride.date);
+  const [y, mo, day] = ride.date.split('-').map(Number);
+  const d = new Date(y, mo - 1, day);
   const dateStr = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
 
   const overallRaw = storedRide?.overallScore
@@ -853,6 +854,14 @@ export default function RidesPage() {
   const [selectedStoredRide, setSelectedStoredRide] = useState<StoredRide | undefined>(undefined);
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'score'>('newest');
   const [storedRides, setStoredRides] = useState<StoredRide[]>(getRides);
+  const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(new Set());
+  const toggleMonth = (key: string) => {
+    setCollapsedMonths(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
 
   // Refresh stored rides on mount
   useEffect(() => {
@@ -879,7 +888,7 @@ export default function RidesPage() {
     setHorseFactIdx(0);
     const interval = setInterval(() => {
       setHorseFactIdx(i => (i + 1) % 3);
-    }, 4000);
+    }, 9000);
     return () => clearInterval(interval);
   }, [isAnalyzing]);
 
@@ -1052,8 +1061,8 @@ export default function RidesPage() {
   const sortedRides = useMemo(() => {
     const sorted = [...allRides];
     if (sortBy === 'score') sorted.sort((a, b) => (b.biometrics?.upperBodyAlignment ?? 0) - (a.biometrics?.upperBodyAlignment ?? 0));
-    else if (sortBy === 'oldest') sorted.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-    else sorted.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    else if (sortBy === 'oldest') sorted.sort((a, b) => a.date.localeCompare(b.date));
+    else sorted.sort((a, b) => b.date.localeCompare(a.date));
     return sorted;
   }, [allRides, sortBy]);
 
@@ -1068,6 +1077,16 @@ export default function RidesPage() {
     acc[key].push(ride);
     return acc;
   }, {} as Record<string, Ride[]>);
+
+  // On first render with data, collapse all months except the newest
+  const monthsInitialized = useRef(false);
+  useEffect(() => {
+    if (monthsInitialized.current) return;
+    const months = Object.keys(grouped);
+    if (months.length === 0) return;
+    setCollapsedMonths(new Set(months.slice(1)));
+    monthsInitialized.current = true;
+  }, [grouped]);
 
   const monthCount = Object.keys(grouped).length;
 
@@ -1154,7 +1173,7 @@ export default function RidesPage() {
           ) : (
             <>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
-                <div style={{ fontFamily: FONTS.heading, fontSize: '18px', color: COLORS.charcoal }}>Log a Ride</div>
+                <div style={{ fontFamily: FONTS.heading, fontSize: '18px', color: COLORS.charcoal }}>Add a Ride</div>
                 <button onClick={() => setShowLogForm(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: COLORS.muted, fontSize: '20px' }}>×</button>
               </div>
 
@@ -1673,17 +1692,26 @@ export default function RidesPage() {
             {/* Divider */}
             <div style={{ height: 1, background: 'rgba(255,255,255,0.1)', alignSelf: 'stretch', margin: '28px 0' }} />
 
-            {/* Fun facts */}
+            {/* Fun facts — meant to be a playful, readable moment during processing */}
             {horseFacts.length > 0 && (
-              <div style={{ textAlign: 'center' }}>
+              <div style={{ textAlign: 'center', maxWidth: 320, margin: '0 auto' }}>
                 <div style={{
-                  fontSize: '9px', fontWeight: 600, letterSpacing: '0.2em',
-                  textTransform: 'uppercase', color: '#C17F4A', marginBottom: 12,
-                }}>· DID YOU KNOW ·</div>
+                  display: 'inline-flex', alignItems: 'center', gap: 8,
+                  marginBottom: 14,
+                }}>
+                  <span style={{ fontSize: 16, opacity: 0.85 }}>✦</span>
+                  <span style={{
+                    fontSize: '10px', fontWeight: 600, letterSpacing: '0.22em',
+                    textTransform: 'uppercase', color: '#C17F4A',
+                    fontFamily: FONTS.body,
+                  }}>A Horse Fact</span>
+                  <span style={{ fontSize: 16, opacity: 0.85 }}>✦</span>
+                </div>
                 <div key={horseFactIdx} style={{
-                  fontFamily: FONTS.body, fontSize: '14px',
-                  color: 'rgba(255,255,255,0.72)', lineHeight: 1.7,
-                  maxWidth: 300, animation: 'fadeIn 0.6s ease',
+                  fontFamily: "'Playfair Display', serif", fontStyle: 'italic',
+                  fontSize: '18px', fontWeight: 400,
+                  color: 'rgba(255,255,255,0.88)', lineHeight: 1.55,
+                  animation: 'fadeIn 0.8s ease',
                 }}>
                   {horseFacts[horseFactIdx]}
                 </div>
@@ -1721,17 +1749,65 @@ export default function RidesPage() {
           </div>
         )}
 
-                {Object.entries(grouped).map(([month, rides], groupIdx) => (
+                {Object.entries(grouped).map(([month, rides], groupIdx) => {
+          const isCollapsed = collapsedMonths.has(month);
+          // Compute avg score from storedRides that belong to this group
+          const scores = rides
+            .map(r => storedRides.find(s => s.id === r.id)?.overallScore)
+            .filter((s): s is number => typeof s === 'number');
+          const avgScore = scores.length > 0
+            ? Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 100)
+            : null;
+          return (
           <div key={month}>
-            <div style={{
-              fontSize: '11px', fontWeight: 600, letterSpacing: '0.12em',
-              textTransform: 'uppercase', color: 'rgba(28,28,30,0.45)',
-              fontFamily: FONTS.body, marginBottom: '8px',
-              marginTop: groupIdx === 0 ? '8px' : '24px',
-            }}>
-              {month}
-              <span style={{ opacity: 0.6 }}>  · {rides.length} ride{rides.length !== 1 ? 's' : ''}</span>
-            </div>
+            <button
+              onClick={() => toggleMonth(month)}
+              aria-expanded={!isCollapsed}
+              aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${month}`}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                width: '100%', padding: '10px 12px', marginBottom: isCollapsed ? '8px' : '8px',
+                marginTop: groupIdx === 0 ? '8px' : '16px',
+                background: isCollapsed ? 'rgba(255,255,255,0.6)' : 'transparent',
+                border: 'none', borderRadius: '10px', cursor: 'pointer',
+                textAlign: 'left', WebkitTapHighlightColor: 'transparent',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <svg
+                  width="10" height="10" viewBox="0 0 12 12" fill="none"
+                  style={{
+                    transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+                    transition: 'transform 0.18s ease',
+                    color: 'rgba(28,28,30,0.55)',
+                  }}
+                >
+                  <path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                <span style={{
+                  fontSize: '11px', fontWeight: 600, letterSpacing: '0.12em',
+                  textTransform: 'uppercase', color: 'rgba(28,28,30,0.55)',
+                  fontFamily: FONTS.body,
+                }}>
+                  {month}
+                </span>
+                <span style={{
+                  fontSize: '11px', color: 'rgba(28,28,30,0.4)',
+                  fontFamily: FONTS.body,
+                }}>
+                  · {rides.length} ride{rides.length !== 1 ? 's' : ''}
+                </span>
+              </div>
+              {avgScore !== null && (
+                <span style={{
+                  fontSize: '11px', fontWeight: 600, color: COLORS.cognac,
+                  fontFamily: FONTS.body,
+                }}>
+                  avg {avgScore}
+                </span>
+              )}
+            </button>
+            {!isCollapsed && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' }}>
               {rides.map((ride, i) => {
                 const isStored = ride.id.startsWith('stored-');
@@ -1756,8 +1832,10 @@ export default function RidesPage() {
                 );
               })}
             </div>
+            )}
           </div>
-        ))}
+        );
+        })}
       </div>
 
       {/* ── CSS Keyframes ────────────────────────────────────── */}
@@ -1826,14 +1904,14 @@ export default function RidesPage() {
               letterSpacing: '0.04em',
               whiteSpace: 'nowrap',
             }}>
-              Log a ride
+              Add a ride
             </span>
           </div>
 
           {/* FAB button */}
           <button
             onClick={() => setShowLogForm(true)}
-            aria-label="Log a ride"
+            aria-label="Add a ride"
             style={{
               width: '52px',
               height: '52px',
@@ -2001,7 +2079,8 @@ function SwipeRideRow({ ride, storedRide, trendDelta, onNavigate, onDelete }: {
   const startXRef = useRef(0);
   const DELETE_THRESHOLD = 80;
 
-  const d = new Date(ride.date);
+  const [y, mo, day] = ride.date.split('-').map(Number);
+  const d = new Date(y, mo - 1, day);
   const dateStr = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
   const score = storedRide ? Math.round(storedRide.overallScore * 100) : null;
 
@@ -2060,13 +2139,19 @@ function SwipeRideRow({ ride, storedRide, trendDelta, onNavigate, onDelete }: {
           </span>
           <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
             {(storedRide?.videoUrl || ride.videoUploaded) && (
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" style={{ opacity: 0.35 }}>
-                <rect x="3" y="4" width="18" height="16" rx="3" stroke="currentColor" strokeWidth="1.5"/>
-                <path d="M10 8.5V15.5L16 12L10 8.5Z" fill="currentColor"/>
-              </svg>
-            )}
-            {storedRide?.insights && storedRide.insights.length > 0 && (
-              <span style={{ fontSize: 9, background: `${RC.ch}20`, color: RC.ch, padding: '2px 6px', borderRadius: 6, fontFamily: "'DM Mono', monospace", fontWeight: 600 }}>AI</span>
+              <span aria-label="Video available" title="Video available" style={{
+                display: 'inline-flex', alignItems: 'center', gap: 3,
+                fontSize: 9, background: `${RC.cg}15`, color: RC.cg,
+                padding: '3px 7px', borderRadius: 6,
+                fontFamily: "'DM Sans', sans-serif", fontWeight: 600,
+                letterSpacing: '0.04em',
+              }}>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none">
+                  <rect x="3" y="4" width="18" height="16" rx="3" stroke="currentColor" strokeWidth="2"/>
+                  <path d="M10 8.5V15.5L16 12L10 8.5Z" fill="currentColor"/>
+                </svg>
+                VIDEO
+              </span>
             )}
           </div>
         </div>
