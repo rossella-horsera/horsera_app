@@ -208,41 +208,24 @@ export function usePoseAPI(): {
         }
       } catch { /* non-fatal — proceed to Railway upload regardless */ }
 
-      // ── 2. Compress video (0→10%) ─────────────────────────────────────────────
-      let uploadBlob: Blob = file;
-      let uploadFilename   = file.name;
-
-      if (file.size >= COMPRESS_THRESHOLD_BYTES) {
-        setStatus('compressing');
-        setProgress(0);
-        const t0 = performance.now();
-        try {
-          const { blob, filename } = await compressVideo(file, (videoPct) => {
-            // Compression owns 0→10% of the overall progress band
-            setProgress(Math.round(videoPct / 10));
-          });
-          uploadBlob     = blob;
-          uploadFilename = filename;
-          const elapsedS = ((performance.now() - t0) / 1000).toFixed(1);
-          const srcMB = (file.size / 1024 ** 2).toFixed(1);
-          const outMB = (blob.size / 1024 ** 2).toFixed(1);
-          const ratio = (file.size / blob.size).toFixed(1);
-          console.info(
-            `[Horsera] Compressed ${srcMB} MB → ${outMB} MB (${ratio}× smaller) ` +
-            `in ${elapsedS}s → ${filename}`
-          );
-        } catch (compressErr) {
-          // Non-fatal — fall back to the original file
-          console.warn('[Horsera] Compression skipped (falling back to original):', compressErr);
-          uploadBlob     = file;
-          uploadFilename = file.name;
-        }
-      }
+      // ── 2. Upload directly — no client-side compression ────────────────────────
+      // Server-side pipeline handles transcode + analysis in one pass.
+      // Client compression was a real-time bottleneck (10-min video = 10-min wait).
+      // Phase 1: upload original, let Cloud Run GPU decode.
+      const uploadBlob: Blob = file;
+      const uploadFilename   = file.name;
+      const _benchStart = performance.now();
+      const _bench = (label: string) => {
+        const elapsed = ((performance.now() - _benchStart) / 1000).toFixed(1);
+        console.info(`[Horsera bench] ${elapsed}s — ${label}`);
+      };
+      _bench(`start: ${(file.size / 1024 ** 2).toFixed(1)} MB, ${file.type}`);
 
       setProgress(10);
 
       // ── 3. Signed upload flow (URL request + direct storage upload) ───────────
       setStatus('extracting');
+      _bench('upload: requesting signed URL');
 
       const uploadViaLegacyEndpoint = async (): Promise<string> => {
         return await new Promise<string>((resolve, reject) => {
@@ -299,12 +282,15 @@ export function usePoseAPI(): {
           throw new Error('Invalid signed upload response from Pose API');
         }
 
+        _bench('upload: signed URL received — starting GCS upload');
         await new Promise<void>((resolve, reject) => {
           const xhr = new XMLHttpRequest();
-          xhr.timeout = 10 * 60 * 1000; // 10 min hard limit
+          xhr.timeout = 30 * 60 * 1000; // 30 min hard limit (large originals)
           xhr.upload.onprogress = (e) => {
             if (e.lengthComputable) {
-              setProgress(10 + Math.round((e.loaded / e.total) * 8));
+              const pct = e.loaded / e.total;
+              setProgress(10 + Math.round(pct * 8));
+              if (pct === 1) _bench(`upload: GCS upload complete (${(e.total / 1024 ** 2).toFixed(1)} MB sent)`);
             }
           };
           xhr.onload = () => {
@@ -312,7 +298,7 @@ export function usePoseAPI(): {
             else reject(new Error(`Upload failed ${xhr.status}: ${xhr.responseText || xhr.statusText}`));
           };
           xhr.onerror = () => reject(new Error('Network error while uploading video to storage'));
-          xhr.ontimeout = () => reject(new Error('Upload timed out after 10 minutes — try a shorter or smaller clip'));
+          xhr.ontimeout = () => reject(new Error('Upload timed out — try a smaller clip or better network'));
           xhr.open('PUT', signedUpload.upload_url);
           if (signedUpload.required_headers) {
             Object.entries(signedUpload.required_headers).forEach(([k, v]) => xhr.setRequestHeader(k, v));
@@ -322,6 +308,7 @@ export function usePoseAPI(): {
           xhr.send(uploadBlob);
         });
 
+        _bench('analyze: submitting job');
         const analyzeRes = await fetch(`${POSE_API}/analyze/video/object`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -362,6 +349,7 @@ export function usePoseAPI(): {
       }
 
       // ── 4. Poll for results (20→95%) ──────────────────────────────────────────
+      _bench('poll: starting — job_id=' + job_id);
       setStatus('processing');
       let attempts = 0;
 
@@ -389,6 +377,7 @@ export function usePoseAPI(): {
 
           if (job.status === 'complete') {
             clearInterval(pollRef.current!);
+            _bench(`DONE: analysis complete after ${attempts} polls`);
             const r = job.result;
 
             // Update ride_sessions with scores (video_url added on Save Ride)
