@@ -1733,31 +1733,18 @@ export default function RidesPage() {
             <div style={{
               position: 'absolute', bottom: 20, left: 20, right: 20,
             }}>
-              {/* Cadence AI badge */}
-              <div style={{
-                display: 'inline-flex', alignItems: 'center', gap: 6,
-                background: 'rgba(201,169,110,0.18)',
-                border: '1px solid rgba(201,169,110,0.35)',
-                borderRadius: '20px', padding: '4px 11px',
-                marginBottom: '10px',
-              }}>
-                <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'radial-gradient(circle at 38% 38%, #F0D888, #C9A96E)', boxShadow: '0 0 5px rgba(201,169,110,0.6)' }} />
-                <span style={{ fontSize: '10px', color: 'rgba(240,216,136,0.92)', fontFamily: FONTS.mono, letterSpacing: '0.07em' }}>
-                  cadence
-                </span>
-              </div>
               <div style={{
                 fontFamily: FONTS.heading, fontSize: '24px', color: COLORS.parchment,
-                marginBottom: '6px', lineHeight: 1.15,
+                marginBottom: '8px', lineHeight: 1.15,
                 textShadow: '0 2px 8px rgba(0,0,0,0.4)',
               }}>
                 Every ride, a step forward.
               </div>
               <div style={{
-                fontFamily: FONTS.body, fontSize: '12px', color: 'rgba(250,247,243,0.72)',
-                lineHeight: 1.5, marginBottom: '16px', maxWidth: 240,
+                fontFamily: FONTS.body, fontSize: '12px', color: 'rgba(250,247,243,0.82)',
+                lineHeight: 1.55, marginBottom: '16px', maxWidth: 280,
               }}>
-                Cadence reads your position, balance & biomechanics — every ride.
+                Upload your ride and Cadence, your AI riding advisor, will read your position, balance and biomechanics.
               </div>
               <div style={{
                 display: 'inline-flex', alignItems: 'center', gap: 8,

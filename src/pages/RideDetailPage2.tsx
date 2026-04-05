@@ -58,9 +58,13 @@ function ScoreRing({ score, size = 52 }: { score: number; size?: number }) {
         strokeLinecap="round"
         transform="rotate(-90 50 50)"
       />
-      <text x="50" y="58" textAnchor="middle" dominantBaseline="middle" fill={color}
+      <text x="50" y="48" textAnchor="middle" dominantBaseline="middle" fill={color}
         style={{ fontFamily: "'DM Mono', monospace", fontWeight: 700 }}>
-        <tspan style={{ fontSize: '30px' }}>{score}</tspan>
+        <tspan style={{ fontSize: '28px' }}>{score}</tspan>
+      </text>
+      <text x="50" y="70" textAnchor="middle" dominantBaseline="middle"
+        style={{ fontFamily: "'DM Mono', monospace", fontSize: '9px', fill: 'rgba(28,28,30,0.3)' }}>
+        /100
       </text>
     </svg>
   );
@@ -572,73 +576,6 @@ export default function RideDetailPage2() {
         onChange={() => forceUpdate(n => n + 1)}
       />
 
-      {/* ── S4: CADENCE INSIGHT ── */}
-      <div style={{ padding: '12px 18px' }}>
-        <div style={{
-          ...card(), borderLeft: `3px solid ${C.cg}`, display: 'flex', flexDirection: 'column', gap: 12,
-        }}>
-          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-            <div style={{
-              width: 8, height: 8, borderRadius: '50%', background: C.cg, marginTop: 4, flexShrink: 0,
-              animation: 'pulse 2s infinite',
-            }} />
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 11, fontWeight: 500, color: C.cg, fontFamily: "'Inter', sans-serif", marginBottom: 4 }}>
-                Cadence
-              </div>
-              <div style={{ fontSize: 13, color: C.na, fontFamily: "'Playfair Display', serif", fontStyle: 'italic', lineHeight: 1.5 }}>
-                {ride.insights?.[0] || "Upload a video to unlock Cadence's analysis."}
-              </div>
-            </div>
-          </div>
-          {ride.insights?.[0] && (
-            <div style={{
-              borderTop: '1px solid rgba(0,0,0,0.06)', paddingTop: 12,
-              display: 'flex', flexDirection: 'column', gap: 8,
-            }}>
-              {/* Primary CTA — uses the same Cadence icon as the omnipresent FAB */}
-              <button
-                onClick={openCadence}
-                style={{
-                  width: '100%', padding: '10px 14px', borderRadius: 10,
-                  background: C.cg, border: 'none', color: '#fff',
-                  fontFamily: "'DM Sans', sans-serif", fontWeight: 600, fontSize: 13,
-                  cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                  WebkitTapHighlightColor: 'transparent',
-                  boxShadow: '0 2px 8px rgba(193,127,74,0.2)',
-                }}
-              >
-                <CadenceIcon size={16} animated={false} />
-                Ask Cadence about this ride
-              </button>
-              {/* Suggested prompts — compact, inline row, subordinate */}
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {[
-                  `Why is my ${worstZone.label.toLowerCase()} at ${worstZone.score}?`,
-                  `How do I improve?`,
-                ].map((q, i) => (
-                  <button
-                    key={i}
-                    onClick={openCadence}
-                    style={{
-                      fontSize: 11, padding: '5px 10px', borderRadius: 14,
-                      background: 'transparent', border: `1px solid rgba(0,0,0,0.08)`,
-                      color: 'rgba(0,0,0,0.55)',
-                      fontFamily: "'DM Sans', sans-serif", fontWeight: 400,
-                      cursor: 'pointer', textAlign: 'left',
-                      WebkitTapHighlightColor: 'transparent',
-                    }}
-                  >
-                    {q}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
       {/* ── S5: POSITION SCORES (6 metrics, 3-col grid) ── */}
       <div style={{ paddingTop: 12 }}>
         <SectionHeader title="Your Position" subtitle="Movement & Biomechanics" />
@@ -683,31 +620,67 @@ export default function RideDetailPage2() {
         </div>
       )}
 
-      {/* ── S7: CADENCE DEBRIEF ── */}
+      {/* ── S7: CADENCE DEBRIEF — animated glossy border for AI dynamism ── */}
       <div style={{ padding: '0 18px', marginBottom: 24 }}>
-        <div style={{ ...card({ background: C.na, padding: 20 }) }}>
-          <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
-            <div style={{
-              width: 48, height: 48, borderRadius: '50%', background: C.cg, flexShrink: 0,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
-              <span style={{ fontFamily: "'Playfair Display', serif", fontStyle: 'italic', fontSize: 22, color: '#fff' }}>C</span>
+        <div className="cadence-aura" style={{
+          position: 'relative', borderRadius: 18, padding: 1.5,
+          background: `conic-gradient(from var(--aura-angle,0deg), ${C.cg}, ${C.ch}, ${C.cg}66, ${C.cg})`,
+        }}>
+          <div style={{
+            background: C.na, borderRadius: 16.5, padding: 20,
+            position: 'relative', overflow: 'hidden',
+          }}>
+            <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+              <div style={{
+                width: 44, height: 44, borderRadius: '50%', background: C.cg, flexShrink: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 0 0 2px rgba(212,175,118,0.25)',
+              }}>
+                <span style={{ fontFamily: "'Playfair Display', serif", fontStyle: 'italic', fontSize: 22, color: '#fff' }}>C</span>
+              </div>
+              <div style={{ flex: 1, fontFamily: "'Playfair Display', serif", fontStyle: 'italic', fontSize: 14, color: C.ch, lineHeight: 1.6 }}>
+                Today's ride showed strength in your {bestZone.label.toLowerCase()} — your strongest zone at {bestZone.score}/100.
+                Focus on {worstZone.label.toLowerCase()} in your next session to unlock improvements across all the scales.
+              </div>
             </div>
-            <div style={{ fontFamily: "'Playfair Display', serif", fontStyle: 'italic', fontSize: 13.5, color: C.ch, lineHeight: 1.6 }}>
-              Today's ride showed strength in your {bestZone.label.toLowerCase()} — your strongest zone at {bestZone.score}%.
-              Focus on the {worstZone.label.toLowerCase()} in your next session to unlock improvements across all the scales.
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
+              <button
+                onClick={openCadence}
+                style={{
+                  width: '100%', padding: '10px 14px', borderRadius: 10,
+                  background: C.cg, border: 'none', color: '#fff',
+                  fontFamily: "'DM Sans', sans-serif", fontWeight: 600, fontSize: 13,
+                  cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                  WebkitTapHighlightColor: 'transparent',
+                  boxShadow: '0 2px 12px rgba(193,127,74,0.35)',
+                }}
+              >
+                <CadenceIcon size={16} animated={false} />
+                Ask Cadence about this ride
+              </button>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {[
+                  `Why is my ${worstZone.label.toLowerCase()} at ${worstZone.score}?`,
+                  `How do I improve?`,
+                ].map((q, i) => (
+                  <button
+                    key={i}
+                    onClick={openCadence}
+                    style={{
+                      fontSize: 11, padding: '5px 10px', borderRadius: 14,
+                      background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(212,175,118,0.25)',
+                      color: 'rgba(212,175,118,0.85)',
+                      fontFamily: "'DM Sans', sans-serif", fontWeight: 400,
+                      cursor: 'pointer', textAlign: 'left',
+                      WebkitTapHighlightColor: 'transparent',
+                    }}
+                  >
+                    {q}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 10, padding: '4px 10px', borderRadius: 20, background: `${C.ideal}22`, color: C.ideal, fontFamily: "'DM Sans', sans-serif", fontWeight: 600 }}>
-              {bestZone.label} {bestZone.score}%
-            </span>
-            <span style={{ fontSize: 10, padding: '4px 10px', borderRadius: 20, background: `${scoreColor(displayScore)}22`, color: scoreColor(displayScore), fontFamily: "'DM Sans', sans-serif", fontWeight: 600 }}>
-              Overall {displayScore}
-            </span>
-            <span style={{ fontSize: 10, padding: '4px 10px', borderRadius: 20, background: `${C.focus}22`, color: C.focus, fontFamily: "'DM Sans', sans-serif", fontWeight: 600 }}>
-              {worstZone.label} {worstZone.score}%
-            </span>
           </div>
         </div>
       </div>
@@ -908,6 +881,17 @@ export default function RideDetailPage2() {
 
       {/* Animations */}
       <style>{`
+        @property --aura-angle {
+          syntax: '<angle>';
+          inherits: false;
+          initial-value: 0deg;
+        }
+        @keyframes aura-rotate {
+          to { --aura-angle: 360deg; }
+        }
+        .cadence-aura {
+          animation: aura-rotate 6s linear infinite;
+        }
         @keyframes pulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.4; }

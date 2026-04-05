@@ -155,25 +155,26 @@ const card = (extra: React.CSSProperties = {}): React.CSSProperties => ({
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// Infer a USDF level from a rider's overall biomechanics scores.
-// This is a BETA heuristic — we use it when the rider hasn't set a level
-// manually. Thresholds are intentionally generous on the low end: a new
-// rider needs encouraging placement, not perfection.
+// Infer the rider's "current working level" — the highest level they're
+// actively developing toward. Uses the last 3 rides' avg overall score.
+// This is the level NOT yet mastered, which is what Journey should focus on.
 function inferLevelFromRides(rides: Array<{ overallScore: number }>): {
   level: string;
   confidence: 'low' | 'medium' | 'high';
 } {
   if (rides.length === 0) return { level: 'intro', confidence: 'low' };
-  // Use the latest 3 rides (or all if fewer) for recency
   const recent = rides.slice(-3);
   const avg = Math.round(
     (recent.reduce((a, r) => a + r.overallScore, 0) / recent.length) * 100
   );
   const confidence = recent.length >= 3 ? 'medium' : 'low';
-  if (avg >= 85) return { level: 'third', confidence };
-  if (avg >= 75) return { level: 'second', confidence };
-  if (avg >= 65) return { level: 'first', confidence };
-  if (avg >= 50) return { level: 'training', confidence };
+  // Next-unmastered logic: a level is "mastered" if scores are high enough to
+  // move past it. We return the level the rider is currently working AT.
+  if (avg >= 90) return { level: 'fourth', confidence };
+  if (avg >= 80) return { level: 'third', confidence };
+  if (avg >= 70) return { level: 'second', confidence };
+  if (avg >= 60) return { level: 'first', confidence };
+  if (avg >= 45) return { level: 'training', confidence };
   return { level: 'intro', confidence };
 }
 

@@ -38,7 +38,13 @@ A living list of known work-items that haven't been scheduled yet. Grouped by th
 
 ---
 
-## 🎨 UI/UX polish (queued from 2026-04-05 session)
+## 🎨 UI/UX polish (queued from 2026-04-05 session, end)
+
+- [P1] [Beau+Lauren] **In-place ride expansion** instead of routing to `/rides/:id`. Click a ride card → expands inline in the history list. Needs a refactor: RideDetailPage2 content → reusable component; overlay modal vs inline accordion vs bottom-sheet decision with Lauren.
+- [P1] [Beau+Lauren] **Score chart hover/click** on Progress page line chart. Click dot → go to that ride. Hover → show date + score + key metric at that point.
+- [P1] [Ross+Monty] **Per-level movement data model.** Journey currently shows Intro Test A's 9 movements for all levels. Should show each level's own movements (Training Level has different movement set, First Level different, etc). Need Monty to author movement lists per level × test. Until then Journey shows "Coming soon" for non-Intro-A tests.
+
+## 🎨 UI/UX polish (earlier queue)
 
 - [P1] [Beau] Investigate flash/old-screen during video load if still occurring after 2026-04-05 cleanup commit
 - [P1] [Lauren+Beau] Annotated-fullscreen-with-skeleton toggle for video player (native FS currently doesn't carry the skeleton canvas)
