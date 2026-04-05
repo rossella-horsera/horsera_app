@@ -86,13 +86,155 @@ const card = (extra: React.CSSProperties = {}): React.CSSProperties => ({
   ...extra,
 });
 
+/* ── Notes editor — inline editable name/notes ────────────────────── */
+function RideNotesEditor({ ride, onChange }: { ride: StoredRide; onChange: () => void }) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [name, setName] = useState(ride.name || '');
+  const [notes, setNotes] = useState(ride.notes || '');
+
+  const hasContent = !!(ride.name || ride.notes);
+
+  const save = () => {
+    updateRide(ride.id, {
+      name: name.trim() || undefined,
+      notes: notes.trim() || undefined,
+    });
+    setIsEditing(false);
+    onChange();
+  };
+
+  const cancel = () => {
+    setName(ride.name || '');
+    setNotes(ride.notes || '');
+    setIsEditing(false);
+  };
+
+  if (isEditing) {
+    return (
+      <div style={{ padding: '12px 18px 0' }}>
+        <div style={{
+          background: '#fff', borderRadius: 12, padding: 14,
+          border: '1px solid rgba(0,0,0,0.08)',
+          display: 'flex', flexDirection: 'column', gap: 10,
+        }}>
+          <input
+            type="text"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder="Name this ride (optional)"
+            maxLength={60}
+            autoFocus
+            style={{
+              width: '100%', padding: '8px 10px', borderRadius: 8,
+              border: '1px solid rgba(0,0,0,0.1)', fontSize: 14,
+              fontFamily: "'DM Sans', sans-serif", color: '#1C1C1E',
+              background: '#FAF7F3', outline: 'none', boxSizing: 'border-box',
+            }}
+          />
+          <textarea
+            value={notes}
+            onChange={e => setNotes(e.target.value)}
+            placeholder="How did it feel? What did you work on?"
+            rows={3}
+            maxLength={500}
+            style={{
+              width: '100%', padding: '8px 10px', borderRadius: 8,
+              border: '1px solid rgba(0,0,0,0.1)', fontSize: 13,
+              fontFamily: "'DM Sans', sans-serif", color: '#1C1C1E', lineHeight: 1.5,
+              background: '#FAF7F3', outline: 'none', boxSizing: 'border-box',
+              resize: 'vertical',
+            }}
+          />
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button
+              onClick={cancel}
+              style={{
+                background: 'transparent', border: '1px solid rgba(0,0,0,0.1)',
+                borderRadius: 8, padding: '6px 14px', cursor: 'pointer',
+                fontSize: 12, fontWeight: 500, color: 'rgba(0,0,0,0.55)',
+                fontFamily: "'DM Sans', sans-serif",
+              }}
+            >Cancel</button>
+            <button
+              onClick={save}
+              style={{
+                background: '#C17F4A', border: 'none',
+                borderRadius: 8, padding: '6px 14px', cursor: 'pointer',
+                fontSize: 12, fontWeight: 600, color: '#fff',
+                fontFamily: "'DM Sans', sans-serif",
+              }}
+            >Save</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!hasContent) {
+    return (
+      <div style={{ padding: '12px 18px 0' }}>
+        <button
+          onClick={() => setIsEditing(true)}
+          style={{
+            background: 'transparent', border: '1.5px dashed rgba(0,0,0,0.12)',
+            borderRadius: 10, padding: '10px 14px', cursor: 'pointer',
+            fontSize: 12, color: 'rgba(0,0,0,0.45)',
+            fontFamily: "'DM Sans', sans-serif",
+            width: '100%', textAlign: 'left',
+            display: 'flex', alignItems: 'center', gap: 6,
+          }}
+        >
+          <span style={{ fontSize: 14, lineHeight: 1 }}>+</span>
+          Add a name or note to this ride
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: '12px 18px 0' }}>
+      <div
+        onClick={() => setIsEditing(true)}
+        style={{
+          background: 'rgba(255,255,255,0.6)',
+          borderLeft: '2px solid rgba(28,28,30,0.15)',
+          padding: '10px 14px', borderRadius: '0 10px 10px 0',
+          cursor: 'pointer', position: 'relative',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+          <div style={{
+            fontSize: 10, fontWeight: 600, letterSpacing: '0.1em',
+            textTransform: 'uppercase', color: 'rgba(28,28,30,0.4)',
+            fontFamily: "'DM Sans', sans-serif",
+          }}>Your notes</div>
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style={{ opacity: 0.35 }}>
+            <path d="M8.5 1.5l2 2-7 7H1.5v-2l7-7z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </div>
+        {ride.name && (
+          <div style={{
+            fontSize: 14, fontWeight: 600, color: '#1C1C1E',
+            fontFamily: "'DM Sans', sans-serif", marginBottom: 4,
+          }}>{ride.name}</div>
+        )}
+        {ride.notes && (
+          <div style={{
+            fontSize: 13, color: '#1C1C1E', lineHeight: 1.5,
+            fontFamily: "'DM Sans', sans-serif", whiteSpace: 'pre-wrap',
+          }}>{ride.notes}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ════════════════════════════════════════════════════════════════════ */
 
 export default function RideDetailPage2() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { openCadence } = useCadence();
-  const [editingDate, setEditingDate] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [selectedMoment, setSelectedMoment] = useState<null | 'best' | 'focus'>(null);
@@ -100,6 +242,7 @@ export default function RideDetailPage2() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const emptyFileInputRef = useRef<HTMLInputElement>(null);
   const emptyDateRef = useRef<HTMLInputElement>(null);
+  const headerDateRef = useRef<HTMLInputElement>(null);
 
   // Auto-dismiss upload error after 4s
   useEffect(() => {
@@ -248,37 +391,44 @@ export default function RideDetailPage2() {
           <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 16, color: C.nk, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {ride.name || `${ride.type.charAt(0).toUpperCase() + ride.type.slice(1)} · ${ride.horse}`}
           </div>
-          {editingDate ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <input type="date"
-                autoFocus
-                defaultValue={ride.date.slice(0, 10)}
-                onChange={e => updateRide(ride.id, { date: e.target.value })}
-                onBlur={() => { setEditingDate(false); forceUpdate(n => n + 1); }}
-                style={{
-                  border: 'none', borderBottom: '1px solid rgba(193,127,74,0.4)',
-                  background: 'transparent', fontSize: 10, letterSpacing: '0.1em',
-                  color: C.nk, fontFamily: "'DM Mono', monospace",
-                  padding: '2px 4px', outline: 'none',
-                }}
-              />
-              <button onClick={() => { setEditingDate(false); forceUpdate(n => n + 1); }} style={{
-                background: 'none', border: 'none', cursor: 'pointer',
-                color: C.ideal, fontSize: 14, lineHeight: 1, padding: '0 4px',
-              }}>✓</button>
-            </div>
-          ) : (
-            <div onClick={() => setEditingDate(true)} style={{
+          <div
+            onClick={() => {
+              const input = headerDateRef.current;
+              if (!input) return;
+              // Try to open the native date picker immediately
+              if (typeof (input as any).showPicker === 'function') {
+                try { (input as any).showPicker(); return; } catch {}
+              }
+              input.focus();
+              input.click();
+            }}
+            style={{
               fontSize: 10, color: '#999', fontFamily: "'DM Mono', monospace",
               textTransform: 'uppercase', letterSpacing: '0.5px',
-              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
-            }}>
-              {dateStr}
-              <svg width="10" height="10" viewBox="0 0 12 12" fill="none" style={{ opacity: 0.3 }}>
-                <path d="M8.5 1.5l2 2-7 7H1.5v-2l7-7z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            </div>
-          )}
+              cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4,
+              position: 'relative',
+            }}
+          >
+            {dateStr}
+            <svg width="10" height="10" viewBox="0 0 12 12" fill="none" style={{ opacity: 0.3 }}>
+              <path d="M8.5 1.5l2 2-7 7H1.5v-2l7-7z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            {/* Hidden native date input — triggered by click above */}
+            <input
+              ref={headerDateRef}
+              type="date"
+              value={ride.date.slice(0, 10)}
+              max={new Date().toISOString().split('T')[0]}
+              onChange={e => { updateRide(ride.id, { date: e.target.value }); forceUpdate(n => n + 1); }}
+              style={{
+                position: 'absolute', left: 0, top: 0,
+                width: '100%', height: '100%',
+                opacity: 0, pointerEvents: 'none',
+                border: 'none', padding: 0, margin: 0,
+              }}
+              aria-label="Change ride date"
+            />
+          </div>
         </div>
         <button
           onClick={() => {
@@ -396,26 +546,8 @@ export default function RideDetailPage2() {
         <input type="file" accept="video/*" style={{ display: 'none' }} ref={fileInputRef} onChange={handleVideoReplace} />
       </div>
 
-      {/* ── Rider notes (if set) ── */}
-      {ride.notes && (
-        <div style={{ padding: '12px 18px 0' }}>
-          <div style={{
-            background: 'rgba(255,255,255,0.5)',
-            borderLeft: `2px solid rgba(28,28,30,0.15)`,
-            padding: '10px 14px', borderRadius: '0 10px 10px 0',
-          }}>
-            <div style={{
-              fontSize: 10, fontWeight: 600, letterSpacing: '0.1em',
-              textTransform: 'uppercase', color: 'rgba(28,28,30,0.4)',
-              fontFamily: "'DM Sans', sans-serif", marginBottom: 6,
-            }}>Your notes</div>
-            <div style={{
-              fontSize: 13, color: C.nk, lineHeight: 1.5,
-              fontFamily: "'DM Sans', sans-serif", whiteSpace: 'pre-wrap',
-            }}>{ride.notes}</div>
-          </div>
-        </div>
-      )}
+      {/* ── Rider name + notes (editable) ── */}
+      <RideNotesEditor ride={ride} onChange={() => forceUpdate(n => n + 1)} />
 
       {/* ── S4: CADENCE INSIGHT ── */}
       <div style={{ padding: '12px 18px' }}>
@@ -438,42 +570,56 @@ export default function RideDetailPage2() {
           </div>
           {ride.insights?.[0] && (
             <div style={{
-              display: 'flex', gap: 8, flexWrap: 'wrap',
-              borderTop: '1px solid rgba(0,0,0,0.06)', paddingTop: 10,
+              borderTop: '1px solid rgba(0,0,0,0.06)', paddingTop: 12,
+              display: 'flex', flexDirection: 'column', gap: 10,
             }}>
-              {[
-                `Why is my ${worstZone.label.toLowerCase()} at ${worstZone.score}?`,
-                `How do I improve from this session?`,
-              ].map((q, i) => (
-                <button
-                  key={i}
-                  onClick={openCadence}
-                  style={{
-                    fontSize: 11, padding: '6px 10px', borderRadius: 16,
-                    background: `${C.cg}0E`, border: `1px solid ${C.cg}33`,
-                    color: C.cg, fontFamily: "'DM Sans', sans-serif", fontWeight: 500,
-                    cursor: 'pointer', textAlign: 'left',
-                    WebkitTapHighlightColor: 'transparent',
-                  }}
-                >
-                  {q}
-                </button>
-              ))}
+              {/* Primary CTA — full-width, visually distinct */}
               <button
                 onClick={openCadence}
                 style={{
-                  fontSize: 11, padding: '6px 12px', borderRadius: 16,
+                  width: '100%', padding: '11px 14px', borderRadius: 10,
                   background: C.cg, border: 'none', color: '#fff',
-                  fontFamily: "'DM Sans', sans-serif", fontWeight: 600,
-                  cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 5,
+                  fontFamily: "'DM Sans', sans-serif", fontWeight: 600, fontSize: 13,
+                  cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
                   WebkitTapHighlightColor: 'transparent',
+                  boxShadow: '0 2px 8px rgba(193,127,74,0.2)',
                 }}
               >
-                Ask Cadence
-                <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
-                  <path d="M3 6h6m0 0L6 3m3 3L6 9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                  <path d="M8 1C4.13 1 1 3.58 1 6.75c0 1.74.95 3.29 2.5 4.33L3 14l3.5-1.83c.48.08.98.12 1.5.12 3.87 0 7-2.58 7-5.75S11.87 1 8 1z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/>
                 </svg>
+                Ask Cadence about this ride
               </button>
+              {/* Suggested prompts — secondary, visually subordinate */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{
+                  fontSize: 9, fontWeight: 600, letterSpacing: '0.14em',
+                  textTransform: 'uppercase', color: 'rgba(0,0,0,0.35)',
+                  fontFamily: "'DM Sans', sans-serif", marginBottom: 2,
+                }}>Or try</div>
+                {[
+                  `Why is my ${worstZone.label.toLowerCase()} at ${worstZone.score}?`,
+                  `How do I improve from this session?`,
+                ].map((q, i) => (
+                  <button
+                    key={i}
+                    onClick={openCadence}
+                    style={{
+                      fontSize: 12, padding: '8px 12px', borderRadius: 10,
+                      background: 'transparent', border: `1px solid rgba(0,0,0,0.08)`,
+                      color: 'rgba(0,0,0,0.65)',
+                      fontFamily: "'DM Sans', sans-serif", fontWeight: 400,
+                      cursor: 'pointer', textAlign: 'left',
+                      WebkitTapHighlightColor: 'transparent',
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+                    }}
+                  >
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{q}</span>
+                    <span style={{ color: 'rgba(0,0,0,0.25)', fontSize: 14, flexShrink: 0 }}>›</span>
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </div>

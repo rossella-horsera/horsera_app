@@ -989,7 +989,10 @@ export default function RidesPage() {
     const qualities = computeRidingQualities(bio);
     const overall = Object.values(bio).reduce((a, b) => a + b, 0) / Object.values(bio).length;
     const horse = getUserProfile().horseName || 'Your Horse';
-    const duration = parseInt(logDuration, 10) || 45;
+    // Use the actual video duration (in minutes) when available — falls back to the form value.
+    const duration = videoDuration !== null
+      ? Math.max(1, Math.round(videoDuration / 60))
+      : (parseInt(logDuration, 10) || 45);
 
     // If a ride already exists for this date + horse + type, handle the conflict
     // per the user's choice: 'replace' reuses the id (overwrites), 'new' generates a fresh id.
