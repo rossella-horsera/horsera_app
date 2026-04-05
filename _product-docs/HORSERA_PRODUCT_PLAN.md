@@ -198,6 +198,29 @@ These are the same underlying metrics, different time frames. Both are needed.
 
 ---
 
+## 🚀 Video Upload & Analysis Speed (high-priority unlock)
+
+Once Matt's new backend (horse detection → crop → YOLO keypoints from Goran) is pushed and wired end-to-end, the next big perceived-quality unlock is upload/analysis latency. Current flow makes the rider wait on a blocking upload+process step before seeing anything.
+
+**Ideas to explore (ordered by effort):**
+
+1. **Staged / stacked processing (perceived speed win)**
+   Process the video in N-frame chunks. As soon as chunk 1 is processed, start showing it to the rider in the Video tab. Process chunk 2 while they're watching chunk 1, etc. Total processing time is identical, but the rider sees analysis starting within seconds instead of waiting for the whole video.
+   *Implementation:* backend streams keypoints per chunk over SSE/WebSocket; frontend renders skeleton overlay progressively.
+
+2. **Live "Capture Ride" mode (true speed win)**
+   Instead of upload-after-the-fact, process pose estimation **live during recording** (on-device or streamed to backend). By the time the rider ends the ride, the analysis is already done.
+   *Implementation:* requires on-device pose model (MoveNet / TFLite) or live streaming upload. Bigger lift, but transformative UX — changes "upload your ride" → "capture your ride" as a product pillar.
+
+3. **(bonus) Optimistic UI**
+   Show the raw video immediately on upload completion, let the rider scrub through it, and overlay skeleton keypoints as they become available from the backend.
+
+**Why this matters:** Upload speed is the single biggest friction point in the core loop (Stage 3 of the JTBD map — "The Activation Moment"). If the first ride record feels slow, the rider doesn't come back. Both ideas above shift the perceived wait from minutes → seconds.
+
+**Pre-requisite:** Matt pushes the new GCP/crop-YOLO backend so we have a stable baseline to measure current processing time against.
+
+---
+
 ## Note for Matt
 
 **Two engineering tasks when ready:**
