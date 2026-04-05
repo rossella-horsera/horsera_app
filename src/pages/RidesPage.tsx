@@ -880,12 +880,29 @@ export default function RidesPage() {
     return () => clearInterval(interval);
   }, [isAnalyzing]);
 
-  // Horse fun facts — shuffle on analysis start, cycle every 4s
+  // Horse fun facts — Fisher-Yates shuffle, avoid recently-shown via sessionStorage
   useEffect(() => {
     if (!isAnalyzing) return;
-    const shuffled = [...HORSE_FACTS].sort(() => Math.random() - 0.5).slice(0, 3);
-    setHorseFacts(shuffled);
+    const RECENT_KEY = 'horsera_recent_facts';
+    let recent: string[] = [];
+    try { recent = JSON.parse(sessionStorage.getItem(RECENT_KEY) || '[]'); } catch {}
+    // Prefer facts NOT shown recently; fall back to full pool if we've seen most
+    const available = HORSE_FACTS.filter(f => !recent.includes(f));
+    const pool = available.length >= 3 ? available : HORSE_FACTS;
+    // Fisher-Yates (avoids Array.sort's biased shuffle)
+    const shuffled = [...pool];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    const picked = shuffled.slice(0, 3);
+    setHorseFacts(picked);
     setHorseFactIdx(0);
+    // Track the last ~15 shown so we cycle through most of the pool before repeating
+    try {
+      const next = [...picked, ...recent].slice(0, 15);
+      sessionStorage.setItem(RECENT_KEY, JSON.stringify(next));
+    } catch {}
     const interval = setInterval(() => {
       setHorseFactIdx(i => (i + 1) % 3);
     }, 9000);

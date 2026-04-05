@@ -93,6 +93,7 @@ export default function RideDetailPage2() {
   const [editingDate, setEditingDate] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [selectedMoment, setSelectedMoment] = useState<null | 'best' | 'focus'>(null);
   const [, forceUpdate] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const emptyFileInputRef = useRef<HTMLInputElement>(null);
@@ -383,14 +384,6 @@ export default function RideDetailPage2() {
         <input type="file" accept="video/*" style={{ display: 'none' }} ref={fileInputRef} onChange={handleVideoReplace} />
       </div>
 
-      {/* ── S3: SESSION INFO STRIP ── */}
-      <div style={{
-        padding: '8px 18px', background: C.pa,
-        fontSize: 11, color: '#999', fontFamily: "'DM Mono', monospace",
-      }}>
-        {ride.horse} · {ride.duration}min · {ride.type.charAt(0).toUpperCase() + ride.type.slice(1)}
-      </div>
-
       {/* ── S4: CADENCE INSIGHT ── */}
       <div style={{ padding: '12px 18px' }}>
         <div style={{
@@ -520,19 +513,29 @@ export default function RideDetailPage2() {
         <SectionHeader title="Key Moments" />
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, padding: '0 18px', marginBottom: 24 }}>
           {[
-            { label: 'Best moment', time: '2:18', color: C.ideal, tag: 'All joints on target' },
-            { label: 'Focus moment', time: '1:24', color: C.focus, tag: 'Rein asymmetry' },
+            { key: 'best' as const, label: 'Best moment', seekSec: 14, color: C.ideal, zone: bestZone },
+            { key: 'focus' as const, label: 'Focus moment', seekSec: 6, color: C.focus, zone: worstZone },
           ].map(m => {
-            const [mm, ss] = m.time.split(':').map(Number);
-            const seekSec = (mm || 0) * 60 + (ss || 0);
+            const mm = Math.floor(m.seekSec / 60);
+            const ss = m.seekSec % 60;
+            const timeLabel = `${mm}:${String(ss).padStart(2, '0')}`;
             return (
-            <div key={m.label} style={{ ...card({ padding: 0, overflow: 'hidden' }) }}>
+            <button
+              key={m.label}
+              onClick={() => setSelectedMoment(m.key)}
+              aria-label={`See ${m.label.toLowerCase()}`}
+              style={{
+                ...card({ padding: 0, overflow: 'hidden' }),
+                border: 'none', cursor: 'pointer', textAlign: 'left',
+                WebkitTapHighlightColor: 'transparent',
+              }}
+            >
               <div style={{
                 position: 'relative', height: 80, background: '#1a1a1a', overflow: 'hidden',
               }}>
                 {ride.videoUrl && (
                   <video
-                    src={`${ride.videoUrl}#t=${seekSec}`}
+                    src={`${ride.videoUrl}#t=${m.seekSec}`}
                     preload="metadata"
                     muted
                     playsInline
@@ -546,14 +549,19 @@ export default function RideDetailPage2() {
                 <div style={{
                   position: 'absolute', inset: 0,
                   background: 'linear-gradient(to top, rgba(0,0,0,0.55), rgba(0,0,0,0.15))',
-                  display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end',
+                  display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
                   padding: '0 8px 6px',
                 }}>
                   <span style={{
                     fontSize: 10, fontFamily: "'DM Mono', monospace",
                     color: '#fff', fontWeight: 600,
                     textShadow: '0 1px 2px rgba(0,0,0,0.6)',
-                  }}>{m.time}</span>
+                  }}>{timeLabel}</span>
+                  <span style={{
+                    fontSize: 11, fontFamily: "'DM Mono', monospace",
+                    color: '#fff', fontWeight: 700,
+                    textShadow: '0 1px 2px rgba(0,0,0,0.6)',
+                  }}>{m.zone.score}</span>
                 </div>
               </div>
               <div style={{ padding: '8px 10px' }}>
@@ -564,13 +572,104 @@ export default function RideDetailPage2() {
                   fontSize: 9, padding: '2px 6px', borderRadius: 4,
                   background: `${m.color}14`, color: m.color,
                   fontFamily: "'DM Sans', sans-serif", fontWeight: 600,
-                }}>{m.tag}</span>
+                }}>{m.zone.label}</span>
               </div>
-            </div>
+            </button>
             );
           })}
         </div>
       </div>
+
+      {/* ── Key moment detail modal ── */}
+      {selectedMoment && (() => {
+        const isBest = selectedMoment === 'best';
+        const zone = isBest ? bestZone : worstZone;
+        const seekSec = isBest ? 14 : 6;
+        const color = isBest ? C.ideal : C.focus;
+        const mm = Math.floor(seekSec / 60);
+        const ss = seekSec % 60;
+        const timeLabel = `${mm}:${String(ss).padStart(2, '0')}`;
+        const insight = isBest
+          ? `Your ${zone.label.toLowerCase()} peaked here at ${zone.score}/100. This is the feel to hold onto — anchor other aspects of your ride to this moment.`
+          : `${zone.label} is at ${zone.score}/100 in this moment — your weakest area this session. Focus here first: small, consistent improvements compound across every other metric.`;
+        return (
+          <div
+            onClick={() => setSelectedMoment(null)}
+            style={{
+              position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+              zIndex: 100, display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+              animation: 'fadeIn 0.2s ease',
+            }}
+          >
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{
+                background: C.pa, borderRadius: '20px 20px 0 0',
+                width: '100%', maxWidth: 520, padding: 20,
+                animation: 'fadeIn 0.3s ease',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                <div style={{
+                  fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px',
+                  color, fontFamily: "'DM Sans', sans-serif",
+                }}>
+                  {isBest ? 'Best Moment' : 'Focus Moment'}
+                </div>
+                <button
+                  onClick={() => setSelectedMoment(null)}
+                  aria-label="Close"
+                  style={{
+                    width: 28, height: 28, borderRadius: '50%', border: 'none',
+                    background: 'rgba(0,0,0,0.08)', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    color: C.nk, fontSize: 18, lineHeight: 1,
+                  }}
+                >×</button>
+              </div>
+              {ride.videoUrl && (
+                <div style={{
+                  position: 'relative', width: '100%', aspectRatio: '16/9',
+                  borderRadius: 12, overflow: 'hidden', background: '#1a1a1a', marginBottom: 12,
+                }}>
+                  <video
+                    src={`${ride.videoUrl}#t=${seekSec}`}
+                    preload="metadata"
+                    controls
+                    playsInline
+                    style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                  />
+                  <div style={{
+                    position: 'absolute', top: 8, right: 8,
+                    background: 'rgba(0,0,0,0.65)', color: '#fff',
+                    fontSize: 10, fontFamily: "'DM Mono', monospace", fontWeight: 600,
+                    padding: '3px 8px', borderRadius: 6,
+                  }}>{timeLabel}</div>
+                </div>
+              )}
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10,
+              }}>
+                <span style={{
+                  fontSize: 11, padding: '4px 10px', borderRadius: 6,
+                  background: `${color}14`, color,
+                  fontFamily: "'DM Sans', sans-serif", fontWeight: 600,
+                }}>{zone.label}</span>
+                <span style={{
+                  fontSize: 20, fontWeight: 700, color,
+                  fontFamily: "'DM Mono', monospace",
+                }}>{zone.score}<span style={{ fontSize: 12, color: 'rgba(0,0,0,0.3)' }}>/100</span></span>
+              </div>
+              <div style={{
+                fontSize: 14, color: C.na, lineHeight: 1.55,
+                fontFamily: "'Playfair Display', serif", fontStyle: 'italic',
+              }}>
+                {insight}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Animations */}
       <style>{`
