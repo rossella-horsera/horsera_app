@@ -1148,7 +1148,7 @@ export default function RidesPage() {
   // Status message for analysis progress — compression phase shows a fixed label,
   // all other phases cycle through PROCESSING_MESSAGES (#59)
   const statusMessage = status === 'compressing'
-    ? 'Preparing your clip — trimming and resizing for speed...'
+    ? 'Compressing your video for fast upload...'
     : PROCESSING_MESSAGES[processingMsgIdx];
 
   return (

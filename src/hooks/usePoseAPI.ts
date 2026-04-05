@@ -33,14 +33,9 @@ const ENABLE_LEGACY_UPLOAD_FALLBACK = import.meta.env.VITE_POSE_API_LEGACY_UPLOA
 const POLL_MS   = 3000;
 const MAX_POLL  = 200; // 200 × 3s = 10 min max
 
-// Always compress — pose analysis never needs the full 4K / 30min source.
-// Anything under this tiny floor is left alone (already small enough to upload fast).
+// Always compress — iPhone 4K HEVC videos are massive. Anything under this
+// tiny floor is left alone (already small enough to upload fast).
 const COMPRESS_THRESHOLD_BYTES = 5 * 1024 * 1024; // 5 MB
-
-// Cap the analyzed clip to this duration. Pose analysis samples at ~1 fps
-// and doesn't benefit from longer clips — trimming before upload cuts the
-// upload payload by 10-30× on full-length iPhone rides (typically 10-40 min).
-const MAX_CLIP_SECONDS = 60;
 
 // ── Convert plain-text insight strings → MovementInsight objects ──────────────
 function toMovementInsights(texts: string[]): MovementInsight[] {
@@ -63,15 +58,14 @@ function toMovementInsights(texts: string[]): MovementInsight[] {
   });
 }
 
-// ── Client-side video compression + trim via canvas + MediaRecorder ──────────
+// ── Client-side video compression via canvas + MediaRecorder ──────────────────
 // - Scales to 720p max (never upscales)
-// - Trims to MAX_CLIP_SECONDS (default 60s) — huge win for long iPhone rides
-// - Strips audio (pose analysis doesn't use it, shrinks payload further)
+// - Strips audio (pose analysis doesn't use it)
 // - Re-encodes at 1.5 Mbps
 // - Uses requestVideoFrameCallback where supported for frame-accurate capture
 //
 // Throws if the browser doesn't support MediaRecorder or no codec is available.
-// onProgress receives 0-100 tracking the trimmed clip's playthrough.
+// onProgress receives 0-100 tracking the video's playthrough.
 function compressVideo(
   file: File,
   onProgress: (pct: number) => void,
@@ -108,19 +102,13 @@ function compressVideo(
       const outW  = Math.floor(w * scale / 2) * 2 || 2;
       const outH  = Math.floor(h * scale / 2) * 2 || 2;
 
-      // Trim: cap the effective duration to MAX_CLIP_SECONDS
-      const clipDuration = Math.min(duration, MAX_CLIP_SECONDS);
-      // If the source is long, center the trim on the middle (best chance of capturing ride action)
-      const trimStart = duration > MAX_CLIP_SECONDS ? (duration - MAX_CLIP_SECONDS) / 2 : 0;
-      const trimEnd = trimStart + clipDuration;
-
       const canvas  = document.createElement('canvas');
       canvas.width  = outW;
       canvas.height = outH;
       const ctx     = canvas.getContext('2d', { alpha: false })!;
 
-      // captureStream with an explicit fps so MediaRecorder has a stable clock.
-      // Audio track is NOT included (we never request it).
+      // captureStream with explicit fps so MediaRecorder has a stable clock.
+      // Audio track NOT included (captureStream doesn't add audio on its own).
       const stream   = canvas.captureStream(30);
       const recorder = new MediaRecorder(stream, {
         mimeType,
@@ -146,16 +134,16 @@ function compressVideo(
       recorder.onerror = () => { cleanup(); reject(new Error('MediaRecorder error during compression')); };
 
       // Use requestVideoFrameCallback when available (fires on every decoded frame)
-      // Falls back to requestAnimationFrame which is ~60fps for smoother draw than ontimeupdate.
+      // Falls back to requestAnimationFrame (~60fps) for smoother draw than ontimeupdate (~4/sec).
       const hasRVFC = 'requestVideoFrameCallback' in video;
       const drawFrame = () => {
         if (stopped) return;
-        if (video.currentTime >= trimEnd) { stopRecording(); return; }
         ctx.drawImage(video, 0, 0, outW, outH);
-        const elapsed = video.currentTime - trimStart;
-        onProgress(Math.min(99, Math.round((elapsed / clipDuration) * 100)));
+        if (duration > 0) {
+          onProgress(Math.min(99, Math.round((video.currentTime / duration) * 100)));
+        }
         if (hasRVFC) {
-          // @ts-ignore — requestVideoFrameCallback is modern but not in all TS libs
+          // @ts-ignore
           video.requestVideoFrameCallback(drawFrame);
         } else {
           requestAnimationFrame(drawFrame);
@@ -163,17 +151,9 @@ function compressVideo(
       };
 
       video.onended = stopRecording;
-      video.addEventListener('seeked', () => {
-        // After seeking to trimStart, begin playback + frame capture
-        if (Math.abs(video.currentTime - trimStart) < 0.5) {
-          recorder.start(250);
-          drawFrame();
-          video.play().catch(() => { cleanup(); reject(new Error('Video.play() failed during compression')); });
-        }
-      }, { once: true });
-
-      // Kick things off by seeking to the trim start
-      video.currentTime = trimStart;
+      recorder.start(250);
+      drawFrame();
+      video.play().catch(() => { cleanup(); reject(new Error('Video.play() failed during compression')); });
     };
   });
 }
