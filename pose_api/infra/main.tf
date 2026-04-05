@@ -396,6 +396,12 @@ resource "google_cloud_run_v2_job" "pose_worker_cpu" {
             }
           }
         }
+        resources {
+          limits = {
+            cpu    = "2"
+            memory = "4Gi"
+          }
+        }
       }
     }
   }
