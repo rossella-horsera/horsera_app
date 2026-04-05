@@ -90,7 +90,36 @@ function drawSkeleton(
 export default function VideoWithSkeleton({ videoUrl, keyframes, biometrics }: VideoWithSkeletonProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const [ghostOn, setGhostOn] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Fullscreen: request on the wrapper so skeleton + overlays stay visible.
+  // Handles webkit-prefixed API for iOS Safari.
+  const toggleFullscreen = () => {
+    const el = wrapperRef.current as any;
+    const doc = document as any;
+    if (!el) return;
+    const isFs = doc.fullscreenElement || doc.webkitFullscreenElement || doc.webkitCurrentFullScreenElement;
+    if (isFs) {
+      (doc.exitFullscreen || doc.webkitExitFullscreen || doc.webkitCancelFullScreen)?.call(doc);
+    } else {
+      (el.requestFullscreen || el.webkitRequestFullscreen || el.webkitEnterFullscreen)?.call(el);
+    }
+  };
+
+  useEffect(() => {
+    const handler = () => {
+      const doc = document as any;
+      setIsFullscreen(!!(doc.fullscreenElement || doc.webkitFullscreenElement || doc.webkitCurrentFullScreenElement));
+    };
+    document.addEventListener('fullscreenchange', handler);
+    document.addEventListener('webkitfullscreenchange', handler);
+    return () => {
+      document.removeEventListener('fullscreenchange', handler);
+      document.removeEventListener('webkitfullscreenchange', handler);
+    };
+  }, []);
 
   const ghostFrame = useMemo(() => {
     if (!keyframes.length) return null;
@@ -160,13 +189,27 @@ export default function VideoWithSkeleton({ videoUrl, keyframes, biometrics }: V
   }
 
   return (
-    <div style={{ position: 'relative', width: '100%', aspectRatio: '16/9', background: '#000' }}>
+    <div
+      ref={wrapperRef}
+      style={{
+        position: 'relative', width: '100%',
+        aspectRatio: isFullscreen ? undefined : '16/9',
+        height: isFullscreen ? '100%' : undefined,
+        background: '#000',
+      }}
+    >
       <video
         ref={videoRef}
         src={videoUrl}
         controls
         playsInline
-        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+        controlsList="nofullscreen nodownload"
+        // @ts-ignore — webkit-specific attribute for iOS Safari inline fullscreen
+        webkit-playsinline="true"
+        style={{
+          position: 'absolute', inset: 0, width: '100%', height: '100%',
+          objectFit: isFullscreen ? 'contain' : 'cover',
+        }}
       />
       <canvas
         ref={canvasRef}
@@ -190,6 +233,30 @@ export default function VideoWithSkeleton({ videoUrl, keyframes, biometrics }: V
           </span>
         ))}
       </div>
+
+      {/* Custom fullscreen toggle — fullscreens the wrapper so skeleton + ghost stay visible */}
+      <button
+        onClick={toggleFullscreen}
+        aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+        title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen (keeps skeleton)'}
+        style={{
+          position: 'absolute', top: 10, right: 12, zIndex: 10,
+          width: 34, height: 34, borderRadius: 10,
+          background: 'rgba(0,0,0,0.55)', border: '1px solid rgba(255,255,255,0.15)',
+          color: 'rgba(255,255,255,0.85)', cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}
+      >
+        {isFullscreen ? (
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+            <path d="M9 3v4a2 2 0 0 1-2 2H3m18 0h-4a2 2 0 0 1-2-2V3M3 15h4a2 2 0 0 1 2 2v4m12 0v-4a2 2 0 0 1 2-2h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        ) : (
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+            <path d="M3 9V3h6M21 9V3h-6M3 15v6h6M21 15v6h-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        )}
+      </button>
 
       {/* Ghost Rider toggle */}
       <button

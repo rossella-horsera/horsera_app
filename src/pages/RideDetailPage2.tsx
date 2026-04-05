@@ -522,12 +522,40 @@ export default function RideDetailPage2() {
           {[
             { label: 'Best moment', time: '2:18', color: C.ideal, tag: 'All joints on target' },
             { label: 'Focus moment', time: '1:24', color: C.focus, tag: 'Rein asymmetry' },
-          ].map(m => (
+          ].map(m => {
+            const [mm, ss] = m.time.split(':').map(Number);
+            const seekSec = (mm || 0) * 60 + (ss || 0);
+            return (
             <div key={m.label} style={{ ...card({ padding: 0, overflow: 'hidden' }) }}>
               <div style={{
-                height: 80, background: '#1a1a1a', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: '#555', fontSize: 11, fontFamily: "'DM Mono', monospace",
-              }}>{m.time}</div>
+                position: 'relative', height: 80, background: '#1a1a1a', overflow: 'hidden',
+              }}>
+                {ride.videoUrl && (
+                  <video
+                    src={`${ride.videoUrl}#t=${seekSec}`}
+                    preload="metadata"
+                    muted
+                    playsInline
+                    style={{
+                      position: 'absolute', inset: 0,
+                      width: '100%', height: '100%', objectFit: 'cover',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                )}
+                <div style={{
+                  position: 'absolute', inset: 0,
+                  background: 'linear-gradient(to top, rgba(0,0,0,0.55), rgba(0,0,0,0.15))',
+                  display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end',
+                  padding: '0 8px 6px',
+                }}>
+                  <span style={{
+                    fontSize: 10, fontFamily: "'DM Mono', monospace",
+                    color: '#fff', fontWeight: 600,
+                    textShadow: '0 1px 2px rgba(0,0,0,0.6)',
+                  }}>{m.time}</span>
+                </div>
+              </div>
               <div style={{ padding: '8px 10px' }}>
                 <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: m.color, fontFamily: "'DM Sans', sans-serif", marginBottom: 4 }}>
                   {m.label}
@@ -539,7 +567,8 @@ export default function RideDetailPage2() {
                 }}>{m.tag}</span>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
