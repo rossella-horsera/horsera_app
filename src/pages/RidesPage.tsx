@@ -9,7 +9,6 @@ import { saveRide, getRides, deleteRide } from '../lib/storage';
 import type { StoredRide } from '../lib/storage';
 import { getUserProfile } from '../lib/userProfile';
 import { supabase } from '../integrations/supabase/client';
-import VideoSilhouetteOverlay from '../components/VideoSilhouetteOverlay';
 
 // ─────────────────────────────────────────────────────────
 // DESIGN TOKENS
@@ -858,9 +857,6 @@ export default function RidesPage() {
   const [horseFacts, setHorseFacts] = useState<string[]>([]);
   const [horseFactIdx, setHorseFactIdx] = useState(0);
 
-  // Detail view for ride history
-  const [selectedRide, setSelectedRide] = useState<Ride | null>(null);
-  const [selectedStoredRide, setSelectedStoredRide] = useState<StoredRide | undefined>(undefined);
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'score'>('newest');
   const [storedRides, setStoredRides] = useState<StoredRide[]>(getRides);
   const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(new Set());
@@ -2088,15 +2084,6 @@ export default function RidesPage() {
           .ride-card-delete-btn:hover { opacity: 1 !important; background: rgba(193,75,46,0.1) !important; color: #C14A2A !important; }
         }
       `}</style>
-
-      {/* ── RIDE DETAIL VIEW (Card #56) ──────────────────────── */}
-      {selectedRide && (
-        <RideDetailView
-          ride={selectedRide}
-          storedRide={selectedStoredRide}
-          onClose={() => { setSelectedRide(null); setSelectedStoredRide(undefined); }}
-        />
-      )}
 
     </div>
   );

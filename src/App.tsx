@@ -6,8 +6,6 @@ import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
 import AppShell from "./components/layout/AppShell";
 import JourneyPage from "./pages/JourneyPage";
 import RidesPage from "./pages/RidesPage";
-import RideDetailPage from "./pages/RideDetailPage";
-import InsightsPage from "./pages/InsightsPage";
 import NotFound from "./pages/NotFound";
 import RideDetailPage2 from "./pages/RideDetailPage2";
 import AnalysisShell from "./pages/analysis/AnalysisShell";
