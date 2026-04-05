@@ -136,6 +136,7 @@ export default function InsightsTab() {
   const bioScrollRef = useRef<HTMLDivElement>(null);
   const [showScrollArrow, setShowScrollArrow] = useState(true);
   const [showLeftArrow, setShowLeftArrow] = useState(false);
+  const [hoveredScoreIdx, setHoveredScoreIdx] = useState<number | null>(null);
 
   const checkScroll = useCallback(() => {
     const el = bioScrollRef.current;
@@ -488,6 +489,7 @@ export default function InsightsTab() {
             </div>
 
             {n > 1 && (
+              <div style={{ position: 'relative' }}>
               <svg viewBox="0 0 280 145" style={{ width: '100%', height: 'auto', display: 'block' }} preserveAspectRatio="xMidYMid meet">
                 <defs>
                   <linearGradient id="areaGradP" x1="0" y1="0" x2="0" y2="1">
@@ -501,13 +503,23 @@ export default function InsightsTab() {
                 <polyline points={polyPts} fill="none" stroke={C.cg} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
                 {overallScores.map((s, i) => {
                   const last = i === n - 1;
+                  const hovered = hoveredScoreIdx === i;
+                  const ride = hasReal && rides[i] ? rides[i] : null;
                   return (
-                    <g key={i}>
+                    <g
+                      key={i}
+                      onMouseEnter={() => setHoveredScoreIdx(i)}
+                      onMouseLeave={() => setHoveredScoreIdx(null)}
+                      onClick={() => ride && navigate(`/rides/${ride.id}`)}
+                      style={{ cursor: ride ? 'pointer' : 'default' }}
+                    >
+                      {/* Invisible hit target — larger than visible dot for easy tap/hover */}
+                      <circle cx={sx(i, n)} cy={sy(s, overallScores)} r="14" fill="transparent"/>
                       {last
-                        ? <circle cx={sx(i, n)} cy={sy(s, overallScores)} r="7" fill={C.cg} stroke="#fff" strokeWidth="2"/>
-                        : <circle cx={sx(i, n)} cy={sy(s, overallScores)} r="4" fill="#fff" stroke={C.cg} strokeWidth="1.5"/>
+                        ? <circle cx={sx(i, n)} cy={sy(s, overallScores)} r={hovered ? 9 : 7} fill={C.cg} stroke="#fff" strokeWidth="2"/>
+                        : <circle cx={sx(i, n)} cy={sy(s, overallScores)} r={hovered ? 6 : 4} fill={hovered ? C.cg : '#fff'} stroke={C.cg} strokeWidth="1.5"/>
                       }
-                      {last && (
+                      {last && !hovered && (
                         <text x={sx(i, n)} y={sy(s, overallScores) - 12} textAnchor="middle"
                           fontSize="12" fontWeight="700" fill={C.cg}
                           fontFamily="'Playfair Display',serif">{s}</text>
@@ -526,6 +538,33 @@ export default function InsightsTab() {
                   );
                 })}
               </svg>
+              {/* Tooltip */}
+              {hoveredScoreIdx !== null && overallScores[hoveredScoreIdx] !== undefined && (() => {
+                const idx = hoveredScoreIdx;
+                const score = overallScores[idx];
+                const ride = hasReal && rides[idx] ? rides[idx] : null;
+                const dateLbl = xLabels[idx] ?? '';
+                // Position as % of svg width
+                const leftPct = n > 1 ? (idx / (n - 1)) * 100 : 50;
+                return (
+                  <div style={{
+                    position: 'absolute', left: `${leftPct}%`, top: -8,
+                    transform: 'translate(-50%, -100%)',
+                    background: '#1C1C1E', color: '#fff',
+                    borderRadius: 8, padding: '6px 10px',
+                    fontSize: 11, fontFamily: "'DM Sans', sans-serif",
+                    pointerEvents: 'none', whiteSpace: 'nowrap',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.2)', zIndex: 5,
+                  }}>
+                    <div style={{ fontWeight: 600 }}>{dateLbl}</div>
+                    <div style={{ color: 'rgba(255,255,255,0.75)', fontFamily: "'DM Mono', monospace" }}>
+                      {score}<span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 9 }}>/100</span>
+                      {ride && <span style={{ marginLeft: 8, color: 'rgba(255,255,255,0.55)', fontSize: 9 }}>tap to open →</span>}
+                    </div>
+                  </div>
+                );
+              })()}
+              </div>
             )}
           </div>
         </div>
