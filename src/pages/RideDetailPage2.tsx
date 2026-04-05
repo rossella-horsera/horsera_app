@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getRides, updateRide, type StoredRide } from '@/lib/storage';
+import { getRides, updateRide, deleteRide, type StoredRide } from '@/lib/storage';
+import { parseLocalDate } from '@/lib/utils';
 import VideoWithSkeleton from '../components/VideoWithSkeleton';
 
 const C = {
@@ -221,7 +222,7 @@ export default function RideDetailPage2() {
   const bestZone = zones.reduce((a, b) => a.score >= b.score ? a : b);
   const worstZone = zones.reduce((a, b) => a.score <= b.score ? a : b);
 
-  const dateStr = new Date(ride.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  const dateStr = parseLocalDate(ride.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
 
   return (
     <div style={{ background: C.pa, minHeight: '100vh', paddingBottom: 100 }}>
@@ -276,6 +277,29 @@ export default function RideDetailPage2() {
             </div>
           )}
         </div>
+        <button
+          onClick={() => {
+            if (window.confirm(`Delete this ${ride.type} ride from ${dateStr}? This cannot be undone.`)) {
+              deleteRide(ride.id);
+              navigate('/rides');
+            }
+          }}
+          aria-label="Delete ride"
+          title="Delete ride"
+          style={{
+            width: 34, height: 34, borderRadius: '50%',
+            background: 'transparent', border: 'none', cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: 'rgba(28,28,30,0.4)',
+            transition: 'background 0.15s ease, color 0.15s ease',
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#FDEDE5'; (e.currentTarget as HTMLElement).style.color = C.focus; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'rgba(28,28,30,0.4)'; }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </button>
         <svg width="52" height="52" viewBox="0 0 52 52">
           <circle cx="26" cy="26" r="22" fill="none" stroke="#EDE7DF" strokeWidth="3" />
           <circle cx="26" cy="26" r="22" fill="none" stroke={C.cg} strokeWidth="3"

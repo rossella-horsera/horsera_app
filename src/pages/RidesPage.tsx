@@ -1696,21 +1696,21 @@ export default function RidesPage() {
             {horseFacts.length > 0 && (
               <div style={{ textAlign: 'center', maxWidth: 320, margin: '0 auto' }}>
                 <div style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 8,
+                  display: 'inline-flex', alignItems: 'center', gap: 10,
                   marginBottom: 14,
                 }}>
-                  <span style={{ fontSize: 16, opacity: 0.85 }}>✦</span>
+                  <span style={{ fontSize: 14, color: '#C9A96E' }}>✦</span>
                   <span style={{
                     fontSize: '10px', fontWeight: 600, letterSpacing: '0.22em',
                     textTransform: 'uppercase', color: '#C17F4A',
                     fontFamily: FONTS.body,
-                  }}>A Horse Fact</span>
-                  <span style={{ fontSize: 16, opacity: 0.85 }}>✦</span>
+                  }}>Did you know?</span>
+                  <span style={{ fontSize: 14, color: '#C9A96E' }}>✦</span>
                 </div>
                 <div key={horseFactIdx} style={{
-                  fontFamily: "'Playfair Display', serif", fontStyle: 'italic',
-                  fontSize: '18px', fontWeight: 400,
-                  color: 'rgba(255,255,255,0.88)', lineHeight: 1.55,
+                  fontFamily: FONTS.body,
+                  fontSize: '15px', fontWeight: 400,
+                  color: 'rgba(255,255,255,0.90)', lineHeight: 1.65,
                   animation: 'fadeIn 0.8s ease',
                 }}>
                   {horseFacts[horseFactIdx]}
@@ -1798,14 +1798,40 @@ export default function RidesPage() {
                   · {rides.length} ride{rides.length !== 1 ? 's' : ''}
                 </span>
               </div>
-              {avgScore !== null && (
-                <span style={{
-                  fontSize: '11px', fontWeight: 600, color: COLORS.cognac,
-                  fontFamily: FONTS.body,
-                }}>
-                  avg {avgScore}
-                </span>
-              )}
+              {avgScore !== null && (() => {
+                // Oura-style: circular ring + number inside. Color varies by score band.
+                const bandColor =
+                  avgScore >= 75 ? COLORS.green :
+                  avgScore >= 60 ? '#C9A96E' :  // champagne
+                  '#C4714A';                     // attention
+                const r = 15;
+                const c = 2 * Math.PI * r;
+                const dash = (avgScore / 100) * c;
+                return (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{
+                      fontSize: 9, fontWeight: 600, letterSpacing: '0.1em',
+                      textTransform: 'uppercase', color: 'rgba(28,28,30,0.4)',
+                      fontFamily: FONTS.body,
+                    }}>AVG</span>
+                    <div style={{ position: 'relative', width: 36, height: 36 }}>
+                      <svg width="36" height="36" viewBox="0 0 36 36" style={{ transform: 'rotate(-90deg)' }}>
+                        <circle cx="18" cy="18" r={r} fill="none" stroke="rgba(28,28,30,0.08)" strokeWidth="2.5"/>
+                        <circle cx="18" cy="18" r={r} fill="none" stroke={bandColor} strokeWidth="2.5"
+                          strokeDasharray={`${dash} ${c}`} strokeLinecap="round"/>
+                      </svg>
+                      <div style={{
+                        position: 'absolute', inset: 0, display: 'flex',
+                        alignItems: 'center', justifyContent: 'center',
+                        fontSize: 12, fontWeight: 700, color: bandColor,
+                        fontFamily: FONTS.body,
+                      }}>
+                        {avgScore}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
             </button>
             {!isCollapsed && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' }}>
@@ -2138,8 +2164,35 @@ function SwipeRideRow({ ride, storedRide, trendDelta, onNavigate, onDelete }: {
             {(ride.type.charAt(0).toUpperCase() + ride.type.slice(1))} · {ride.horse}
           </span>
           <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-            {(storedRide?.videoUrl || ride.videoUploaded) && (
-              <span aria-label="Video available" title="Video available" style={{
+            {storedRide?.videoUrl ? (
+              <div style={{
+                position: 'relative', width: 56, height: 32, borderRadius: 6,
+                overflow: 'hidden', background: '#EDE7DF', flexShrink: 0,
+                boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+              }}>
+                <video
+                  src={`${storedRide.videoUrl}#t=2`}
+                  preload="metadata"
+                  muted
+                  playsInline
+                  style={{
+                    position: 'absolute', inset: 0,
+                    width: '100%', height: '100%', objectFit: 'cover',
+                    pointerEvents: 'none',
+                  }}
+                />
+                <div style={{
+                  position: 'absolute', inset: 0,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  background: 'linear-gradient(to top, rgba(0,0,0,0.25), rgba(0,0,0,0.05))',
+                }}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="white" style={{ filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.4))' }}>
+                    <path d="M8 5v14l11-7L8 5z"/>
+                  </svg>
+                </div>
+              </div>
+            ) : (storedRide?.videoUrl || ride.videoUploaded) ? (
+              <span aria-label="Video" title="Video" style={{
                 display: 'inline-flex', alignItems: 'center', gap: 3,
                 fontSize: 9, background: `${RC.cg}15`, color: RC.cg,
                 padding: '3px 7px', borderRadius: 6,
@@ -2152,7 +2205,7 @@ function SwipeRideRow({ ride, storedRide, trendDelta, onNavigate, onDelete }: {
                 </svg>
                 VIDEO
               </span>
-            )}
+            ) : null}
           </div>
         </div>
 
