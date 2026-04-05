@@ -880,31 +880,36 @@ export default function RidesPage() {
     return () => clearInterval(interval);
   }, [isAnalyzing]);
 
-  // Horse fun facts — Fisher-Yates shuffle, avoid recently-shown via sessionStorage
+  // Horse fun facts — build a long shuffled queue and advance through it.
+  // Avoids repeats within an analysis AND across analyses in the same session.
   useEffect(() => {
     if (!isAnalyzing) return;
     const RECENT_KEY = 'horsera_recent_facts';
     let recent: string[] = [];
     try { recent = JSON.parse(sessionStorage.getItem(RECENT_KEY) || '[]'); } catch {}
-    // Prefer facts NOT shown recently; fall back to full pool if we've seen most
-    const available = HORSE_FACTS.filter(f => !recent.includes(f));
-    const pool = available.length >= 3 ? available : HORSE_FACTS;
-    // Fisher-Yates (avoids Array.sort's biased shuffle)
-    const shuffled = [...pool];
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-    }
-    const picked = shuffled.slice(0, 3);
-    setHorseFacts(picked);
+    // Put NOT-recently-shown facts first, then recent ones at the tail, so the
+    // longest possible analysis still stays unique-heavy at the start.
+    const fresh = HORSE_FACTS.filter(f => !recent.includes(f));
+    const stale = HORSE_FACTS.filter(f => recent.includes(f));
+    // Fisher-Yates each pile
+    const shuffle = (arr: string[]) => {
+      const out = [...arr];
+      for (let i = out.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [out[i], out[j]] = [out[j], out[i]];
+      }
+      return out;
+    };
+    const queue = [...shuffle(fresh), ...shuffle(stale)];
+    setHorseFacts(queue);
     setHorseFactIdx(0);
-    // Track the last ~15 shown so we cycle through most of the pool before repeating
+    // Remember the first 10 from this queue as "recently shown" for next time
     try {
-      const next = [...picked, ...recent].slice(0, 15);
+      const next = [...queue.slice(0, 10), ...recent].slice(0, 20);
       sessionStorage.setItem(RECENT_KEY, JSON.stringify(next));
     } catch {}
     const interval = setInterval(() => {
-      setHorseFactIdx(i => (i + 1) % 3);
+      setHorseFactIdx(i => (i + 1) % queue.length);
     }, 9000);
     return () => clearInterval(interval);
   }, [isAnalyzing]);
