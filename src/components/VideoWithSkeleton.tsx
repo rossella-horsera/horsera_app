@@ -203,7 +203,7 @@ export default function VideoWithSkeleton({ videoUrl, keyframes, biometrics }: V
         src={videoUrl}
         controls
         playsInline
-        controlsList="nofullscreen nodownload"
+        controlsList="nodownload"
         // @ts-ignore — webkit-specific attribute for iOS Safari inline fullscreen
         webkit-playsinline="true"
         style={{
@@ -233,30 +233,6 @@ export default function VideoWithSkeleton({ videoUrl, keyframes, biometrics }: V
           </span>
         ))}
       </div>
-
-      {/* Custom fullscreen toggle — fullscreens the wrapper so skeleton + ghost stay visible */}
-      <button
-        onClick={toggleFullscreen}
-        aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-        title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen (keeps skeleton)'}
-        style={{
-          position: 'absolute', top: 10, right: 12, zIndex: 10,
-          width: 34, height: 34, borderRadius: 10,
-          background: 'rgba(0,0,0,0.55)', border: '1px solid rgba(255,255,255,0.15)',
-          color: 'rgba(255,255,255,0.85)', cursor: 'pointer',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}
-      >
-        {isFullscreen ? (
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-            <path d="M9 3v4a2 2 0 0 1-2 2H3m18 0h-4a2 2 0 0 1-2-2V3M3 15h4a2 2 0 0 1 2 2v4m12 0v-4a2 2 0 0 1 2-2h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        ) : (
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-            <path d="M3 9V3h6M21 9V3h-6M3 15v6h6M21 15v6h-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        )}
-      </button>
 
       {/* Ghost Rider toggle */}
       <button

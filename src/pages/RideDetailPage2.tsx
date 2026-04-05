@@ -348,24 +348,34 @@ export default function RideDetailPage2() {
           </div>
         )}
 
-        {/* Camera icon overlay on video */}
+        {/* Replace-video button — video-swap icon */}
         {ride.videoUrl && (
-          <button onClick={() => fileInputRef.current?.click()} title="Replace video" style={{
-            position: 'absolute', top: 12, right: 12, zIndex: 10,
-            width: 36, height: 36, borderRadius: '50%',
+          <button onClick={() => fileInputRef.current?.click()} aria-label="Replace video" title="Replace video" style={{
+            position: 'absolute', top: 10, right: 10, zIndex: 10,
+            height: 30, borderRadius: 15,
             background: uploading ? 'rgba(0,0,0,0.7)' : 'rgba(0,0,0,0.55)',
             border: '1px solid rgba(255,255,255,0.2)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '0 12px 0 10px',
             cursor: 'pointer', backdropFilter: 'blur(4px)',
+            color: 'rgba(255,255,255,0.9)',
           }}>
             {uploading ? (
               <div style={{ width: 14, height: 14, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
             ) : (
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="13" r="4" stroke="rgba(255,255,255,0.85)" strokeWidth="1.5"/>
-                <path d="M3 9h2l2-3h10l2 3h2a1 1 0 011 1v9a1 1 0 01-1 1H3a1 1 0 01-1-1v-9a1 1 0 011-1z"
-                  stroke="rgba(255,255,255,0.85)" strokeWidth="1.5" strokeLinejoin="round"/>
-              </svg>
+              <>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                  {/* Video rectangle with play triangle + small swap arrows */}
+                  <rect x="3" y="6" width="14" height="12" rx="2" stroke="currentColor" strokeWidth="1.7"/>
+                  <path d="M17 10l4-2v8l-4-2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M7 3l-2 2 2 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.7"/>
+                  <path d="M5 5h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" opacity="0.7"/>
+                </svg>
+                <span style={{
+                  fontSize: 10, fontWeight: 600, letterSpacing: '0.04em',
+                  fontFamily: "'DM Sans', sans-serif",
+                }}>Replace</span>
+              </>
             )}
           </button>
         )}
