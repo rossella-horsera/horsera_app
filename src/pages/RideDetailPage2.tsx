@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getRides, updateRide, deleteRide, type StoredRide } from '@/lib/storage';
 import { parseLocalDate } from '@/lib/utils';
+import { useCadence } from '@/context/CadenceContext';
 import VideoWithSkeleton from '../components/VideoWithSkeleton';
 
 const C = {
@@ -90,6 +91,7 @@ const card = (extra: React.CSSProperties = {}): React.CSSProperties => ({
 export default function RideDetailPage2() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { openCadence } = useCadence();
   const [editingDate, setEditingDate] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -242,9 +244,9 @@ export default function RideDetailPage2() {
             <path d="M10 3L5 8L10 13" stroke={C.nk} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
         </button>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 16, color: C.nk }}>
-            {ride.type.charAt(0).toUpperCase() + ride.type.slice(1)} · {ride.horse}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 16, color: C.nk, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {ride.name || `${ride.type.charAt(0).toUpperCase() + ride.type.slice(1)} · ${ride.horse}`}
           </div>
           {editingDate ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -384,23 +386,86 @@ export default function RideDetailPage2() {
         <input type="file" accept="video/*" style={{ display: 'none' }} ref={fileInputRef} onChange={handleVideoReplace} />
       </div>
 
+      {/* ── Rider notes (if set) ── */}
+      {ride.notes && (
+        <div style={{ padding: '12px 18px 0' }}>
+          <div style={{
+            background: 'rgba(255,255,255,0.5)',
+            borderLeft: `2px solid rgba(28,28,30,0.15)`,
+            padding: '10px 14px', borderRadius: '0 10px 10px 0',
+          }}>
+            <div style={{
+              fontSize: 10, fontWeight: 600, letterSpacing: '0.1em',
+              textTransform: 'uppercase', color: 'rgba(28,28,30,0.4)',
+              fontFamily: "'DM Sans', sans-serif", marginBottom: 6,
+            }}>Your notes</div>
+            <div style={{
+              fontSize: 13, color: C.nk, lineHeight: 1.5,
+              fontFamily: "'DM Sans', sans-serif", whiteSpace: 'pre-wrap',
+            }}>{ride.notes}</div>
+          </div>
+        </div>
+      )}
+
       {/* ── S4: CADENCE INSIGHT ── */}
       <div style={{ padding: '12px 18px' }}>
         <div style={{
-          ...card(), borderLeft: `3px solid ${C.cg}`, display: 'flex', gap: 12, alignItems: 'flex-start',
+          ...card(), borderLeft: `3px solid ${C.cg}`, display: 'flex', flexDirection: 'column', gap: 12,
         }}>
-          <div style={{
-            width: 8, height: 8, borderRadius: '50%', background: C.cg, marginTop: 4, flexShrink: 0,
-            animation: 'pulse 2s infinite',
-          }} />
-          <div>
-            <div style={{ fontSize: 11, fontWeight: 500, color: C.cg, fontFamily: "'Inter', sans-serif", marginBottom: 4 }}>
-              Cadence
-            </div>
-            <div style={{ fontSize: 13, color: C.na, fontFamily: "'Playfair Display', serif", fontStyle: 'italic', lineHeight: 1.5 }}>
-              {ride.insights?.[0] || "Upload a video to unlock Cadence's analysis."}
+          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+            <div style={{
+              width: 8, height: 8, borderRadius: '50%', background: C.cg, marginTop: 4, flexShrink: 0,
+              animation: 'pulse 2s infinite',
+            }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 11, fontWeight: 500, color: C.cg, fontFamily: "'Inter', sans-serif", marginBottom: 4 }}>
+                Cadence
+              </div>
+              <div style={{ fontSize: 13, color: C.na, fontFamily: "'Playfair Display', serif", fontStyle: 'italic', lineHeight: 1.5 }}>
+                {ride.insights?.[0] || "Upload a video to unlock Cadence's analysis."}
+              </div>
             </div>
           </div>
+          {ride.insights?.[0] && (
+            <div style={{
+              display: 'flex', gap: 8, flexWrap: 'wrap',
+              borderTop: '1px solid rgba(0,0,0,0.06)', paddingTop: 10,
+            }}>
+              {[
+                `Why is my ${worstZone.label.toLowerCase()} at ${worstZone.score}?`,
+                `How do I improve from this session?`,
+              ].map((q, i) => (
+                <button
+                  key={i}
+                  onClick={openCadence}
+                  style={{
+                    fontSize: 11, padding: '6px 10px', borderRadius: 16,
+                    background: `${C.cg}0E`, border: `1px solid ${C.cg}33`,
+                    color: C.cg, fontFamily: "'DM Sans', sans-serif", fontWeight: 500,
+                    cursor: 'pointer', textAlign: 'left',
+                    WebkitTapHighlightColor: 'transparent',
+                  }}
+                >
+                  {q}
+                </button>
+              ))}
+              <button
+                onClick={openCadence}
+                style={{
+                  fontSize: 11, padding: '6px 12px', borderRadius: 16,
+                  background: C.cg, border: 'none', color: '#fff',
+                  fontFamily: "'DM Sans', sans-serif", fontWeight: 600,
+                  cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 5,
+                  WebkitTapHighlightColor: 'transparent',
+                }}
+              >
+                Ask Cadence
+                <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+                  <path d="M3 6h6m0 0L6 3m3 3L6 9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

@@ -841,6 +841,15 @@ export default function RidesPage() {
   // Saved ride state
   const [sessionSaved, setSessionSaved] = useState(false);
 
+  // Optional ride name/notes (collapsed by default — Apple/Oura-style reveal)
+  const [rideName, setRideName] = useState('');
+  const [rideNotes, setRideNotes] = useState('');
+  const [showNotesField, setShowNotesField] = useState(false);
+
+  // Save mode when a ride already exists on this date — 'replace' or 'new'
+  const [conflictMode, setConflictMode] = useState<'replace' | 'new'>('replace');
+  const [videoDuration, setVideoDuration] = useState<number | null>(null);
+
   // Card #59 — validation & UX state
   const [fileError, setFileError] = useState<string | null>(null);
   const [fileSizeWarning, setFileSizeWarning] = useState<string | null>(null);
@@ -982,14 +991,19 @@ export default function RidesPage() {
     const horse = getUserProfile().horseName || 'Your Horse';
     const duration = parseInt(logDuration, 10) || 45;
 
-    // If a ride already exists for this date + horse + type, reuse its id so saveRide() overwrites it.
+    // If a ride already exists for this date + horse + type, handle the conflict
+    // per the user's choice: 'replace' reuses the id (overwrites), 'new' generates a fresh id.
     const existing = getRides().find(r => r.date === logDate && r.horse === horse && r.type === logType);
-    const rideId = existing?.id ?? sessionId ?? `stored-${Date.now()}`;
+    const rideId = (existing && conflictMode === 'replace')
+      ? existing.id
+      : (sessionId ?? `stored-${Date.now()}`);
 
     const ride: StoredRide = {
       id: rideId,
       date: logDate,
       horse,
+      name: rideName.trim() || undefined,
+      notes: rideNotes.trim() || undefined,
       type: logType,
       duration,
       videoFileName: videoFile.name,
@@ -1056,8 +1070,28 @@ export default function RidesPage() {
     setSessionSaved(false);
     setFileError(null);
     setFileSizeWarning(null);
+    setRideName('');
+    setRideNotes('');
+    setShowNotesField(false);
+    setConflictMode('replace');
+    setVideoDuration(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
+
+  // Detect video duration when a file is selected
+  useEffect(() => {
+    if (!videoFile) { setVideoDuration(null); return; }
+    const url = URL.createObjectURL(videoFile);
+    const v = document.createElement('video');
+    v.preload = 'metadata';
+    v.src = url;
+    v.onloadedmetadata = () => {
+      setVideoDuration(v.duration);
+      URL.revokeObjectURL(url);
+    };
+    v.onerror = () => { URL.revokeObjectURL(url); };
+    return () => { URL.revokeObjectURL(url); };
+  }, [videoFile]);
 
   // Combine stored rides with mock rides for the history
   const allRides = useMemo(() => {
@@ -1470,39 +1504,151 @@ export default function RidesPage() {
                 {/* ── Insights Summary Card ──────────────────── */}
                 <InsightsCard insights={result.insights} />
 
-                {/* ── Ride date (editable before save) ─────────── */}
+                {/* ── Ride date + optional name/notes + conflict handling ───────── */}
                 {!sessionSaved && (() => {
                   const horse = getUserProfile().horseName || 'Your Horse';
                   const existing = storedRides.find(r => r.date === logDate && r.horse === horse && r.type === logType);
                   return (
-                    <div style={{ marginTop: '16px' }}>
-                      <label style={{
-                        fontSize: '11px', fontWeight: 600, color: COLORS.muted,
-                        letterSpacing: '0.1em', textTransform: 'uppercase',
-                        fontFamily: FONTS.body, display: 'block', marginBottom: '8px',
-                      }}>
-                        Ride date
-                      </label>
-                      <input
-                        type="date"
-                        value={logDate}
-                        max={new Date().toISOString().split('T')[0]}
-                        onChange={e => setLogDate(e.target.value)}
-                        style={{
-                          width: '100%', padding: '10px 12px',
-                          borderRadius: '10px', border: `1.5px solid ${COLORS.border}`,
-                          fontSize: '14px', color: COLORS.charcoal,
-                          fontFamily: FONTS.mono,
-                          outline: 'none', background: COLORS.parchment,
-                          boxSizing: 'border-box',
-                        }}
-                      />
+                    <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                      {/* Date */}
+                      <div>
+                        <label style={{
+                          fontSize: '11px', fontWeight: 600, color: COLORS.muted,
+                          letterSpacing: '0.1em', textTransform: 'uppercase',
+                          fontFamily: FONTS.body, display: 'block', marginBottom: '8px',
+                        }}>
+                          Ride date
+                        </label>
+                        <input
+                          type="date"
+                          value={logDate}
+                          max={new Date().toISOString().split('T')[0]}
+                          onChange={e => setLogDate(e.target.value)}
+                          style={{
+                            width: '100%', padding: '10px 12px',
+                            borderRadius: '10px', border: `1.5px solid ${COLORS.border}`,
+                            fontSize: '14px', color: COLORS.charcoal,
+                            fontFamily: FONTS.mono,
+                            outline: 'none', background: COLORS.parchment,
+                            boxSizing: 'border-box',
+                          }}
+                        />
+                        {videoDuration !== null && (
+                          <div style={{
+                            marginTop: '6px', fontSize: '11px', color: COLORS.muted,
+                            fontFamily: FONTS.body,
+                          }}>
+                            This video: {Math.floor(videoDuration / 60)}:{String(Math.floor(videoDuration % 60)).padStart(2, '0')}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Conflict preview + replace/new choice */}
                       {existing && (
                         <div style={{
-                          marginTop: '8px', fontSize: '12px', color: COLORS.cognac,
-                          fontFamily: FONTS.body, fontStyle: 'italic',
+                          background: COLORS.parchment, borderRadius: '12px', padding: '12px',
+                          border: `1px solid ${COLORS.border}`,
                         }}>
-                          ↻ Will replace your existing {logType} ride from this date.
+                          <div style={{
+                            fontSize: '11px', fontWeight: 600, color: COLORS.cognac,
+                            letterSpacing: '0.08em', textTransform: 'uppercase',
+                            fontFamily: FONTS.body, marginBottom: '10px',
+                          }}>
+                            ↻ You already have a ride here
+                          </div>
+                          <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '12px' }}>
+                            {existing.videoUrl ? (
+                              <video
+                                src={`${existing.videoUrl}#t=2`}
+                                preload="metadata" muted playsInline
+                                style={{
+                                  width: 64, height: 64, objectFit: 'cover',
+                                  borderRadius: 8, background: '#EDE7DF', flexShrink: 0,
+                                }}
+                              />
+                            ) : (
+                              <div style={{
+                                width: 64, height: 64, borderRadius: 8,
+                                background: '#EDE7DF', flexShrink: 0,
+                              }} />
+                            )}
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.charcoal, fontFamily: FONTS.body }}>
+                                {existing.name || `${existing.type} · ${existing.horse}`}
+                              </div>
+                              <div style={{ fontSize: 11, color: COLORS.muted, fontFamily: FONTS.body, marginTop: 2 }}>
+                                {existing.duration}min · {Math.round(existing.overallScore * 100)}/100
+                              </div>
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button
+                              onClick={() => setConflictMode('replace')}
+                              style={{
+                                flex: 1, padding: '8px 10px', borderRadius: '8px', cursor: 'pointer',
+                                border: `1.5px solid ${conflictMode === 'replace' ? COLORS.cognac : COLORS.border}`,
+                                background: conflictMode === 'replace' ? COLORS.cognac : '#fff',
+                                color: conflictMode === 'replace' ? COLORS.parchment : COLORS.charcoal,
+                                fontSize: '12px', fontWeight: 600, fontFamily: FONTS.body,
+                              }}
+                            >Replace existing</button>
+                            <button
+                              onClick={() => setConflictMode('new')}
+                              style={{
+                                flex: 1, padding: '8px 10px', borderRadius: '8px', cursor: 'pointer',
+                                border: `1.5px solid ${conflictMode === 'new' ? COLORS.cognac : COLORS.border}`,
+                                background: conflictMode === 'new' ? COLORS.cognac : '#fff',
+                                color: conflictMode === 'new' ? COLORS.parchment : COLORS.charcoal,
+                                fontSize: '12px', fontWeight: 600, fontFamily: FONTS.body,
+                              }}
+                            >Save as new</button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Optional name + notes — collapsed reveal */}
+                      {!showNotesField ? (
+                        <button
+                          onClick={() => setShowNotesField(true)}
+                          style={{
+                            background: 'transparent', border: 'none', padding: 0,
+                            color: COLORS.cognac, fontSize: '12px', fontFamily: FONTS.body,
+                            cursor: 'pointer', textAlign: 'left',
+                            display: 'inline-flex', alignItems: 'center', gap: 6,
+                            alignSelf: 'flex-start',
+                          }}
+                        >
+                          <span style={{ fontSize: 14, lineHeight: 1 }}>+</span> Add a name or note <span style={{ opacity: 0.5 }}>(optional)</span>
+                        </button>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', animation: 'slideUp 0.25s ease' }}>
+                          <input
+                            type="text"
+                            value={rideName}
+                            onChange={e => setRideName(e.target.value)}
+                            placeholder="Name this ride (e.g. Clinic day, Test run)"
+                            maxLength={60}
+                            style={{
+                              width: '100%', padding: '10px 12px',
+                              borderRadius: '10px', border: `1.5px solid ${COLORS.border}`,
+                              fontSize: '14px', color: COLORS.charcoal, fontFamily: FONTS.body,
+                              outline: 'none', background: COLORS.parchment, boxSizing: 'border-box',
+                            }}
+                          />
+                          <textarea
+                            value={rideNotes}
+                            onChange={e => setRideNotes(e.target.value)}
+                            placeholder="How did it feel? What did you work on?"
+                            rows={3}
+                            maxLength={500}
+                            style={{
+                              width: '100%', padding: '10px 12px',
+                              borderRadius: '10px', border: `1.5px solid ${COLORS.border}`,
+                              fontSize: '13px', color: COLORS.charcoal, fontFamily: FONTS.body,
+                              outline: 'none', background: COLORS.parchment, boxSizing: 'border-box',
+                              resize: 'vertical', lineHeight: 1.5,
+                            }}
+                          />
                         </div>
                       )}
                     </div>
@@ -2204,123 +2350,127 @@ function SwipeRideRow({ ride, storedRide, trendDelta, onNavigate, onDelete }: {
           position: 'relative', zIndex: 1,
           background: '#fff', borderRadius: 16, padding: '14px 16px',
           boxShadow: '0 2px 12px rgba(0,0,0,0.05)', cursor: 'pointer',
+          display: 'flex', gap: 12, alignItems: 'stretch',
         }}
       >
-        {/* Row 1: Horse · Type + badges */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
-          <span style={{ fontSize: 14, fontWeight: 600, color: RC.nk, fontFamily: "'DM Sans', sans-serif" }}>
-            {(ride.type.charAt(0).toUpperCase() + ride.type.slice(1))} · {ride.horse}
-          </span>
-          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-            {storedRide?.videoUrl ? (
-              <div style={{
-                position: 'relative', width: 56, height: 32, borderRadius: 6,
-                overflow: 'hidden', background: '#EDE7DF', flexShrink: 0,
-                boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
-              }}>
-                <video
-                  src={`${storedRide.videoUrl}#t=2`}
-                  preload="metadata"
-                  muted
-                  playsInline
-                  style={{
-                    position: 'absolute', inset: 0,
-                    width: '100%', height: '100%', objectFit: 'cover',
-                    pointerEvents: 'none',
-                  }}
-                />
-                <div style={{
-                  position: 'absolute', inset: 0,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  background: 'linear-gradient(to top, rgba(0,0,0,0.25), rgba(0,0,0,0.05))',
-                }}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="white" style={{ filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.4))' }}>
-                    <path d="M8 5v14l11-7L8 5z"/>
-                  </svg>
-                </div>
-              </div>
-            ) : (storedRide?.videoUrl || ride.videoUploaded) ? (
-              <span aria-label="Video" title="Video" style={{
-                display: 'inline-flex', alignItems: 'center', gap: 3,
-                fontSize: 9, background: `${RC.cg}15`, color: RC.cg,
-                padding: '3px 7px', borderRadius: 6,
-                fontFamily: "'DM Sans', sans-serif", fontWeight: 600,
-                letterSpacing: '0.04em',
-              }}>
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none">
-                  <rect x="3" y="4" width="18" height="16" rx="3" stroke="currentColor" strokeWidth="2"/>
-                  <path d="M10 8.5V15.5L16 12L10 8.5Z" fill="currentColor"/>
-                </svg>
-                VIDEO
-              </span>
-            ) : null}
+        {/* Left: Content */}
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 14, fontWeight: 600, color: RC.nk, fontFamily: "'DM Sans', sans-serif", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {(ride.type.charAt(0).toUpperCase() + ride.type.slice(1))} · {ride.horse}
+            </span>
           </div>
-        </div>
+          {storedRide?.name && (
+            <div style={{ fontSize: 12, color: RC.cg, fontStyle: 'italic', fontFamily: "'Playfair Display', serif", marginTop: -2 }}>
+              {storedRide.name}
+            </div>
+          )}
+          <div style={{ fontSize: 11, color: COLORS.muted, fontFamily: "'DM Sans', sans-serif" }}>
+            {dateStr} · {ride.duration}min
+          </div>
 
-        {/* Row 2: Date · Duration */}
-        <div style={{ fontSize: 11, color: COLORS.muted, fontFamily: "'DM Sans', sans-serif", marginBottom: bioEntries.length > 0 ? 8 : 0 }}>
-          {dateStr} · {ride.duration}min
-        </div>
-
-        {/* Row 3: Best + Worst chips */}
-        {best && (
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
-            <span style={{
-              fontSize: 11, padding: '3px 10px', borderRadius: 20,
-              background: 'rgba(91,158,86,0.08)', border: '1px solid rgba(91,158,86,0.2)',
-              color: RC.ideal, fontFamily: "'DM Sans', sans-serif",
-            }}>↑ {best.label} {best.score}/100</span>
-            {worst && worst.key !== best.key && (
+          {best && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
               <span style={{
                 fontSize: 11, padding: '3px 10px', borderRadius: 20,
-                background: 'rgba(193,127,74,0.06)', border: '1px solid rgba(193,127,74,0.2)',
-                color: RC.cg, fontFamily: "'DM Sans', sans-serif",
-              }}>↓ {worst.label}</span>
-            )}
-          </div>
-        )}
+                background: 'rgba(91,158,86,0.08)', border: '1px solid rgba(91,158,86,0.2)',
+                color: RC.ideal, fontFamily: "'DM Sans', sans-serif",
+              }}>↑ {best.label} {best.score}/100</span>
+              {worst && worst.key !== best.key && (
+                <span style={{
+                  fontSize: 11, padding: '3px 10px', borderRadius: 20,
+                  background: 'rgba(193,127,74,0.06)', border: '1px solid rgba(193,127,74,0.2)',
+                  color: RC.cg, fontFamily: "'DM Sans', sans-serif",
+                }}>↓ {worst.label}</span>
+              )}
+            </div>
+          )}
 
-        {/* Row 4: Trend + Score */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            {trendLabel && (
+          {trendLabel && (
+            <div style={{ marginTop: 6 }}>
               <span style={{
                 fontSize: 10, fontWeight: 500, textTransform: 'uppercase',
                 padding: '2px 8px', borderRadius: 12,
                 background: `${trendLabel.color}15`, color: trendLabel.color,
                 fontFamily: "'DM Sans', sans-serif",
               }}>{trendLabel.arrow} {trendLabel.text}</span>
-            )}
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            {score !== null && (() => {
-              const bandColor =
-                score >= 75 ? RC.ideal :
-                score >= 60 ? '#C9A96E' :
-                RC.focus;
-              const r = 18;
+            </div>
+          )}
+        </div>
+
+        {/* Right: Thumbnail with score ring overlay */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+          {storedRide?.videoUrl ? (
+            <div style={{
+              position: 'relative', width: 92, height: 92, borderRadius: 10,
+              overflow: 'hidden', background: '#EDE7DF',
+              boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
+            }}>
+              <video
+                src={`${storedRide.videoUrl}#t=2`}
+                preload="metadata"
+                muted
+                playsInline
+                style={{
+                  position: 'absolute', inset: 0,
+                  width: '100%', height: '100%', objectFit: 'cover',
+                  pointerEvents: 'none',
+                }}
+              />
+              {/* Score ring overlay — bottom-right corner */}
+              {score !== null && (() => {
+                const bandColor = score >= 75 ? RC.ideal : score >= 60 ? '#C9A96E' : RC.focus;
+                const r = 14;
+                const c = 2 * Math.PI * r;
+                const dash = (score / 100) * c;
+                return (
+                  <div style={{
+                    position: 'absolute', bottom: 4, right: 4,
+                    width: 34, height: 34, borderRadius: '50%',
+                    background: 'rgba(28,20,14,0.72)',
+                    backdropFilter: 'blur(6px)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <svg width="34" height="34" viewBox="0 0 34 34" style={{ position: 'absolute', transform: 'rotate(-90deg)' }}>
+                      <circle cx="17" cy="17" r={r} fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="2.2"/>
+                      <circle cx="17" cy="17" r={r} fill="none" stroke={bandColor} strokeWidth="2.2"
+                        strokeDasharray={`${dash} ${c}`} strokeLinecap="round"/>
+                    </svg>
+                    <span style={{
+                      fontSize: 12, fontWeight: 700, color: bandColor,
+                      fontFamily: "'DM Mono', monospace", position: 'relative',
+                    }}>{score}</span>
+                  </div>
+                );
+              })()}
+            </div>
+          ) : score !== null ? (
+            // No video — show score ring alone
+            (() => {
+              const bandColor = score >= 75 ? RC.ideal : score >= 60 ? '#C9A96E' : RC.focus;
+              const r = 26;
               const c = 2 * Math.PI * r;
               const dash = (score / 100) * c;
               return (
-                <div style={{ position: 'relative', width: 42, height: 42 }}>
-                  <svg width="42" height="42" viewBox="0 0 42 42" style={{ transform: 'rotate(-90deg)' }}>
-                    <circle cx="21" cy="21" r={r} fill="none" stroke="rgba(28,28,30,0.08)" strokeWidth="3"/>
-                    <circle cx="21" cy="21" r={r} fill="none" stroke={bandColor} strokeWidth="3"
+                <div style={{ position: 'relative', width: 60, height: 60 }}>
+                  <svg width="60" height="60" viewBox="0 0 60 60" style={{ transform: 'rotate(-90deg)' }}>
+                    <circle cx="30" cy="30" r={r} fill="none" stroke="rgba(28,28,30,0.08)" strokeWidth="3.5"/>
+                    <circle cx="30" cy="30" r={r} fill="none" stroke={bandColor} strokeWidth="3.5"
                       strokeDasharray={`${dash} ${c}`} strokeLinecap="round"/>
                   </svg>
                   <div style={{
                     position: 'absolute', inset: 0, display: 'flex',
                     alignItems: 'center', justifyContent: 'center',
-                    fontSize: 14, fontWeight: 700, color: bandColor,
+                    fontSize: 18, fontWeight: 700, color: bandColor,
                     fontFamily: "'DM Mono', monospace",
                   }}>
                     {score}
                   </div>
                 </div>
               );
-            })()}
-            <span style={{ color: 'rgba(28,28,30,0.25)', fontSize: 14 }}>›</span>
-          </div>
+            })()
+          ) : null}
+          <span style={{ color: 'rgba(28,28,30,0.25)', fontSize: 14 }}>›</span>
         </div>
       </div>
     </div>
