@@ -8,6 +8,22 @@ This file records Rossella's feedback on how the team works. All agents read thi
 
 ## Standing Instructions (apply always, from day one)
 
+### UI must be seamless + premium — never functional or 90s
+Every pixel we ship must meet Apple / Oura / Airbnb caliber. No exceptions.
+
+- Prefer **icons + affordance** (pen, plus, chevron) over button-text that states a function
+- **No dashed borders** to indicate "click here to reveal" — this reads as 90s/functional
+- Optional/secondary actions should be unobtrusive and discoverable via visual affordance, not verbose CTAs
+- **Every word on screen must justify its real estate** — if an icon works, use the icon
+- **Dense text blocks are a code smell** — find a visual alternative
+- **Consistency is non-negotiable**: if scores are shown as rings anywhere, they should be rings EVERYWHERE (same size, same band colors, same font)
+- Ask: "would Apple Fitness / Oura ship this exact pixel?" — if no, redesign
+- When in doubt, Lauren (UX) and Ross (product) must co-design a more elegant path
+
+**Examples Rossella has explicitly rejected:**
+- Dashed box with "+ Add a name or note to this ride" → Use a pen icon next to the ride header/date
+- "Ask Cadence" button sitting next to prompt pills looking like a third prompt → Primary full-width CTA with Cadence symbol, secondary prompts labeled "Or try" underneath
+
 ### Visual-first communication
 - Rossella thinks visually, not textually
 - Always lead with a mockup, diagram, sketch, or visual framework BEFORE writing explanatory text

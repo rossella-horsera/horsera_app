@@ -120,11 +120,13 @@ export default function InsightsTab() {
   // Bio scroll state
   const bioScrollRef = useRef<HTMLDivElement>(null);
   const [showScrollArrow, setShowScrollArrow] = useState(true);
+  const [showLeftArrow, setShowLeftArrow] = useState(false);
 
   const checkScroll = useCallback(() => {
     const el = bioScrollRef.current;
     if (!el) return;
     setShowScrollArrow(el.scrollLeft + el.clientWidth < el.scrollWidth - 10);
+    setShowLeftArrow(el.scrollLeft > 10);
   }, []);
 
   useEffect(() => {
@@ -137,6 +139,9 @@ export default function InsightsTab() {
 
   const scrollBioRight = () => {
     bioScrollRef.current?.scrollBy({ left: 160, behavior: 'smooth' });
+  };
+  const scrollBioLeft = () => {
+    bioScrollRef.current?.scrollBy({ left: -160, behavior: 'smooth' });
   };
 
   const allRides = useMemo(() =>
@@ -436,6 +441,26 @@ export default function InsightsTab() {
             </div>
 
             {/* Scroll arrow overlay */}
+            {showLeftArrow && (
+              <div style={{
+                position: 'absolute', left: 0, top: 0, bottom: 8, width: 48,
+                background: `linear-gradient(to left, transparent, rgba(245,239,230,0.95))`,
+                display: 'flex', alignItems: 'center', justifyContent: 'flex-start',
+                paddingLeft: 8, pointerEvents: 'none',
+              }}>
+                <button onClick={scrollBioLeft} aria-label="Scroll left" style={{
+                  width: 28, height: 28, borderRadius: '50%',
+                  background: '#fff', border: '0.5px solid rgba(28,28,30,0.15)',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  cursor: 'pointer', pointerEvents: 'auto',
+                }}>
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <path d="M7.5 2L3.5 6L7.5 10" stroke={C.cg} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </button>
+              </div>
+            )}
             {showScrollArrow && (
               <div style={{
                 position: 'absolute', right: 0, top: 0, bottom: 8, width: 48,
@@ -443,7 +468,7 @@ export default function InsightsTab() {
                 display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
                 paddingRight: 8, pointerEvents: 'none',
               }}>
-                <button onClick={scrollBioRight} style={{
+                <button onClick={scrollBioRight} aria-label="Scroll right" style={{
                   width: 28, height: 28, borderRadius: '50%',
                   background: '#fff', border: '0.5px solid rgba(28,28,30,0.15)',
                   boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
@@ -526,18 +551,29 @@ export default function InsightsTab() {
             }}>
               Explore your Journey →
             </button>
-            <button style={{
-              width: '100%', height: 40, marginTop: 8,
-              background: 'transparent', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 22,
-              color: 'rgba(255,255,255,0.4)', fontFamily: "'DM Sans', sans-serif", fontSize: 12,
-              cursor: 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+            <div style={{
+              marginTop: 8, padding: '10px 14px',
+              background: 'transparent', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 14,
             }}>
-              Run the Test
-              <span style={{
-                fontSize: 9, fontWeight: 600, padding: '2px 8px', borderRadius: 8,
-                background: C.ch, color: C.nk,
-              }}>Coming soon</span>
-            </button>
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+              }}>
+                <span style={{
+                  color: 'rgba(255,255,255,0.55)', fontFamily: "'DM Sans', sans-serif",
+                  fontSize: 13, fontWeight: 600,
+                }}>Run the Test</span>
+                <span style={{
+                  fontSize: 9, fontWeight: 600, padding: '2px 8px', borderRadius: 8,
+                  background: C.ch, color: C.nk,
+                }}>Coming soon</span>
+              </div>
+              <div style={{
+                color: 'rgba(255,255,255,0.4)', fontFamily: "'DM Sans', sans-serif",
+                fontSize: 11, marginTop: 4, lineHeight: 1.45,
+              }}>
+                Ride a full test and see each movement scored like a judge would — your readiness, explained.
+              </div>
+            </div>
           </div>
         </div>
 

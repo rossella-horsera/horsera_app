@@ -1137,13 +1137,13 @@ export default function RidesPage() {
     return acc;
   }, {} as Record<string, Ride[]>);
 
-  // On first render with data, collapse all months except the newest
+  // On first render with data, collapse ALL months so riders see progress at a glance
   const monthsInitialized = useRef(false);
   useEffect(() => {
     if (monthsInitialized.current) return;
     const months = Object.keys(grouped);
     if (months.length === 0) return;
-    setCollapsedMonths(new Set(months.slice(1)));
+    setCollapsedMonths(new Set(months));
     monthsInitialized.current = true;
   }, [grouped]);
 
@@ -2082,6 +2082,11 @@ export default function RidesPage() {
           0%, 100% { opacity: 0.4; transform: scale(1); }
           50% { opacity: 1; transform: scale(1.3); }
         }
+        /* Ride card delete button — always visible on desktop (hover devices); hidden on touch (mobile uses swipe) */
+        @media (hover: hover) {
+          .ride-card-delete-btn { opacity: 0.5 !important; }
+          .ride-card-delete-btn:hover { opacity: 1 !important; background: rgba(193,75,46,0.1) !important; color: #C14A2A !important; }
+        }
       `}</style>
 
       {/* ── RIDE DETAIL VIEW (Card #56) ──────────────────────── */}
@@ -2294,6 +2299,32 @@ function SwipeRideRow({ ride, storedRide, trendDelta, onNavigate, onDelete }: {
           display: 'flex', gap: 12, alignItems: 'stretch',
         }}
       >
+        {/* Inline delete button (desktop/web — tap target on mobile is the swipe) */}
+        <button
+          onClick={e => {
+            e.stopPropagation();
+            if (window.confirm(`Delete this ${ride.type} ride from ${dateStr}? This cannot be undone.`)) {
+              onDelete();
+            }
+          }}
+          aria-label="Delete ride"
+          title="Delete ride"
+          className="ride-card-delete-btn"
+          style={{
+            position: 'absolute', top: 8, right: 8, zIndex: 2,
+            width: 26, height: 26, borderRadius: '50%',
+            background: 'transparent', border: 'none', cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: 'rgba(28,28,30,0.3)',
+            transition: 'background 0.15s ease, color 0.15s ease, opacity 0.15s ease',
+            opacity: 0,
+          }}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+            <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </button>
+
         {/* Left: Content */}
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>

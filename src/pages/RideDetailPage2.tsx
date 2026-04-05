@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { getRides, updateRide, deleteRide, type StoredRide } from '@/lib/storage';
 import { parseLocalDate } from '@/lib/utils';
 import { useCadence } from '@/context/CadenceContext';
+import { CadenceIcon } from '@/components/layout/CadenceFAB';
 import VideoWithSkeleton from '../components/VideoWithSkeleton';
 
 const C = {
@@ -50,10 +51,9 @@ function ScoreRing({ score, size = 52 }: { score: number; size?: number }) {
         strokeLinecap="round"
         transform="rotate(-90 50 50)"
       />
-      <text x="50" y="50" textAnchor="middle" fill={color}
-        style={{ fontFamily: "'DM Mono', monospace", fontWeight: 600 }}>
-        <tspan style={{ fontSize: '18px' }}>{score}</tspan>
-        <tspan style={{ fontSize: '10px', fill: '#BBB' }}>/100</tspan>
+      <text x="50" y="58" textAnchor="middle" dominantBaseline="middle" fill={color}
+        style={{ fontFamily: "'DM Mono', monospace", fontWeight: 700 }}>
+        <tspan style={{ fontSize: '30px' }}>{score}</tspan>
       </text>
     </svg>
   );
@@ -87,8 +87,12 @@ const card = (extra: React.CSSProperties = {}): React.CSSProperties => ({
 });
 
 /* ── Notes editor — inline editable name/notes ────────────────────── */
-function RideNotesEditor({ ride, onChange }: { ride: StoredRide; onChange: () => void }) {
-  const [isEditing, setIsEditing] = useState(false);
+function RideNotesEditor({ ride, isEditing, setIsEditing, onChange }: {
+  ride: StoredRide;
+  isEditing: boolean;
+  setIsEditing: (v: boolean) => void;
+  onChange: () => void;
+}) {
   const [name, setName] = useState(ride.name || '');
   const [notes, setNotes] = useState(ride.notes || '');
 
@@ -170,26 +174,9 @@ function RideNotesEditor({ ride, onChange }: { ride: StoredRide; onChange: () =>
     );
   }
 
-  if (!hasContent) {
-    return (
-      <div style={{ padding: '12px 18px 0' }}>
-        <button
-          onClick={() => setIsEditing(true)}
-          style={{
-            background: 'transparent', border: '1.5px dashed rgba(0,0,0,0.12)',
-            borderRadius: 10, padding: '10px 14px', cursor: 'pointer',
-            fontSize: 12, color: 'rgba(0,0,0,0.45)',
-            fontFamily: "'DM Sans', sans-serif",
-            width: '100%', textAlign: 'left',
-            display: 'flex', alignItems: 'center', gap: 6,
-          }}
-        >
-          <span style={{ fontSize: 14, lineHeight: 1 }}>+</span>
-          Add a name or note to this ride
-        </button>
-      </div>
-    );
-  }
+  // When no content: no visible card. User clicks the pen icon in the header to add notes.
+  // (The pen icon is rendered in the ride header next to the title — see RideDetailPage2 header.)
+  if (!hasContent) return null;
 
   return (
     <div style={{ padding: '12px 18px 0' }}>
@@ -238,6 +225,7 @@ export default function RideDetailPage2() {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [selectedMoment, setSelectedMoment] = useState<null | 'best' | 'focus'>(null);
+  const [editingNotes, setEditingNotes] = useState(false);
   const [, forceUpdate] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const emptyFileInputRef = useRef<HTMLInputElement>(null);
@@ -388,8 +376,31 @@ export default function RideDetailPage2() {
           </svg>
         </button>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 16, color: C.nk, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {ride.name || `${ride.type.charAt(0).toUpperCase() + ride.type.slice(1)} · ${ride.horse}`}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{
+              fontFamily: "'Playfair Display', serif", fontSize: 16, color: C.nk,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1,
+            }}>
+              {ride.name || `${ride.type.charAt(0).toUpperCase() + ride.type.slice(1)} · ${ride.horse}`}
+            </div>
+            <button
+              onClick={() => setEditingNotes(true)}
+              aria-label={ride.name || ride.notes ? 'Edit name and notes' : 'Add name or note'}
+              title={ride.name || ride.notes ? 'Edit name and notes' : 'Add name or note'}
+              style={{
+                width: 24, height: 24, borderRadius: '50%',
+                background: 'transparent', border: 'none', cursor: 'pointer',
+                color: 'rgba(0,0,0,0.35)', flexShrink: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                transition: 'color 0.15s ease, background 0.15s ease',
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = C.cg; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'rgba(0,0,0,0.35)'; }}
+            >
+              <svg width="13" height="13" viewBox="0 0 12 12" fill="none">
+                <path d="M8.5 1.5l2 2-7 7H1.5v-2l7-7z" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </button>
           </div>
           <div
             onClick={() => {
@@ -547,7 +558,12 @@ export default function RideDetailPage2() {
       </div>
 
       {/* ── Rider name + notes (editable) ── */}
-      <RideNotesEditor ride={ride} onChange={() => forceUpdate(n => n + 1)} />
+      <RideNotesEditor
+        ride={ride}
+        isEditing={editingNotes}
+        setIsEditing={setEditingNotes}
+        onChange={() => forceUpdate(n => n + 1)}
+      />
 
       {/* ── S4: CADENCE INSIGHT ── */}
       <div style={{ padding: '12px 18px' }}>
@@ -571,13 +587,13 @@ export default function RideDetailPage2() {
           {ride.insights?.[0] && (
             <div style={{
               borderTop: '1px solid rgba(0,0,0,0.06)', paddingTop: 12,
-              display: 'flex', flexDirection: 'column', gap: 10,
+              display: 'flex', flexDirection: 'column', gap: 8,
             }}>
-              {/* Primary CTA — full-width, visually distinct */}
+              {/* Primary CTA — uses the same Cadence icon as the omnipresent FAB */}
               <button
                 onClick={openCadence}
                 style={{
-                  width: '100%', padding: '11px 14px', borderRadius: 10,
+                  width: '100%', padding: '10px 14px', borderRadius: 10,
                   background: C.cg, border: 'none', color: '#fff',
                   fontFamily: "'DM Sans', sans-serif", fontWeight: 600, fontSize: 13,
                   cursor: 'pointer',
@@ -586,37 +602,28 @@ export default function RideDetailPage2() {
                   boxShadow: '0 2px 8px rgba(193,127,74,0.2)',
                 }}
               >
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                  <path d="M8 1C4.13 1 1 3.58 1 6.75c0 1.74.95 3.29 2.5 4.33L3 14l3.5-1.83c.48.08.98.12 1.5.12 3.87 0 7-2.58 7-5.75S11.87 1 8 1z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/>
-                </svg>
+                <CadenceIcon size={16} animated={false} />
                 Ask Cadence about this ride
               </button>
-              {/* Suggested prompts — secondary, visually subordinate */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <div style={{
-                  fontSize: 9, fontWeight: 600, letterSpacing: '0.14em',
-                  textTransform: 'uppercase', color: 'rgba(0,0,0,0.35)',
-                  fontFamily: "'DM Sans', sans-serif", marginBottom: 2,
-                }}>Or try</div>
+              {/* Suggested prompts — compact, inline row, subordinate */}
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 {[
                   `Why is my ${worstZone.label.toLowerCase()} at ${worstZone.score}?`,
-                  `How do I improve from this session?`,
+                  `How do I improve?`,
                 ].map((q, i) => (
                   <button
                     key={i}
                     onClick={openCadence}
                     style={{
-                      fontSize: 12, padding: '8px 12px', borderRadius: 10,
+                      fontSize: 11, padding: '5px 10px', borderRadius: 14,
                       background: 'transparent', border: `1px solid rgba(0,0,0,0.08)`,
-                      color: 'rgba(0,0,0,0.65)',
+                      color: 'rgba(0,0,0,0.55)',
                       fontFamily: "'DM Sans', sans-serif", fontWeight: 400,
                       cursor: 'pointer', textAlign: 'left',
                       WebkitTapHighlightColor: 'transparent',
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
                     }}
                   >
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{q}</span>
-                    <span style={{ color: 'rgba(0,0,0,0.25)', fontSize: 14, flexShrink: 0 }}>›</span>
+                    {q}
                   </button>
                 ))}
               </div>
