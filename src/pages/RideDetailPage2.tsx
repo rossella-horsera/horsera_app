@@ -409,7 +409,7 @@ export default function RideDetailPage2() {
         <SectionHeader title="Your Position" subtitle="Movement & Biomechanics" />
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, padding: '0 18px', marginBottom: 24 }}>
           {zones.map(z => (
-            <div key={z.label} style={{ ...card(), textAlign: 'center', padding: 14 }}>
+            <div key={z.label} style={{ ...card(), textAlign: 'center', padding: 14, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
               <ScoreRing score={z.score} />
               <div style={{ fontSize: 12, color: '#888', fontFamily: "'DM Sans', sans-serif", marginTop: 6 }}>
                 {z.label}
@@ -431,7 +431,7 @@ export default function RideDetailPage2() {
           <SectionHeader title="Riding Quality" subtitle="The Training Scales" />
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, padding: '0 18px', marginBottom: 24 }}>
             {qualityMetrics.map(m => (
-              <div key={m.name} style={{ ...card(), textAlign: 'center', padding: 14 }}>
+              <div key={m.name} style={{ ...card(), textAlign: 'center', padding: 14, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
                 <ScoreRing score={m.score} />
                 <div style={{ fontSize: 12, color: '#888', fontFamily: "'DM Sans', sans-serif", marginTop: 6 }}>
                   {m.name}

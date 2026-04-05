@@ -1773,13 +1773,21 @@ export default function RidesPage() {
 
                 {Object.entries(grouped).map(([month, rides], groupIdx) => {
           const isCollapsed = collapsedMonths.has(month);
-          // Compute avg score from storedRides that belong to this group
-          const scores = rides
-            .map(r => storedRides.find(s => s.id === r.id)?.overallScore)
-            .filter((s): s is number => typeof s === 'number');
-          const avgScore = scores.length > 0
-            ? Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 100)
-            : null;
+          // Collect (date, score) pairs for trajectory viz, chronologically
+          const ridePoints = [...rides]
+            .map(r => {
+              const stored = storedRides.find(s => s.id === r.id);
+              return stored ? { date: r.date, score: Math.round(stored.overallScore * 100) } : null;
+            })
+            .filter((p): p is { date: string; score: number } => p !== null)
+            .sort((a, b) => a.date.localeCompare(b.date));
+          const monthScores = ridePoints.map(p => p.score);
+          const hasTrajectory = monthScores.length >= 1;
+          const minScore = hasTrajectory ? Math.min(...monthScores) : 0;
+          const maxScore = hasTrajectory ? Math.max(...monthScores) : 0;
+          const firstScore = hasTrajectory ? monthScores[0] : 0;
+          const lastScore = hasTrajectory ? monthScores[monthScores.length - 1] : 0;
+          const delta = lastScore - firstScore;
           return (
           <div key={month}>
             <button
@@ -1820,37 +1828,55 @@ export default function RidesPage() {
                   · {rides.length} ride{rides.length !== 1 ? 's' : ''}
                 </span>
               </div>
-              {avgScore !== null && (() => {
-                // Oura-style: circular ring + number inside. Color varies by score band.
-                const bandColor =
-                  avgScore >= 75 ? COLORS.green :
-                  avgScore >= 60 ? '#C9A96E' :  // champagne
-                  '#C4714A';                     // attention
-                const r = 15;
-                const c = 2 * Math.PI * r;
-                const dash = (avgScore / 100) * c;
+              {hasTrajectory && (() => {
+                // Sparkline — score trajectory across the month (oldest → newest).
+                // Shows first score, the arc of progress, and last score.
+                const W = 72, H = 24;
+                const n = monthScores.length;
+                const range = Math.max(maxScore - minScore, 1);
+                const yFor = (s: number) => H - 2 - ((s - minScore) / range) * (H - 6);
+                const points = monthScores.map((s, i) => {
+                  const x = n === 1 ? W / 2 : (i / (n - 1)) * (W - 4) + 2;
+                  return `${x},${yFor(s)}`;
+                }).join(' ');
+                const deltaColor = delta > 2 ? COLORS.green : delta < -2 ? '#C4714A' : '#C9A96E';
+                const lineColor = '#B58E60';
                 return (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{
-                      fontSize: 9, fontWeight: 600, letterSpacing: '0.1em',
-                      textTransform: 'uppercase', color: 'rgba(28,28,30,0.4)',
-                      fontFamily: FONTS.body,
-                    }}>AVG</span>
-                    <div style={{ position: 'relative', width: 36, height: 36 }}>
-                      <svg width="36" height="36" viewBox="0 0 36 36" style={{ transform: 'rotate(-90deg)' }}>
-                        <circle cx="18" cy="18" r={r} fill="none" stroke="rgba(28,28,30,0.08)" strokeWidth="2.5"/>
-                        <circle cx="18" cy="18" r={r} fill="none" stroke={bandColor} strokeWidth="2.5"
-                          strokeDasharray={`${dash} ${c}`} strokeLinecap="round"/>
-                      </svg>
-                      <div style={{
-                        position: 'absolute', inset: 0, display: 'flex',
-                        alignItems: 'center', justifyContent: 'center',
-                        fontSize: 12, fontWeight: 700, color: bandColor,
-                        fontFamily: FONTS.body,
-                      }}>
-                        {avgScore}
-                      </div>
-                    </div>
+                      fontSize: 11, fontWeight: 600, fontFamily: "'DM Mono', monospace",
+                      color: 'rgba(28,28,30,0.45)',
+                    }}>{firstScore}</span>
+                    <svg width={W} height={H} style={{ display: 'block' }}>
+                      {n > 1 && (
+                        <polyline
+                          points={points} fill="none"
+                          stroke={lineColor} strokeWidth="1.5"
+                          strokeLinecap="round" strokeLinejoin="round"
+                        />
+                      )}
+                      {monthScores.map((s, i) => {
+                        const x = n === 1 ? W / 2 : (i / (n - 1)) * (W - 4) + 2;
+                        const isEndpoint = i === 0 || i === n - 1;
+                        return (
+                          <circle
+                            key={i} cx={x} cy={yFor(s)}
+                            r={isEndpoint ? 2.5 : 1.5}
+                            fill={isEndpoint ? lineColor : '#D6B989'}
+                          />
+                        );
+                      })}
+                    </svg>
+                    <span style={{
+                      fontSize: 11, fontWeight: 600, fontFamily: "'DM Mono', monospace",
+                      color: deltaColor,
+                    }}>{lastScore}</span>
+                    {n > 1 && (
+                      <span style={{
+                        fontSize: 9, fontWeight: 700, color: deltaColor,
+                        fontFamily: FONTS.body, letterSpacing: '0.02em',
+                      }}>{delta > 0 ? `+${delta}` : delta}</span>
+                    )}
                   </div>
                 );
               })()}
@@ -2266,14 +2292,34 @@ function SwipeRideRow({ ride, storedRide, trendDelta, onNavigate, onDelete }: {
               }}>{trendLabel.arrow} {trendLabel.text}</span>
             )}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center' }}>
-            {score !== null && (
-              <>
-                <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 16, fontWeight: 600, color: RC.cg }}>{score}</span>
-                <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: 'rgba(28,28,30,0.35)' }}>/100</span>
-              </>
-            )}
-            <span style={{ color: 'rgba(28,28,30,0.25)', marginLeft: 8, fontSize: 14 }}>›</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {score !== null && (() => {
+              const bandColor =
+                score >= 75 ? RC.ideal :
+                score >= 60 ? '#C9A96E' :
+                RC.focus;
+              const r = 18;
+              const c = 2 * Math.PI * r;
+              const dash = (score / 100) * c;
+              return (
+                <div style={{ position: 'relative', width: 42, height: 42 }}>
+                  <svg width="42" height="42" viewBox="0 0 42 42" style={{ transform: 'rotate(-90deg)' }}>
+                    <circle cx="21" cy="21" r={r} fill="none" stroke="rgba(28,28,30,0.08)" strokeWidth="3"/>
+                    <circle cx="21" cy="21" r={r} fill="none" stroke={bandColor} strokeWidth="3"
+                      strokeDasharray={`${dash} ${c}`} strokeLinecap="round"/>
+                  </svg>
+                  <div style={{
+                    position: 'absolute', inset: 0, display: 'flex',
+                    alignItems: 'center', justifyContent: 'center',
+                    fontSize: 14, fontWeight: 700, color: bandColor,
+                    fontFamily: "'DM Mono', monospace",
+                  }}>
+                    {score}
+                  </div>
+                </div>
+              );
+            })()}
+            <span style={{ color: 'rgba(28,28,30,0.25)', fontSize: 14 }}>›</span>
           </div>
         </div>
       </div>
