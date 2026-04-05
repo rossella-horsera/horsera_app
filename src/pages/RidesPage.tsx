@@ -1974,23 +1974,24 @@ function SwipeRideRow({ ride, storedRide, trendDelta, onNavigate, onDelete }: {
 
   return (
     <div style={{ position: 'relative', overflow: 'hidden', borderRadius: 16 }}>
-      {/* Delete strip */}
-      <div style={{
-        position: 'absolute', right: 0, top: 0, bottom: 0,
-        width: DELETE_THRESHOLD, background: RC.focus,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        borderRadius: '0 16px 16px 0',
-      }}>
-        <button onClick={onDelete} style={{
-          background: 'none', border: 'none', cursor: 'pointer',
-          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
-        }}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-            <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-          <span style={{ color: 'white', fontSize: 9, fontWeight: 600, letterSpacing: '0.08em', fontFamily: "'DM Sans', sans-serif" }}>DELETE</span>
-        </button>
-      </div>
+      {/* Delete strip — whole strip is the tap target */}
+      <button
+        onClick={onDelete}
+        aria-label="Delete ride"
+        style={{
+          position: 'absolute', right: 0, top: 0, bottom: 0,
+          width: DELETE_THRESHOLD, background: RC.focus,
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4,
+          border: 'none', padding: 0, cursor: 'pointer',
+          borderRadius: '0 16px 16px 0',
+          WebkitTapHighlightColor: 'rgba(255,255,255,0.2)',
+        }}
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+          <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+        <span style={{ color: 'white', fontSize: 9, fontWeight: 600, letterSpacing: '0.08em', fontFamily: "'DM Sans', sans-serif" }}>DELETE</span>
+      </button>
 
       {/* Swipeable card */}
       <div
