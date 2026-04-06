@@ -39,8 +39,22 @@ KP = {
 HORSE_CLASS_ID = 17      # COCO class 17 = horse
 CONF_THRESH    = 0.35    # minimum keypoint confidence accepted
 DET_CONF       = 0.30    # minimum horse detection confidence (lowered for better recall)
-SAMPLE_FPS     = 1       # default sampling rate for full-video analysis
 INPUT_SIZE     = 640     # YOLO input resolution
+
+
+def _env_int(name: str, default: int, minimum: int = 1) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return max(minimum, int(raw))
+    except Exception:
+        logger.warning("[config] Invalid integer for %s=%r; using default=%d", name, raw, default)
+        return default
+
+
+SAMPLE_FPS       = _env_int("SAMPLE_FPS", 1)         # default sampling rate for full-video analysis
+INFER_BATCH_SIZE = _env_int("INFER_BATCH_SIZE", 1)   # max sampled frames per ONNX inference call
 
 # Keypoint indices for occlusion handling
 LEFT_BODY = [5, 7, 9, 11, 13, 15]    # left shoulder through ankle
@@ -143,8 +157,23 @@ def _get_sessions():
 
     # Auto-detect GPU support
     available = ort.get_available_providers()
-    if "CUDAExecutionProvider" in available:
-        providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    require_cuda = os.environ.get("REQUIRE_CUDA", "").strip().lower() in {"1", "true", "yes", "on"}
+    has_cuda = "CUDAExecutionProvider" in available
+    logger.info("[models] Available ONNX providers: %s", available)
+
+    if require_cuda and not has_cuda:
+        raise RuntimeError(
+            f"[models] REQUIRE_CUDA is set but CUDAExecutionProvider is unavailable. providers={available}"
+        )
+
+    if has_cuda:
+        cuda_options = {
+            # Keep host<->device copies on the default stream for safer interop.
+            "do_copy_in_default_stream": "1",
+            # Heuristic search is faster to initialize; tune via env if needed.
+            "cudnn_conv_algo_search": os.environ.get("ORT_CUDNN_CONV_ALGO_SEARCH", "HEURISTIC"),
+        }
+        providers = [("CUDAExecutionProvider", cuda_options), "CPUExecutionProvider"]
         logger.info("[models] Using CUDA GPU acceleration")
     else:
         providers = ["CPUExecutionProvider"]
@@ -158,6 +187,7 @@ def _get_sessions():
         else:
             logger.error(f"[models] yolov8m.onnx NOT FOUND at {horse_path}")
         _horse_sess = ort.InferenceSession(horse_path, opts, providers=providers)
+        logger.info(f"[models] horse input shape: {_horse_sess.get_inputs()[0].shape}")
         for o in _horse_sess.get_outputs():
             logger.info(f"[models] horse output: {o.name} {o.shape}")
 
@@ -167,6 +197,7 @@ def _get_sessions():
         else:
             logger.error(f"[models] yolov8m-pose.onnx NOT FOUND at {pose_path}")
         _pose_sess = ort.InferenceSession(pose_path, opts, providers=providers)
+        logger.info(f"[models] pose input shape: {_pose_sess.get_inputs()[0].shape}")
         for o in _pose_sess.get_outputs():
             logger.info(f"[models] pose output: {o.name} {o.shape}")
 
@@ -198,6 +229,58 @@ def _preprocess(frame: np.ndarray):
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
     img = np.ascontiguousarray(img.transpose(2, 0, 1)[np.newaxis])  # NCHW
     return img, ratio, dw, dh
+
+
+def _model_max_batch(sess) -> Optional[int]:
+    shape = list(sess.get_inputs()[0].shape or [])
+    if not shape:
+        return None
+    b = shape[0]
+    if isinstance(b, int) and b > 0:
+        return b
+    return None
+
+
+def _preprocess_batch(frames: list[np.ndarray]) -> tuple[np.ndarray, list[tuple[float, float, float, int, int]]]:
+    """
+    Batch-preprocess frames.
+    Returns:
+      input_batch: (N, 3, INPUT_SIZE, INPUT_SIZE)
+      metas: list of (ratio, dw, dh, W, H)
+    """
+    inputs: list[np.ndarray] = []
+    metas: list[tuple[float, float, float, int, int]] = []
+    for frame in frames:
+        H, W = frame.shape[:2]
+        inp, ratio, dw, dh = _preprocess(frame)
+        inputs.append(inp)
+        metas.append((ratio, dw, dh, W, H))
+    return np.concatenate(inputs, axis=0), metas
+
+
+def _predict_rows(sess, batch_input: np.ndarray, channels: int) -> list[np.ndarray]:
+    """
+    Run ONNX session and normalize output shape to per-item [N, C] rows.
+    """
+    raw = np.asarray(sess.run(None, {sess.get_inputs()[0].name: batch_input})[0])
+
+    # Single item outputs
+    if raw.ndim == 2:
+        if raw.shape[0] == channels:   # [C, N]
+            return [raw.T]
+        if raw.shape[1] == channels:   # [N, C]
+            return [raw]
+
+    # Batched outputs
+    if raw.ndim == 3:
+        if raw.shape[1] == channels:   # [B, C, N]
+            return [raw[i].T for i in range(raw.shape[0])]
+        if raw.shape[2] == channels:   # [B, N, C]
+            return [raw[i] for i in range(raw.shape[0])]
+
+    raise RuntimeError(
+        f"Unexpected ONNX output shape {tuple(raw.shape)} for channels={channels}"
+    )
 
 
 # ── NMS ───────────────────────────────────────────────────────────────────────
@@ -541,21 +624,14 @@ def draw_skeleton(
 
 # ── Horse Detection ───────────────────────────────────────────────────────────
 
-def _horse_bboxes(frame: np.ndarray, sess) -> list[np.ndarray]:
-    """Return [x1,y1,x2,y2] horse bounding boxes in original pixel coords."""
-    H, W = frame.shape[:2]
-    inp, ratio, dw, dh = _preprocess(frame)
-
-    # YOLOv8m ONNX output: [1, 84, 8400]  →  [8400, 84]
-    raw  = sess.run(None, {sess.get_inputs()[0].name: inp})[0][0]
-    pred = raw.T  # [8400, 84]
-
+def _decode_horse_boxes(pred: np.ndarray, ratio: float, dw: float, dh: float, W: int, H: int) -> list[np.ndarray]:
+    """Decode [N,84] horse predictions into [x1,y1,x2,y2] original pixel coords."""
     horse_scores = pred[:, 4 + HORSE_CLASS_ID]
     mask = horse_scores > DET_CONF
     if not mask.any():
         return []
 
-    pred_f  = pred[mask]
+    pred_f = pred[mask]
     scores_f = horse_scores[mask]
     boxes_xyxy = _xywh2xyxy(pred_f[:, :4])
     keep = _nms(boxes_xyxy, scores_f)
@@ -568,22 +644,40 @@ def _horse_bboxes(frame: np.ndarray, sess) -> list[np.ndarray]:
     return result
 
 
+def _horse_bboxes_batch(frames: list[np.ndarray], sess) -> list[list[np.ndarray]]:
+    """Return horse bboxes for each frame in the input list."""
+    if not frames:
+        return []
+
+    max_batch = _model_max_batch(sess)
+    target_batch = min(INFER_BATCH_SIZE, len(frames))
+    if max_batch is not None:
+        target_batch = min(target_batch, max_batch)
+    target_batch = max(1, target_batch)
+
+    if len(frames) > 1 and target_batch == 1:
+        logger.debug("[batch] horse model currently fixed at batch=1; using sequential inference")
+
+    all_boxes: list[list[np.ndarray]] = []
+    for start in range(0, len(frames), target_batch):
+        chunk = frames[start:start + target_batch]
+        inp_batch, metas = _preprocess_batch(chunk)
+        preds = _predict_rows(sess, inp_batch, channels=84)
+        for pred, meta in zip(preds, metas):
+            ratio, dw, dh, W, H = meta
+            all_boxes.append(_decode_horse_boxes(pred, ratio, dw, dh, W, H))
+    return all_boxes
+
+
+def _horse_bboxes(frame: np.ndarray, sess) -> list[np.ndarray]:
+    """Return [x1,y1,x2,y2] horse bounding boxes in original pixel coords."""
+    return _horse_bboxes_batch([frame], sess)[0]
+
+
 # ── Pose Estimation ───────────────────────────────────────────────────────────
 
-def _run_pose(frame: np.ndarray, sess) -> list[np.ndarray]:
-    """
-    Run YOLOv8m-pose ONNX inference.
-    Returns list of (17, 3) arrays [x, y, conf] in original image coordinates.
-
-    YOLOv8m-pose ONNX output: [1, 56, 8400]
-      56 = 4 (bbox xywh) + 1 (person confidence) + 51 (17 keypoints × 3)
-    """
-    H, W = frame.shape[:2]
-    inp, ratio, dw, dh = _preprocess(frame)
-
-    raw  = sess.run(None, {sess.get_inputs()[0].name: inp})[0][0]  # [56, 8400]
-    pred = raw.T  # [8400, 56]
-
+def _decode_pose_keypoints(pred: np.ndarray, ratio: float, dw: float, dh: float, W: int, H: int) -> list[np.ndarray]:
+    """Decode [N,56] pose predictions into list[(17,3)] in original pixel coords."""
     conf = pred[:, 4]
     mask = conf > CONF_THRESH
     if not mask.any():
@@ -600,6 +694,117 @@ def _run_pose(frame: np.ndarray, sess) -> list[np.ndarray]:
         kp[:, 0], kp[:, 1] = _scale_back(kp[:, 0], kp[:, 1], ratio, dw, dh, W, H)
         results.append(kp)
     return results
+
+
+def _run_pose_batch(frames: list[np.ndarray], sess) -> list[list[np.ndarray]]:
+    """
+    Run YOLOv8m-pose ONNX inference for a list of frames.
+    Returns one list[(17,3)] per input frame.
+    """
+    if not frames:
+        return []
+
+    max_batch = _model_max_batch(sess)
+    target_batch = min(INFER_BATCH_SIZE, len(frames))
+    if max_batch is not None:
+        target_batch = min(target_batch, max_batch)
+    target_batch = max(1, target_batch)
+
+    if len(frames) > 1 and target_batch == 1:
+        logger.debug("[batch] pose model currently fixed at batch=1; using sequential inference")
+
+    all_results: list[list[np.ndarray]] = []
+    for start in range(0, len(frames), target_batch):
+        chunk = frames[start:start + target_batch]
+        inp_batch, metas = _preprocess_batch(chunk)
+        preds = _predict_rows(sess, inp_batch, channels=56)
+        for pred, meta in zip(preds, metas):
+            ratio, dw, dh, W, H = meta
+            all_results.append(_decode_pose_keypoints(pred, ratio, dw, dh, W, H))
+    return all_results
+
+
+def _run_pose(frame: np.ndarray, sess) -> list[np.ndarray]:
+    """
+    Run YOLOv8m-pose ONNX inference.
+    Returns list of (17, 3) arrays [x, y, conf] in original image coordinates.
+    """
+    return _run_pose_batch([frame], sess)[0]
+
+
+def _run_inference_batch(
+    frames: list[np.ndarray],
+    horse_sess,
+    pose_sess,
+    cropper: Optional[SmartCropper],
+) -> tuple[list[Optional[np.ndarray]], int, int]:
+    """
+    Run model inference for a sampled frame batch.
+
+    Returns:
+      selected_keypoints_per_frame, horse_frames_detected, cropped_frames_used
+    """
+    if not frames:
+        return [], 0, 0
+
+    horse_boxes_batch = _horse_bboxes_batch(frames, horse_sess)
+    horse_count = sum(1 for boxes in horse_boxes_batch if boxes)
+
+    if cropper is None:
+        pose_batch = _run_pose_batch(frames, pose_sess)
+        selected: list[Optional[np.ndarray]] = []
+        for kps_list, horse_boxes in zip(pose_batch, horse_boxes_batch):
+            kps = extract_keypoints(kps_list)
+            if kps is not None and horse_boxes and not _rider_overlaps_horse(kps, horse_boxes):
+                kps = None
+            selected.append(kps)
+        return selected, horse_count, 0
+
+    crop_count = 0
+    pose_inputs: list[np.ndarray] = []
+    crop_regions: list[Optional[Tuple[int, int, int, int]]] = []
+    crop_scales: list[float] = []
+    crop_offsets: list[Tuple[int, int]] = []
+
+    # Build crop inputs sequentially so EMA smoothing remains temporally consistent.
+    for frame, horse_boxes in zip(frames, horse_boxes_batch):
+        if horse_boxes:
+            areas = [(b[2] - b[0]) * (b[3] - b[1]) for b in horse_boxes]
+            horse_bbox = tuple(horse_boxes[int(np.argmax(areas))].astype(int))
+            frame_h, frame_w = frame.shape[:2]
+            expanded = cropper._expand_bbox(horse_bbox, frame_h, frame_w)
+            crop_region = cropper._smooth_bbox(expanded, frame_h, frame_w)
+        else:
+            # No horse in this frame: keep temporal continuity if we have history,
+            # otherwise fall back to full-frame pose.
+            if cropper.smoothed_bbox is not None:
+                crop_region = tuple(cropper.smoothed_bbox.astype(int))
+            else:
+                crop_region = None
+        crop_regions.append(crop_region)
+
+        if crop_region is not None:
+            crop_count += 1
+            cropped_frame, scale, offset = cropper.crop_and_scale(frame, crop_region)
+            pose_inputs.append(cropped_frame)
+            crop_scales.append(scale)
+            crop_offsets.append(offset)
+        else:
+            # Fall back to full-frame pose inference.
+            pose_inputs.append(frame)
+            crop_scales.append(1.0)
+            crop_offsets.append((0, 0))
+
+    pose_batch = _run_pose_batch(pose_inputs, pose_sess)
+    selected: list[Optional[np.ndarray]] = []
+    for kps_list, crop_region, scale, offset in zip(pose_batch, crop_regions, crop_scales, crop_offsets):
+        if crop_region is not None:
+            transformed = [cropper.transform_keypoints_to_original(kps, scale, offset) for kps in kps_list]
+        else:
+            transformed = kps_list
+        selected.append(_select_mounted_rider(transformed, crop_region))
+
+    return selected, horse_count, crop_count
 
 
 def _run_pose_with_crop(
@@ -965,6 +1170,9 @@ def analyze_video(
     logger.info(
         f"[analyze_video] smart_crop={use_smart_crop} smoothing={use_smoothing}"
     )
+    logger.info(
+        f"[analyze_video] infer_batch_size={INFER_BATCH_SIZE}"
+    )
 
     # Initialize smart cropper for rolling/adaptive crop
     cropper = SmartCropper(use_smoothing=use_smoothing) if use_smart_crop else None
@@ -976,6 +1184,36 @@ def analyze_video(
     sampled_count  = 0
     horse_count    = 0
     crop_count     = 0
+    sampled_frames: list[np.ndarray] = []
+    sampled_indices: list[int] = []
+
+    def _flush_sampled_batch() -> None:
+        nonlocal horse_count, crop_count
+        if not sampled_frames:
+            return
+        selected_batch, horse_hits, crop_hits = _run_inference_batch(
+            sampled_frames, horse_sess, pose_sess, cropper
+        )
+        horse_count += horse_hits
+        crop_count += crop_hits
+
+        for frame_idx, kps in zip(sampled_indices, selected_batch):
+            if kps is None:
+                continue
+            # Apply occlusion detection per frame
+            kps, _camera_side = process_keypoints_with_occlusion(kps)
+            valid_kps.append(kps)
+            valid_times.append(frame_idx / native_fps)
+            ls = _pt(kps, "left_shoulder")
+            rs = _pt(kps, "right_shoulder")
+            cae_per_frame.append(
+                abs(ls[0] - rs[0])
+                if ls is not None and rs is not None
+                else 0.0
+            )
+
+        sampled_frames.clear()
+        sampled_indices.clear()
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -994,46 +1232,16 @@ def analyze_video(
                 sampled_count += 1
                 frame = np.ascontiguousarray(raw_frame, dtype=np.uint8)
                 del raw_frame
-
-                # Run pose estimation (with or without smart cropping)
-                if cropper is not None:
-                    kps_list, crop_region = _run_pose_with_crop(
-                        frame, pose_sess, horse_sess, cropper
-                    )
-                    if crop_region is not None:
-                        crop_count += 1
-                        horse_count += 1
-                    # Use mounted rider selection for better accuracy
-                    kps = _select_mounted_rider(kps_list, crop_region)
-                else:
-                    # Legacy path: no smart cropping
-                    horse_boxes = _horse_bboxes(frame, horse_sess)
-                    if horse_boxes:
-                        horse_count += 1
-                    kps_list = _run_pose(frame, pose_sess)
-                    kps = extract_keypoints(kps_list)
-                    if kps is not None and horse_boxes and not _rider_overlaps_horse(kps, horse_boxes):
-                        kps = None
-
-                del frame
-
-                if kps is not None:
-                    # Apply occlusion detection per frame
-                    kps, camera_side = process_keypoints_with_occlusion(kps)
-                    valid_kps.append(kps)
-                    valid_times.append(idx / native_fps)
-                    ls = _pt(kps, "left_shoulder")
-                    rs = _pt(kps, "right_shoulder")
-                    cae_per_frame.append(
-                        abs(ls[0] - rs[0])
-                        if ls is not None and rs is not None
-                        else 0.0
-                    )
+                sampled_frames.append(frame)
+                sampled_indices.append(idx)
+                if len(sampled_frames) >= INFER_BATCH_SIZE:
+                    _flush_sampled_batch()
             else:
                 del raw_frame
 
             idx += 1
     finally:
+        _flush_sampled_batch()
         cap.release()
 
     det_rate = len(valid_kps) / max(sampled_count, 1)

@@ -4,6 +4,7 @@ name_prefix        = "horsera-pose"
 manage_artifact_registry_repository = true
 api_image          = "us-east4-docker.pkg.dev/your-gcp-project-id/horsera-pose-repo/pose-api:latest"
 worker_image       = "us-east4-docker.pkg.dev/your-gcp-project-id/horsera-pose-repo/pose-api:latest"
+worker_gpu_image   = "us-east4-docker.pkg.dev/your-gcp-project-id/horsera-pose-repo/pose-api:latest-gpu"
 upload_bucket_name = "horsera-pose-input-your-gcp-project-id"
 
 cors_origins                   = "https://horsera.app,https://app.horsera.ai,http://localhost:5173,http://localhost:8080"
@@ -12,6 +13,7 @@ api_invoker_members            = ["serviceAccount:vercel-pose-proxy@your-gcp-pro
 gpu_threshold_mb               = 120
 enable_gpu_job                 = false
 gpu_zonal_redundancy_disabled  = true
+gpu_infer_batch_size           = 4
 create_firestore_database      = false
 firestore_collection           = "pose_jobs"
 manage_iam_bindings            = true

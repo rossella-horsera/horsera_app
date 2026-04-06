@@ -15,14 +15,25 @@ PLATFORM="${PLATFORM:-linux/amd64}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 INFRA_DIR="${ROOT_DIR}/pose_api/infra"
-IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/horsera-pose-repo/pose-api:${TAG}"
+CPU_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/horsera-pose-repo/pose-api:${TAG}"
+GPU_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/horsera-pose-repo/pose-api:${TAG}-gpu"
 
-echo "==> Building image ${IMAGE}"
+echo "==> Building CPU image ${CPU_IMAGE}"
 gcloud auth configure-docker "${REGION}-docker.pkg.dev"
 docker buildx build \
   --platform "${PLATFORM}" \
   -f "${ROOT_DIR}/pose_api/Dockerfile" \
-  -t "${IMAGE}" \
+  --build-arg "PIP_REQUIREMENTS=requirements.cpu.txt" \
+  -t "${CPU_IMAGE}" \
+  --push \
+  "${ROOT_DIR}/pose_api"
+
+echo "==> Building GPU image ${GPU_IMAGE}"
+docker buildx build \
+  --platform "${PLATFORM}" \
+  -f "${ROOT_DIR}/pose_api/Dockerfile" \
+  --build-arg "PIP_REQUIREMENTS=requirements.gpu.txt" \
+  -t "${GPU_IMAGE}" \
   --push \
   "${ROOT_DIR}/pose_api"
 
@@ -32,16 +43,18 @@ terraform init
 terraform plan \
   -var "project_id=${PROJECT_ID}" \
   -var "region=${REGION}" \
-  -var "api_image=${IMAGE}" \
-  -var "worker_image=${IMAGE}"
+  -var "api_image=${CPU_IMAGE}" \
+  -var "worker_image=${CPU_IMAGE}" \
+  -var "worker_gpu_image=${GPU_IMAGE}"
 
 if [[ "${APPLY_FLAG}" == "--apply" ]]; then
   echo "==> Applying terraform"
   terraform apply \
     -var "project_id=${PROJECT_ID}" \
     -var "region=${REGION}" \
-    -var "api_image=${IMAGE}" \
-    -var "worker_image=${IMAGE}" \
+    -var "api_image=${CPU_IMAGE}" \
+    -var "worker_image=${CPU_IMAGE}" \
+    -var "worker_gpu_image=${GPU_IMAGE}" \
     -auto-approve
 fi
 

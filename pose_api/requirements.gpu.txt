@@ -1,0 +1,10 @@
+-r requirements.base.txt
+
+# GPU runtime for Cloud Run L4 worker
+onnxruntime-gpu==1.24.4
+
+# CUDA 12 user-space libraries needed by onnxruntime-gpu
+nvidia-cuda-runtime-cu12
+nvidia-cublas-cu12
+nvidia-cuda-nvrtc-cu12
+nvidia-cudnn-cu12

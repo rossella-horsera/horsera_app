@@ -21,8 +21,9 @@ locals {
     },
   ] : []
 
-  supabase_url_secret_name = "projects/${var.project_id}/secrets/${var.supabase_url_secret_id}"
-  supabase_key_secret_name = "projects/${var.project_id}/secrets/${var.supabase_key_secret_id}"
+  supabase_url_secret_name   = "projects/${var.project_id}/secrets/${var.supabase_url_secret_id}"
+  supabase_key_secret_name   = "projects/${var.project_id}/secrets/${var.supabase_key_secret_id}"
+  worker_gpu_image_effective = trimspace(var.worker_gpu_image) != "" ? var.worker_gpu_image : var.worker_image
 
   required_services = toset([
     "artifactregistry.googleapis.com",
@@ -295,7 +296,7 @@ resource "google_cloud_run_v2_service" "pose_api" {
         value = google_cloud_run_v2_job.pose_worker_cpu.name
       }
       env {
-        name  = "CLOUD_RUN_GPU_JOB"
+        name = "CLOUD_RUN_GPU_JOB"
         # GPU job created via gcloud (terraform can't manage it due to v2 API annotation bug).
         # Hardcoded to the gcloud-created job name.
         value = "horsera-pose-worker-gpu"
@@ -426,7 +427,7 @@ resource "google_cloud_run_v2_job" "pose_worker_gpu" {
   location            = var.region
   deletion_protection = false
   labels              = local.common_labels
-  launch_stage = "BETA"
+  launch_stage        = "BETA"
 
   template {
     task_count  = 1
@@ -438,7 +439,7 @@ resource "google_cloud_run_v2_job" "pose_worker_gpu" {
       max_retries     = 0
 
       containers {
-        image   = var.worker_image
+        image   = local.worker_gpu_image_effective
         command = ["python", "worker.py"]
         env {
           name  = "JOB_STORE_BACKEND"
@@ -447,6 +448,14 @@ resource "google_cloud_run_v2_job" "pose_worker_gpu" {
         env {
           name  = "FIRESTORE_COLLECTION"
           value = var.firestore_collection
+        }
+        env {
+          name  = "INFER_BATCH_SIZE"
+          value = tostring(var.gpu_infer_batch_size)
+        }
+        env {
+          name  = "REQUIRE_CUDA"
+          value = "1"
         }
         dynamic "env" {
           for_each = local.supabase_secret_env
