@@ -159,29 +159,46 @@ These are the same underlying metrics, different time frames. Both are needed.
 
 ## Implementation Phases
 
-### Phase 1 — Navigation restructure (current focus)
-- [ ] Rename "Insights" → "Progress" in bottom nav and `InsightsPage.tsx`
-- [ ] Fix progress chart time axis (add left=oldest → right=most recent labels)
-- [ ] Wire `AnalysisShell` (Video + Report tabs) into `RideDetailPage.tsx`  
-  - Keep `RidesPage.tsx` and `RideDetailPage.tsx` intact — add tabs, don't replace
-  - Confirm Matt's video upload fix works in new tab context
-- [ ] Update routing in `App.tsx`:  
-  - `/rides/:id` loads new tabbed Ride Detail  
-  - `/progress` loads ProgressPage  
-  - `/analysis/*` routes can be deprecated once wired into Ride Detail
-- [ ] Add discipline `null` state to Journey tab with prompt
+### Phase 1 — Navigation restructure ✅ COMPLETE (2026-03-29 → 2026-04-05)
+- [x] "Insights" renamed to "Progress" — now served by `pages/analysis/InsightsTab.tsx` at `/progress`
+- [x] Progress chart time axis — sparklines + "oldest → newest" labels on biomechanics trends
+- [x] `RideDetailPage2.tsx` is the single-scroll ride detail at `/rides/:id` (replaced, not tabbed — diverged from original plan, see 2026-03-29 decision)
+- [x] Routing: `/rides/:id` → RideDetailPage2, `/progress` → InsightsTab, old routes deprecated
+- [x] Discipline selection in Journey header (USDF live, Pony Club coming)
+- [x] Date off-by-one fixed via `parseLocalDate` helper in lib/utils.ts
+- [x] All old scaffolding files deleted (v1 RideDetailPage, InsightsPage, VideoSilhouetteOverlay, Card #56 block)
 
-### Phase 2 — Journey enhancement
-- [ ] Add discipline selection to onboarding + settings
-- [ ] Build performance task list for Dressage (Training Level tasks already in DECISIONS.md)
-- [ ] Build performance task list for Pony Club
-- [ ] Tap-to-expand task card showing biomechanics drivers + current scores
-- [ ] Test readiness score calculation
+### Phase 2 — Rider experience unification ✅ COMPLETE (2026-04-05)
+- [x] Ride cards redesigned to 2-col layout w/ video thumbnail + score ring overlay
+- [x] Collapsible month groups with trajectory sparkline (first → arc → last + delta)
+- [x] Swipe-to-delete fixed + web hover-to-delete
+- [x] Editable ride name + notes via pen icon (Apple Notes style)
+- [x] Date conflict preview + Replace/Save-as-new on upload
+- [x] Video duration derived from actual video (not hardcoded 45min)
+- [x] 5-tier score band scale everywhere (Excellent/On target/Working/Building/Focus area)
+- [x] Score rings at 30px font, consistent size across ride cards, month headers, Progress header, Position, Riding Quality
+- [x] Cadence Pattern Insight is now data-driven (strongest/weakest metrics from actual rides)
+- [x] Progression Signal card is live (derived from biomechanics, not hardcoded)
+- [x] Level auto-inference from ride scores (beta, with override)
 
-### Phase 3 — Progress refinements
-- [ ] Fix time axis on all trend charts
-- [ ] Add Cadence patterns section (recurring cross-session observations)
-- [ ] Riding quality trends (aggregated Scales over time)
+### Phase 3 — Seamless upload + Cadence intelligence (current focus)
+See `_agents/BACKLOG.md` for detailed sub-items.
+- [ ] **Rock 1: Seamless upload** — client-side re-encode, progressive keypoint streaming, two-pass pipeline, GPU burst
+- [ ] **Rock 2: Real Cadence intelligence** — Haiku 4.5 + Monty's system prompt + rider context injection + structured outputs
+
+### Phase 4 — Cross-device sync (blocker for real users)
+- [ ] Decide Firebase vs Supabase auth
+- [ ] Migrate localStorage → cloud
+- [ ] Magic-link auth flow
+
+### Phase 5 — Onboarding + placement
+- [ ] Cadence-led placement conversation (5-7 questions)
+- [ ] First-goal selection
+- [ ] First-insight reveal
+
+### Phase 6 — Body navigation (pinned — post Phases 3-5)
+- Switch metric cards in Report tab from scroll to body-as-navigation display
+- Same data, display-layer change only
 
 ### Phase 4 — Body navigation (pinned — post Phase 1-3)
 - Switch metric cards in Report tab from scroll to body-as-navigation display
@@ -195,6 +212,29 @@ These are the same underlying metrics, different time frames. Both are needed.
 - [ ] Trainer portal (link-based sharing is V1.5)
 - [ ] Hunter/Jumper discipline
 - [ ] Real MoveNet pose → skeleton wiring (for Matt — see note below)
+
+---
+
+## 🚀 Video Upload & Analysis Speed (high-priority unlock)
+
+Once Matt's new backend (horse detection → crop → YOLO keypoints from Goran) is pushed and wired end-to-end, the next big perceived-quality unlock is upload/analysis latency. Current flow makes the rider wait on a blocking upload+process step before seeing anything.
+
+**Ideas to explore (ordered by effort):**
+
+1. **Staged / stacked processing (perceived speed win)**
+   Process the video in N-frame chunks. As soon as chunk 1 is processed, start showing it to the rider in the Video tab. Process chunk 2 while they're watching chunk 1, etc. Total processing time is identical, but the rider sees analysis starting within seconds instead of waiting for the whole video.
+   *Implementation:* backend streams keypoints per chunk over SSE/WebSocket; frontend renders skeleton overlay progressively.
+
+2. **Live "Capture Ride" mode (true speed win)**
+   Instead of upload-after-the-fact, process pose estimation **live during recording** (on-device or streamed to backend). By the time the rider ends the ride, the analysis is already done.
+   *Implementation:* requires on-device pose model (MoveNet / TFLite) or live streaming upload. Bigger lift, but transformative UX — changes "upload your ride" → "capture your ride" as a product pillar.
+
+3. **(bonus) Optimistic UI**
+   Show the raw video immediately on upload completion, let the rider scrub through it, and overlay skeleton keypoints as they become available from the backend.
+
+**Why this matters:** Upload speed is the single biggest friction point in the core loop (Stage 3 of the JTBD map — "The Activation Moment"). If the first ride record feels slow, the rider doesn't come back. Both ideas above shift the perceived wait from minutes → seconds.
+
+**Pre-requisite:** Matt pushes the new GCP/crop-YOLO backend so we have a stable baseline to measure current processing time against.
 
 ---
 

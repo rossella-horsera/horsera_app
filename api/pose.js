@@ -194,9 +194,30 @@ function _copyResponseHeaders(upstream, res) {
   });
 }
 
+const ALLOWED_ORIGINS = new Set([
+  'http://localhost:5173',
+  'http://localhost:8080',
+  'http://localhost:3000',
+  'https://horsera.app',
+  'https://app.horsera.ai',
+]);
+
+function _setCorsHeaders(req, res) {
+  const origin = req.headers.origin;
+  if (origin && ALLOWED_ORIGINS.has(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-goog-resumable, x-goog-meta-*');
+    res.setHeader('Access-Control-Max-Age', '3600');
+  }
+}
+
 export default async function handler(req, res) {
   try {
     const debugEnabled = _toBool(process.env.POSE_PROXY_DEBUG, false);
+
+    _setCorsHeaders(req, res);
 
     if (req.method === 'OPTIONS') {
       res.status(204).end();

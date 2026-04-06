@@ -296,7 +296,9 @@ resource "google_cloud_run_v2_service" "pose_api" {
       }
       env {
         name  = "CLOUD_RUN_GPU_JOB"
-        value = var.enable_gpu_job ? google_cloud_run_v2_job.pose_worker_gpu[0].name : ""
+        # GPU job created via gcloud (terraform can't manage it due to v2 API annotation bug).
+        # Hardcoded to the gcloud-created job name.
+        value = "horsera-pose-worker-gpu"
       }
 
       dynamic "env" {
@@ -396,6 +398,12 @@ resource "google_cloud_run_v2_job" "pose_worker_cpu" {
             }
           }
         }
+        resources {
+          limits = {
+            cpu    = "2"
+            memory = "4Gi"
+          }
+        }
       }
     }
   }
@@ -418,13 +426,11 @@ resource "google_cloud_run_v2_job" "pose_worker_gpu" {
   location            = var.region
   deletion_protection = false
   labels              = local.common_labels
+  launch_stage = "BETA"
 
   template {
     task_count  = 1
     parallelism = 1
-    annotations = var.gpu_zonal_redundancy_disabled ? {
-      "run.googleapis.com/gpu-zonal-redundancy-disabled" = "true"
-    } : {}
 
     template {
       service_account = google_service_account.worker.email

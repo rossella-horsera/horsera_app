@@ -90,7 +90,36 @@ function drawSkeleton(
 export default function VideoWithSkeleton({ videoUrl, keyframes, biometrics }: VideoWithSkeletonProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const [ghostOn, setGhostOn] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Fullscreen: request on the wrapper so skeleton + overlays stay visible.
+  // Handles webkit-prefixed API for iOS Safari.
+  const toggleFullscreen = () => {
+    const el = wrapperRef.current as any;
+    const doc = document as any;
+    if (!el) return;
+    const isFs = doc.fullscreenElement || doc.webkitFullscreenElement || doc.webkitCurrentFullScreenElement;
+    if (isFs) {
+      (doc.exitFullscreen || doc.webkitExitFullscreen || doc.webkitCancelFullScreen)?.call(doc);
+    } else {
+      (el.requestFullscreen || el.webkitRequestFullscreen || el.webkitEnterFullscreen)?.call(el);
+    }
+  };
+
+  useEffect(() => {
+    const handler = () => {
+      const doc = document as any;
+      setIsFullscreen(!!(doc.fullscreenElement || doc.webkitFullscreenElement || doc.webkitCurrentFullScreenElement));
+    };
+    document.addEventListener('fullscreenchange', handler);
+    document.addEventListener('webkitfullscreenchange', handler);
+    return () => {
+      document.removeEventListener('fullscreenchange', handler);
+      document.removeEventListener('webkitfullscreenchange', handler);
+    };
+  }, []);
 
   const ghostFrame = useMemo(() => {
     if (!keyframes.length) return null;
@@ -160,13 +189,27 @@ export default function VideoWithSkeleton({ videoUrl, keyframes, biometrics }: V
   }
 
   return (
-    <div style={{ position: 'relative', width: '100%', aspectRatio: '16/9', background: '#000' }}>
+    <div
+      ref={wrapperRef}
+      style={{
+        position: 'relative', width: '100%',
+        aspectRatio: isFullscreen ? undefined : '16/9',
+        height: isFullscreen ? '100%' : undefined,
+        background: '#000',
+      }}
+    >
       <video
         ref={videoRef}
         src={videoUrl}
         controls
         playsInline
-        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+        controlsList="nodownload"
+        // @ts-ignore — webkit-specific attribute for iOS Safari inline fullscreen
+        webkit-playsinline="true"
+        style={{
+          position: 'absolute', inset: 0, width: '100%', height: '100%',
+          objectFit: isFullscreen ? 'contain' : 'cover',
+        }}
       />
       <canvas
         ref={canvasRef}

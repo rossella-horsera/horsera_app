@@ -5,11 +5,10 @@ import type { Ride, BiometricsSnapshot } from '../data/mock';
 import { usePoseAPI } from '../hooks/usePoseAPI';
 import { computeRidingQualities, generateInsights } from '../lib/poseAnalysis';
 import type { MovementInsight } from '../lib/poseAnalysis';
-import { saveRide, getRides } from '../lib/storage';
+import { saveRide, getRides, deleteRide } from '../lib/storage';
 import type { StoredRide } from '../lib/storage';
 import { getUserProfile } from '../lib/userProfile';
 import { supabase } from '../integrations/supabase/client';
-import VideoSilhouetteOverlay from '../components/VideoSilhouetteOverlay';
 
 // ─────────────────────────────────────────────────────────
 // DESIGN TOKENS
@@ -517,7 +516,8 @@ function RideDetailView({
   const effectiveBio = bio || MOCK_DETAIL_BIO;
 
   const qualities = computeRidingQualities(effectiveBio);
-  const d = new Date(ride.date);
+  const [y, mo, day] = ride.date.split('-').map(Number);
+  const d = new Date(y, mo - 1, day);
   const dateStr = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
 
   const overallRaw = storedRide?.overallScore
@@ -829,6 +829,7 @@ export default function RidesPage() {
   const [logFocus, setLogFocus] = useState(mockGoal.milestones[0].id);
   const [logDuration, setLogDuration] = useState('45');
   const [logType, setLogType] = useState<'training' | 'lesson' | 'hack'>('training');
+  const [logDate, setLogDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [logSubmitted, setLogSubmitted] = useState(false);
 
   // Video analysis
@@ -839,6 +840,15 @@ export default function RidesPage() {
   // Saved ride state
   const [sessionSaved, setSessionSaved] = useState(false);
 
+  // Optional ride name/notes (collapsed by default — Apple/Oura-style reveal)
+  const [rideName, setRideName] = useState('');
+  const [rideNotes, setRideNotes] = useState('');
+  const [showNotesField, setShowNotesField] = useState(false);
+
+  // Save mode when a ride already exists on this date — 'replace' or 'new'
+  const [conflictMode, setConflictMode] = useState<'replace' | 'new'>('replace');
+  const [videoDuration, setVideoDuration] = useState<number | null>(null);
+
   // Card #59 — validation & UX state
   const [fileError, setFileError] = useState<string | null>(null);
   const [fileSizeWarning, setFileSizeWarning] = useState<string | null>(null);
@@ -847,10 +857,16 @@ export default function RidesPage() {
   const [horseFacts, setHorseFacts] = useState<string[]>([]);
   const [horseFactIdx, setHorseFactIdx] = useState(0);
 
-  // Detail view for ride history
-  const [selectedRide, setSelectedRide] = useState<Ride | null>(null);
-  const [selectedStoredRide, setSelectedStoredRide] = useState<StoredRide | undefined>(undefined);
+  const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'score'>('newest');
   const [storedRides, setStoredRides] = useState<StoredRide[]>(getRides);
+  const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(new Set());
+  const toggleMonth = (key: string) => {
+    setCollapsedMonths(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
 
   // Refresh stored rides on mount
   useEffect(() => {
@@ -869,15 +885,37 @@ export default function RidesPage() {
     return () => clearInterval(interval);
   }, [isAnalyzing]);
 
-  // Horse fun facts — shuffle on analysis start, cycle every 4s
+  // Horse fun facts — build a long shuffled queue and advance through it.
+  // Avoids repeats within an analysis AND across analyses in the same session.
   useEffect(() => {
     if (!isAnalyzing) return;
-    const shuffled = [...HORSE_FACTS].sort(() => Math.random() - 0.5).slice(0, 3);
-    setHorseFacts(shuffled);
+    const RECENT_KEY = 'horsera_recent_facts';
+    let recent: string[] = [];
+    try { recent = JSON.parse(sessionStorage.getItem(RECENT_KEY) || '[]'); } catch {}
+    // Put NOT-recently-shown facts first, then recent ones at the tail, so the
+    // longest possible analysis still stays unique-heavy at the start.
+    const fresh = HORSE_FACTS.filter(f => !recent.includes(f));
+    const stale = HORSE_FACTS.filter(f => recent.includes(f));
+    // Fisher-Yates each pile
+    const shuffle = (arr: string[]) => {
+      const out = [...arr];
+      for (let i = out.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [out[i], out[j]] = [out[j], out[i]];
+      }
+      return out;
+    };
+    const queue = [...shuffle(fresh), ...shuffle(stale)];
+    setHorseFacts(queue);
     setHorseFactIdx(0);
+    // Remember the first 10 from this queue as "recently shown" for next time
+    try {
+      const next = [...queue.slice(0, 10), ...recent].slice(0, 20);
+      sessionStorage.setItem(RECENT_KEY, JSON.stringify(next));
+    } catch {}
     const interval = setInterval(() => {
-      setHorseFactIdx(i => (i + 1) % 3);
-    }, 4000);
+      setHorseFactIdx(i => (i + 1) % queue.length);
+    }, 9000);
     return () => clearInterval(interval);
   }, [isAnalyzing]);
 
@@ -947,12 +985,24 @@ export default function RidesPage() {
     const qualities = computeRidingQualities(bio);
     const overall = Object.values(bio).reduce((a, b) => a + b, 0) / Object.values(bio).length;
     const horse = getUserProfile().horseName || 'Your Horse';
-    const duration = parseInt(logDuration, 10) || 45;
+    // Use the actual video duration (in minutes) when available — falls back to the form value.
+    const duration = videoDuration !== null
+      ? Math.max(1, Math.round(videoDuration / 60))
+      : (parseInt(logDuration, 10) || 45);
+
+    // If a ride already exists for this date + horse + type, handle the conflict
+    // per the user's choice: 'replace' reuses the id (overwrites), 'new' generates a fresh id.
+    const existing = getRides().find(r => r.date === logDate && r.horse === horse && r.type === logType);
+    const rideId = (existing && conflictMode === 'replace')
+      ? existing.id
+      : (sessionId ?? `stored-${Date.now()}`);
 
     const ride: StoredRide = {
-      id: sessionId ?? `stored-${Date.now()}`,
-      date: new Date().toISOString().split('T')[0],
+      id: rideId,
+      date: logDate,
       horse,
+      name: rideName.trim() || undefined,
+      notes: rideNotes.trim() || undefined,
       type: logType,
       duration,
       videoFileName: videoFile.name,
@@ -1019,8 +1069,28 @@ export default function RidesPage() {
     setSessionSaved(false);
     setFileError(null);
     setFileSizeWarning(null);
+    setRideName('');
+    setRideNotes('');
+    setShowNotesField(false);
+    setConflictMode('replace');
+    setVideoDuration(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
+
+  // Detect video duration when a file is selected
+  useEffect(() => {
+    if (!videoFile) { setVideoDuration(null); return; }
+    const url = URL.createObjectURL(videoFile);
+    const v = document.createElement('video');
+    v.preload = 'metadata';
+    v.src = url;
+    v.onloadedmetadata = () => {
+      setVideoDuration(v.duration);
+      URL.revokeObjectURL(url);
+    };
+    v.onerror = () => { URL.revokeObjectURL(url); };
+    return () => { URL.revokeObjectURL(url); };
+  }, [videoFile]);
 
   // Combine stored rides with mock rides for the history
   const allRides = useMemo(() => {
@@ -1038,21 +1108,47 @@ export default function RidesPage() {
       videoUploaded: true,
       milestoneId: '',
     }));
-    return [...fromStorage, ...mockRides];
+    // Only show real uploaded rides. Mock rides (mockRides) are kept for
+    // Home/Insights/Journey defaults but are no longer mixed into the Rides list.
+    return fromStorage;
   }, [storedRides]);
 
-  const grouped = allRides.reduce((acc, ride) => {
-    const d = new Date(ride.date);
-    const key = d.toLocaleDateString('en', { month: 'long', year: 'numeric' });
+  const sortedRides = useMemo(() => {
+    const sorted = [...allRides];
+    if (sortBy === 'score') sorted.sort((a, b) => (b.biometrics?.upperBodyAlignment ?? 0) - (a.biometrics?.upperBodyAlignment ?? 0));
+    else if (sortBy === 'oldest') sorted.sort((a, b) => a.date.localeCompare(b.date));
+    else sorted.sort((a, b) => b.date.localeCompare(a.date));
+    return sorted;
+  }, [allRides, sortBy]);
+
+  const grouped = sortedRides.reduce((acc, ride) => {
+    const parseLocalDate = (d: string) => {
+      const [y, m, day] = d.split('-').map(Number);
+      return new Date(y, m - 1, day);
+    };
+    const date = parseLocalDate(ride.date);
+    const key = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
     if (!acc[key]) acc[key] = [];
     acc[key].push(ride);
     return acc;
   }, {} as Record<string, Ride[]>);
 
+  // On first render with data, collapse ALL months so riders see progress at a glance
+  const monthsInitialized = useRef(false);
+  useEffect(() => {
+    if (monthsInitialized.current) return;
+    const months = Object.keys(grouped);
+    if (months.length === 0) return;
+    setCollapsedMonths(new Set(months));
+    monthsInitialized.current = true;
+  }, [grouped]);
+
+  const monthCount = Object.keys(grouped).length;
+
   // Status message for analysis progress — compression phase shows a fixed label,
   // all other phases cycle through PROCESSING_MESSAGES (#59)
   const statusMessage = status === 'compressing'
-    ? 'Compressing video...'
+    ? 'Preparing your ride...'
     : PROCESSING_MESSAGES[processingMsgIdx];
 
   return (
@@ -1132,7 +1228,7 @@ export default function RidesPage() {
           ) : (
             <>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
-                <div style={{ fontFamily: FONTS.heading, fontSize: '18px', color: COLORS.charcoal }}>Log a Ride</div>
+                <div style={{ fontFamily: FONTS.heading, fontSize: '18px', color: COLORS.charcoal }}>Add a Ride</div>
                 <button onClick={() => setShowLogForm(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: COLORS.muted, fontSize: '20px' }}>×</button>
               </div>
 
@@ -1317,11 +1413,6 @@ export default function RidesPage() {
                 />
               )}
 
-              {/* Silhouette overlay — visible when analysis is complete */}
-              {isDone && result && (
-                <VideoSilhouetteOverlay biometrics={result.biometrics} />
-              )}
-
               {/* ── Premium Progress Overlay (inline placeholder — real overlay is fixed below) ── */}
               {isAnalyzing && (
                 <div style={{ position: 'absolute', inset: 0, background: 'rgba(26,20,14,0.85)' }} />
@@ -1407,6 +1498,157 @@ export default function RidesPage() {
                 {/* ── Insights Summary Card ──────────────────── */}
                 <InsightsCard insights={result.insights} />
 
+                {/* ── Ride date + optional name/notes + conflict handling ───────── */}
+                {!sessionSaved && (() => {
+                  const horse = getUserProfile().horseName || 'Your Horse';
+                  const existing = storedRides.find(r => r.date === logDate && r.horse === horse && r.type === logType);
+                  return (
+                    <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                      {/* Date */}
+                      <div>
+                        <label style={{
+                          fontSize: '11px', fontWeight: 600, color: COLORS.muted,
+                          letterSpacing: '0.1em', textTransform: 'uppercase',
+                          fontFamily: FONTS.body, display: 'block', marginBottom: '8px',
+                        }}>
+                          Ride date
+                        </label>
+                        <input
+                          type="date"
+                          value={logDate}
+                          max={new Date().toISOString().split('T')[0]}
+                          onChange={e => setLogDate(e.target.value)}
+                          style={{
+                            width: '100%', padding: '10px 12px',
+                            borderRadius: '10px', border: `1.5px solid ${COLORS.border}`,
+                            fontSize: '14px', color: COLORS.charcoal,
+                            fontFamily: FONTS.mono,
+                            outline: 'none', background: COLORS.parchment,
+                            boxSizing: 'border-box',
+                          }}
+                        />
+                        {videoDuration !== null && (
+                          <div style={{
+                            marginTop: '6px', fontSize: '11px', color: COLORS.muted,
+                            fontFamily: FONTS.body,
+                          }}>
+                            This video: {Math.floor(videoDuration / 60)}:{String(Math.floor(videoDuration % 60)).padStart(2, '0')}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Conflict preview + replace/new choice */}
+                      {existing && (
+                        <div style={{
+                          background: COLORS.parchment, borderRadius: '12px', padding: '12px',
+                          border: `1px solid ${COLORS.border}`,
+                        }}>
+                          <div style={{
+                            fontSize: '11px', fontWeight: 600, color: COLORS.cognac,
+                            letterSpacing: '0.08em', textTransform: 'uppercase',
+                            fontFamily: FONTS.body, marginBottom: '10px',
+                          }}>
+                            ↻ You already have a ride here
+                          </div>
+                          <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '12px' }}>
+                            {existing.videoUrl ? (
+                              <video
+                                src={`${existing.videoUrl}#t=2`}
+                                preload="metadata" muted playsInline
+                                style={{
+                                  width: 64, height: 64, objectFit: 'cover',
+                                  borderRadius: 8, background: '#EDE7DF', flexShrink: 0,
+                                }}
+                              />
+                            ) : (
+                              <div style={{
+                                width: 64, height: 64, borderRadius: 8,
+                                background: '#EDE7DF', flexShrink: 0,
+                              }} />
+                            )}
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.charcoal, fontFamily: FONTS.body }}>
+                                {existing.name || `${existing.type} · ${existing.horse}`}
+                              </div>
+                              <div style={{ fontSize: 11, color: COLORS.muted, fontFamily: FONTS.body, marginTop: 2 }}>
+                                {existing.duration}min · {Math.round(existing.overallScore * 100)}/100
+                              </div>
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button
+                              onClick={() => setConflictMode('replace')}
+                              style={{
+                                flex: 1, padding: '8px 10px', borderRadius: '8px', cursor: 'pointer',
+                                border: `1.5px solid ${conflictMode === 'replace' ? COLORS.cognac : COLORS.border}`,
+                                background: conflictMode === 'replace' ? COLORS.cognac : '#fff',
+                                color: conflictMode === 'replace' ? COLORS.parchment : COLORS.charcoal,
+                                fontSize: '12px', fontWeight: 600, fontFamily: FONTS.body,
+                              }}
+                            >Replace existing</button>
+                            <button
+                              onClick={() => setConflictMode('new')}
+                              style={{
+                                flex: 1, padding: '8px 10px', borderRadius: '8px', cursor: 'pointer',
+                                border: `1.5px solid ${conflictMode === 'new' ? COLORS.cognac : COLORS.border}`,
+                                background: conflictMode === 'new' ? COLORS.cognac : '#fff',
+                                color: conflictMode === 'new' ? COLORS.parchment : COLORS.charcoal,
+                                fontSize: '12px', fontWeight: 600, fontFamily: FONTS.body,
+                              }}
+                            >Save as new</button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Optional name + notes — collapsed reveal */}
+                      {!showNotesField ? (
+                        <button
+                          onClick={() => setShowNotesField(true)}
+                          style={{
+                            background: 'transparent', border: 'none', padding: 0,
+                            color: COLORS.cognac, fontSize: '12px', fontFamily: FONTS.body,
+                            cursor: 'pointer', textAlign: 'left',
+                            display: 'inline-flex', alignItems: 'center', gap: 6,
+                            alignSelf: 'flex-start',
+                          }}
+                        >
+                          <span style={{ fontSize: 14, lineHeight: 1 }}>+</span> Add a name or note <span style={{ opacity: 0.5 }}>(optional)</span>
+                        </button>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', animation: 'slideUp 0.25s ease' }}>
+                          <input
+                            type="text"
+                            value={rideName}
+                            onChange={e => setRideName(e.target.value)}
+                            placeholder="Name this ride (e.g. Clinic day, Test run)"
+                            maxLength={60}
+                            style={{
+                              width: '100%', padding: '10px 12px',
+                              borderRadius: '10px', border: `1.5px solid ${COLORS.border}`,
+                              fontSize: '14px', color: COLORS.charcoal, fontFamily: FONTS.body,
+                              outline: 'none', background: COLORS.parchment, boxSizing: 'border-box',
+                            }}
+                          />
+                          <textarea
+                            value={rideNotes}
+                            onChange={e => setRideNotes(e.target.value)}
+                            placeholder="How did it feel? What did you work on?"
+                            rows={3}
+                            maxLength={500}
+                            style={{
+                              width: '100%', padding: '10px 12px',
+                              borderRadius: '10px', border: `1.5px solid ${COLORS.border}`,
+                              fontSize: '13px', color: COLORS.charcoal, fontFamily: FONTS.body,
+                              outline: 'none', background: COLORS.parchment, boxSizing: 'border-box',
+                              resize: 'vertical', lineHeight: 1.5,
+                            }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 {/* ── Save Session / Reset buttons ───────────── */}
                 <div style={{ display: 'flex', gap: '10px', marginTop: '16px' }}>
                   {!sessionSaved ? (
@@ -1491,31 +1733,18 @@ export default function RidesPage() {
             <div style={{
               position: 'absolute', bottom: 20, left: 20, right: 20,
             }}>
-              {/* Cadence AI badge */}
-              <div style={{
-                display: 'inline-flex', alignItems: 'center', gap: 6,
-                background: 'rgba(201,169,110,0.18)',
-                border: '1px solid rgba(201,169,110,0.35)',
-                borderRadius: '20px', padding: '4px 11px',
-                marginBottom: '10px',
-              }}>
-                <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'radial-gradient(circle at 38% 38%, #F0D888, #C9A96E)', boxShadow: '0 0 5px rgba(201,169,110,0.6)' }} />
-                <span style={{ fontSize: '10px', color: 'rgba(240,216,136,0.92)', fontFamily: FONTS.mono, letterSpacing: '0.07em' }}>
-                  cadence
-                </span>
-              </div>
               <div style={{
                 fontFamily: FONTS.heading, fontSize: '24px', color: COLORS.parchment,
-                marginBottom: '6px', lineHeight: 1.15,
+                marginBottom: '8px', lineHeight: 1.15,
                 textShadow: '0 2px 8px rgba(0,0,0,0.4)',
               }}>
                 Every ride, a step forward.
               </div>
               <div style={{
-                fontFamily: FONTS.body, fontSize: '12px', color: 'rgba(250,247,243,0.72)',
-                lineHeight: 1.5, marginBottom: '16px', maxWidth: 240,
+                fontFamily: FONTS.body, fontSize: '12px', color: 'rgba(250,247,243,0.82)',
+                lineHeight: 1.55, marginBottom: '16px', maxWidth: 280,
               }}>
-                Cadence reads your position, balance & biomechanics — every ride.
+                Upload your ride and Cadence, your AI riding advisor, will read your position, balance and biomechanics.
               </div>
               <div style={{
                 display: 'inline-flex', alignItems: 'center', gap: 8,
@@ -1545,14 +1774,37 @@ export default function RidesPage() {
           Ride History
         </div>
 
+        {/* Sort pills — visible when more than 1 ride */}
+        {sortedRides.length > 1 && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 4, marginBottom: 12 }}>
+            {([['newest', 'Newest'], ['oldest', 'Oldest'], ['score', 'Top score']] as const).map(([key, label]) => {
+              const active = sortBy === key;
+              return (
+                <button key={key} onClick={() => setSortBy(key)} style={{
+                  background: active ? COLORS.charcoal : 'transparent',
+                  color: active ? '#fff' : 'rgba(28,28,30,0.3)',
+                  border: 'none', borderRadius: 12, padding: '3px 10px',
+                  fontSize: 10, fontFamily: FONTS.body, fontWeight: 500, cursor: 'pointer',
+                }}>
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {/* ── Full-screen fixed loading overlay ── */}
         {isAnalyzing && (
           <div style={{
-            position: 'fixed', inset: 0, zIndex: 999,
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 999,
             background: 'rgba(20, 16, 12, 0.96)',
             display: 'flex', flexDirection: 'column',
             alignItems: 'center', justifyContent: 'center',
             padding: '40px 32px',
+            overscrollBehavior: 'none',
+            WebkitOverflowScrolling: 'touch',
+            maxHeight: '100%',
+            overflowY: 'auto',
           }}>
             {/* Progress ring */}
             <div style={{ position: 'relative', width: 96, height: 96 }}>
@@ -1589,17 +1841,26 @@ export default function RidesPage() {
             {/* Divider */}
             <div style={{ height: 1, background: 'rgba(255,255,255,0.1)', alignSelf: 'stretch', margin: '28px 0' }} />
 
-            {/* Fun facts */}
+            {/* Fun facts — meant to be a playful, readable moment during processing */}
             {horseFacts.length > 0 && (
-              <div style={{ textAlign: 'center' }}>
+              <div style={{ textAlign: 'center', maxWidth: 320, margin: '0 auto' }}>
                 <div style={{
-                  fontSize: '9px', fontWeight: 600, letterSpacing: '0.2em',
-                  textTransform: 'uppercase', color: '#C17F4A', marginBottom: 12,
-                }}>· DID YOU KNOW ·</div>
+                  display: 'inline-flex', alignItems: 'center', gap: 10,
+                  marginBottom: 14,
+                }}>
+                  <span style={{ fontSize: 14, color: '#C9A96E' }}>✦</span>
+                  <span style={{
+                    fontSize: '10px', fontWeight: 600, letterSpacing: '0.22em',
+                    textTransform: 'uppercase', color: '#C17F4A',
+                    fontFamily: FONTS.body,
+                  }}>Did you know?</span>
+                  <span style={{ fontSize: 14, color: '#C9A96E' }}>✦</span>
+                </div>
                 <div key={horseFactIdx} style={{
-                  fontFamily: FONTS.body, fontSize: '14px',
-                  color: 'rgba(255,255,255,0.72)', lineHeight: 1.7,
-                  maxWidth: 300, animation: 'fadeIn 0.6s ease',
+                  fontFamily: FONTS.body,
+                  fontSize: '15px', fontWeight: 400,
+                  color: 'rgba(255,255,255,0.90)', lineHeight: 1.65,
+                  animation: 'fadeIn 0.8s ease',
                 }}>
                   {horseFacts[horseFactIdx]}
                 </div>
@@ -1637,31 +1898,145 @@ export default function RidesPage() {
           </div>
         )}
 
-                {Object.entries(grouped).map(([month, rides]) => (
+                {Object.entries(grouped).map(([month, rides], groupIdx) => {
+          const isCollapsed = collapsedMonths.has(month);
+          // Collect (date, score) pairs for trajectory viz, chronologically
+          const ridePoints = [...rides]
+            .map(r => {
+              const stored = storedRides.find(s => s.id === r.id);
+              return stored ? { date: r.date, score: Math.round(stored.overallScore * 100) } : null;
+            })
+            .filter((p): p is { date: string; score: number } => p !== null)
+            .sort((a, b) => a.date.localeCompare(b.date));
+          const monthScores = ridePoints.map(p => p.score);
+          const hasTrajectory = monthScores.length >= 1;
+          const minScore = hasTrajectory ? Math.min(...monthScores) : 0;
+          const maxScore = hasTrajectory ? Math.max(...monthScores) : 0;
+          const firstScore = hasTrajectory ? monthScores[0] : 0;
+          const lastScore = hasTrajectory ? monthScores[monthScores.length - 1] : 0;
+          const delta = lastScore - firstScore;
+          return (
           <div key={month}>
-            <div style={{
-              fontSize: '10px', fontWeight: 600, letterSpacing: '0.14em',
-              textTransform: 'uppercase', color: COLORS.muted,
-              fontFamily: FONTS.body, marginBottom: '10px', marginTop: '8px',
-            }}>
-              {month}
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
-              {rides.map(ride => {
+            <button
+              onClick={() => toggleMonth(month)}
+              aria-expanded={!isCollapsed}
+              aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${month}`}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                width: '100%', padding: '10px 12px', marginBottom: isCollapsed ? '8px' : '8px',
+                marginTop: groupIdx === 0 ? '8px' : '16px',
+                background: isCollapsed ? 'rgba(255,255,255,0.6)' : 'transparent',
+                border: 'none', borderRadius: '10px', cursor: 'pointer',
+                textAlign: 'left', WebkitTapHighlightColor: 'transparent',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <svg
+                  width="10" height="10" viewBox="0 0 12 12" fill="none"
+                  style={{
+                    transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+                    transition: 'transform 0.18s ease',
+                    color: 'rgba(28,28,30,0.55)',
+                  }}
+                >
+                  <path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                <span style={{
+                  fontSize: '11px', fontWeight: 600, letterSpacing: '0.12em',
+                  textTransform: 'uppercase', color: 'rgba(28,28,30,0.55)',
+                  fontFamily: FONTS.body,
+                }}>
+                  {month}
+                </span>
+                <span style={{
+                  fontSize: '11px', color: 'rgba(28,28,30,0.4)',
+                  fontFamily: FONTS.body,
+                }}>
+                  · {rides.length} ride{rides.length !== 1 ? 's' : ''}
+                </span>
+              </div>
+              {hasTrajectory && (() => {
+                // Sparkline — score trajectory across the month (oldest → newest).
+                // Shows first score, the arc of progress, and last score.
+                const W = 72, H = 24;
+                const n = monthScores.length;
+                const range = Math.max(maxScore - minScore, 1);
+                const yFor = (s: number) => H - 2 - ((s - minScore) / range) * (H - 6);
+                const points = monthScores.map((s, i) => {
+                  const x = n === 1 ? W / 2 : (i / (n - 1)) * (W - 4) + 2;
+                  return `${x},${yFor(s)}`;
+                }).join(' ');
+                const deltaColor = delta > 2 ? COLORS.green : delta < -2 ? '#C4714A' : '#C9A96E';
+                const lineColor = '#B58E60';
+                return (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{
+                      fontSize: 11, fontWeight: 600, fontFamily: "'DM Mono', monospace",
+                      color: 'rgba(28,28,30,0.45)',
+                    }}>{firstScore}</span>
+                    <svg width={W} height={H} style={{ display: 'block' }}>
+                      {n > 1 && (
+                        <polyline
+                          points={points} fill="none"
+                          stroke={lineColor} strokeWidth="1.5"
+                          strokeLinecap="round" strokeLinejoin="round"
+                        />
+                      )}
+                      {monthScores.map((s, i) => {
+                        const x = n === 1 ? W / 2 : (i / (n - 1)) * (W - 4) + 2;
+                        const isEndpoint = i === 0 || i === n - 1;
+                        return (
+                          <circle
+                            key={i} cx={x} cy={yFor(s)}
+                            r={isEndpoint ? 2.5 : 1.5}
+                            fill={isEndpoint ? lineColor : '#D6B989'}
+                          />
+                        );
+                      })}
+                    </svg>
+                    <span style={{
+                      fontSize: 11, fontWeight: 600, fontFamily: "'DM Mono', monospace",
+                      color: deltaColor,
+                    }}>{lastScore}</span>
+                    {n > 1 && (
+                      <span style={{
+                        fontSize: 9, fontWeight: 700, color: deltaColor,
+                        fontFamily: FONTS.body, letterSpacing: '0.02em',
+                      }}>{delta > 0 ? `+${delta}` : delta}</span>
+                    )}
+                  </div>
+                );
+              })()}
+            </button>
+            {!isCollapsed && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' }}>
+              {rides.map((ride, i) => {
                 const isStored = ride.id.startsWith('stored-');
                 const stored = isStored ? storedRides.find(s => s.id === ride.id) : null;
+                const prevRide = i > 0 ? rides[i - 1] : null;
+                const prevStored = prevRide?.id.startsWith('stored-') ? storedRides.find(s => s.id === prevRide.id) : null;
+                const trendDelta = stored && prevStored
+                  ? Math.round(stored.overallScore * 100) - Math.round(prevStored.overallScore * 100)
+                  : null;
                 return (
-                  <RideRow
+                  <SwipeRideRow
                     key={ride.id}
                     ride={ride}
                     storedRide={stored ?? undefined}
-                    onClick={() => navigate(`/rides/${ride.id}`)}
+                    trendDelta={trendDelta}
+                    onNavigate={() => navigate(`/rides/${ride.id}`)}
+                    onDelete={() => {
+                      deleteRide(ride.id);
+                      setStoredRides(getRides());
+                    }}
                   />
                 );
               })}
             </div>
+            )}
           </div>
-        ))}
+        );
+        })}
       </div>
 
       {/* ── CSS Keyframes ────────────────────────────────────── */}
@@ -1690,74 +2065,13 @@ export default function RidesPage() {
           0%, 100% { opacity: 0.4; transform: scale(1); }
           50% { opacity: 1; transform: scale(1.3); }
         }
+        /* Ride card delete button — always visible on desktop (hover devices); hidden on touch (mobile uses swipe) */
+        @media (hover: hover) {
+          .ride-card-delete-btn { opacity: 0.5 !important; }
+          .ride-card-delete-btn:hover { opacity: 1 !important; background: rgba(193,75,46,0.1) !important; color: #C14A2A !important; }
+        }
       `}</style>
 
-      {/* ── RIDE DETAIL VIEW (Card #56) ──────────────────────── */}
-      {selectedRide && (
-        <RideDetailView
-          ride={selectedRide}
-          storedRide={selectedStoredRide}
-          onClose={() => { setSelectedRide(null); setSelectedStoredRide(undefined); }}
-        />
-      )}
-
-      {/* ── LOG A RIDE FAB ──────────────────────────────────── */}
-      {!showLogForm && (
-        <div style={{
-          position: 'fixed',
-          bottom: '94px',
-          left: '20px',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: '6px',
-          zIndex: 60,
-        }}>
-          {/* Label pill */}
-          <div style={{
-            background: 'rgba(28,21,16,0.72)',
-            borderRadius: '8px',
-            padding: '3px 9px',
-            backdropFilter: 'blur(8px)',
-            border: '1px solid rgba(201,169,110,0.22)',
-            pointerEvents: 'none',
-          }}>
-            <span style={{
-              fontSize: '9px',
-              color: 'rgba(201,169,110,0.85)',
-              fontFamily: "'DM Sans', sans-serif",
-              fontWeight: 500,
-              letterSpacing: '0.04em',
-              whiteSpace: 'nowrap',
-            }}>
-              Log a ride
-            </span>
-          </div>
-
-          {/* FAB button */}
-          <button
-            onClick={() => setShowLogForm(true)}
-            aria-label="Log a ride"
-            style={{
-              width: '52px',
-              height: '52px',
-              borderRadius: '50%',
-              background: '#8C5A3C',
-              border: 'none',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              boxShadow: '0 4px 20px rgba(140,90,60,0.4)',
-            }}
-          >
-            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-              <line x1="9" y1="1" x2="9" y2="17" stroke="white" strokeWidth="2.2" strokeLinecap="round" />
-              <line x1="1" y1="9" x2="17" y2="9" stroke="white" strokeWidth="2.2" strokeLinecap="round" />
-            </svg>
-          </button>
-        </div>
-      )}
     </div>
   );
 }
@@ -1888,81 +2202,233 @@ function InsightsCard({ insights }: { insights: MovementInsight[] }) {
 // RIDE ROW COMPONENT
 // ─────────────────────────────────────────────────────────
 
-function RideRow({ ride, storedRide, onClick }: { ride: Ride; storedRide?: StoredRide; onClick: () => void }) {
-  const signal = signalConfig[ride.signal];
-  const d = new Date(ride.date);
+const BIO_LABELS: Record<string, string> = {
+  upperBodyAlignment: 'Upper Body', lowerLegStability: 'Lower Leg',
+  coreStability: 'Core', pelvisStability: 'Pelvis',
+  reinSteadiness: 'Rein Steady', reinSymmetry: 'Symmetry',
+};
+
+const RC = { pa: '#F5EFE6', nk: '#1C1C1E', cg: '#C17F4A', ch: '#D4AF76', ideal: '#5B9E56', good: '#E8A857', focus: '#C14A2A' };
+
+function SwipeRideRow({ ride, storedRide, trendDelta, onNavigate, onDelete }: {
+  ride: Ride; storedRide?: StoredRide; trendDelta: number | null;
+  onNavigate: () => void; onDelete: () => void;
+}) {
+  const [swipeX, setSwipeX] = useState(0);
+  const [swiping, setSwiping] = useState(false);
+  const startXRef = useRef(0);
+  const DELETE_THRESHOLD = 80;
+
+  const [y, mo, day] = ride.date.split('-').map(Number);
+  const d = new Date(y, mo - 1, day);
   const dateStr = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  const score = storedRide ? Math.round(storedRide.overallScore * 100) : null;
+
+  const bioEntries = storedRide
+    ? Object.entries(storedRide.biometrics)
+        .map(([k, v]) => ({ key: k, label: BIO_LABELS[k] ?? k, score: Math.round((v as number) * 100) }))
+        .filter(e => e.score > 0)
+    : [];
+  const best = bioEntries.length ? bioEntries.reduce((a, b) => a.score > b.score ? a : b) : null;
+  const worst = bioEntries.length ? bioEntries.reduce((a, b) => a.score < b.score ? a : b) : null;
+
+  const trendLabel = trendDelta === null ? null
+    : trendDelta > 3  ? { text: 'Building', color: RC.ideal, arrow: '↑' }
+    : trendDelta < -3 ? { text: 'Focus session', color: RC.focus, arrow: '↓' }
+    :                    { text: 'Holding', color: RC.good, arrow: '→' };
 
   return (
-    <div
-      onClick={onClick}
-      style={{
-        background: COLORS.cardBg, borderRadius: '14px', padding: '13px 15px',
-        display: 'flex', alignItems: 'center', gap: 12,
-        boxShadow: '0 2px 8px rgba(26,20,14,0.05)', cursor: 'pointer',
-        transition: 'transform 0.1s ease',
-        border: storedRide ? `1px solid ${COLORS.champagne}30` : 'none',
-      }}
-    >
-      <div style={{ width: 9, height: 9, borderRadius: '50%', background: signal.color, flexShrink: 0, marginTop: 1 }} />
+    <div style={{ position: 'relative', overflow: 'hidden', borderRadius: 16 }}>
+      {/* Delete strip — whole strip is the tap target */}
+      <button
+        onClick={onDelete}
+        aria-label="Delete ride"
+        style={{
+          position: 'absolute', right: 0, top: 0, bottom: 0,
+          width: DELETE_THRESHOLD, background: RC.focus,
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4,
+          border: 'none', padding: 0, cursor: 'pointer',
+          borderRadius: '0 16px 16px 0',
+          WebkitTapHighlightColor: 'rgba(255,255,255,0.2)',
+        }}
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+          <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+        <span style={{ color: 'white', fontSize: 9, fontWeight: 600, letterSpacing: '0.08em', fontFamily: "'DM Sans', sans-serif" }}>DELETE</span>
+      </button>
 
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-          <span style={{ fontSize: '13.5px', fontWeight: 500, color: COLORS.charcoal, fontFamily: FONTS.body }}>
-            {rideTypeLabel[ride.type] ?? ride.type} · {ride.horse}
-          </span>
-          {ride.videoUploaded && (
-            <span style={{ fontSize: '10px', background: '#F0F4F8', color: '#6B7FA3', padding: '2px 6px', borderRadius: '6px', fontFamily: FONTS.body }}>
-              📹
-            </span>
-          )}
-          {storedRide && (
-            <span style={{
-              fontSize: '9px', background: `${COLORS.champagne}20`, color: COLORS.champagne,
-              padding: '2px 6px', borderRadius: '6px', fontFamily: FONTS.mono,
-              fontWeight: 600, letterSpacing: '0.03em',
-            }}>
-              AI
-            </span>
-          )}
-        </div>
-        <div style={{ fontFamily: FONTS.mono, fontSize: '10.5px', color: COLORS.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {dateStr} · {ride.duration}min{storedRide ? ` · Score ${Math.round(storedRide.overallScore * 100)}%` : ` · ${ride.focusMilestone}`}
-        </div>
+      {/* Swipeable card */}
+      <div
+        onTouchStart={e => { startXRef.current = e.touches[0].clientX; setSwiping(true); }}
+        onTouchMove={e => { const dx = e.touches[0].clientX - startXRef.current; if (dx < 0) setSwipeX(Math.max(dx, -100)); }}
+        onTouchEnd={() => { setSwiping(false); setSwipeX(swipeX < -DELETE_THRESHOLD ? -DELETE_THRESHOLD : 0); }}
+        onClick={() => { if (swipeX < -20) { setSwipeX(0); return; } onNavigate(); }}
+        style={{
+          transform: `translateX(${swipeX}px)`,
+          transition: swiping ? 'none' : 'transform 0.2s ease',
+          position: 'relative', zIndex: 1,
+          background: '#fff', borderRadius: 16, padding: '14px 16px',
+          boxShadow: '0 2px 12px rgba(0,0,0,0.05)', cursor: 'pointer',
+          display: 'flex', gap: 12, alignItems: 'stretch',
+        }}
+      >
+        {/* Inline delete button (desktop/web — tap target on mobile is the swipe) */}
+        <button
+          onClick={e => {
+            e.stopPropagation();
+            if (window.confirm(`Delete this ${ride.type} ride from ${dateStr}? This cannot be undone.`)) {
+              onDelete();
+            }
+          }}
+          aria-label="Delete ride"
+          title="Delete ride"
+          className="ride-card-delete-btn"
+          style={{
+            position: 'absolute', top: 8, right: 8, zIndex: 2,
+            width: 26, height: 26, borderRadius: '50%',
+            background: 'transparent', border: 'none', cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: 'rgba(28,28,30,0.3)',
+            transition: 'background 0.15s ease, color 0.15s ease, opacity 0.15s ease',
+            opacity: 0,
+          }}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+            <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </button>
 
-        {/* Mini score bar for stored rides */}
-        {storedRide && (
-          <div style={{ display: 'flex', gap: 4, marginTop: 5 }}>
-            {([
-              ['LL', storedRide.biometrics.lowerLegStability],
-              ['RS', storedRide.biometrics.reinSteadiness],
-              ['SY', storedRide.biometrics.reinSymmetry],
-              ['CO', storedRide.biometrics.coreStability],
-              ['UB', storedRide.biometrics.upperBodyAlignment],
-              ['PV', storedRide.biometrics.pelvisStability],
-            ] as [string, number][]).map(([abbr, val]) => (
-              <div key={abbr} style={{
-                fontFamily: FONTS.mono, fontSize: '8px',
-                color: scoreColor(val), background: `${scoreColor(val)}12`,
-                padding: '2px 4px', borderRadius: '4px',
-              }}>
-                {abbr} {Math.round(val * 100)}
-              </div>
-            ))}
+        {/* Left: Content */}
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 14, fontWeight: 600, color: RC.nk, fontFamily: "'DM Sans', sans-serif", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {(ride.type.charAt(0).toUpperCase() + ride.type.slice(1))} · {ride.horse}
+            </span>
           </div>
-        )}
-      </div>
+          {storedRide?.name && (
+            <div style={{ fontSize: 12, color: RC.cg, fontStyle: 'italic', fontFamily: "'Playfair Display', serif", marginTop: -2 }}>
+              {storedRide.name}
+            </div>
+          )}
+          <div style={{ fontSize: 11, color: COLORS.muted, fontFamily: "'DM Sans', sans-serif" }}>
+            {dateStr} · {ride.duration}min
+          </div>
 
-      <div style={{ textAlign: 'center', flexShrink: 0 }}>
-        <div style={{ fontSize: '18px', color: signal.color, lineHeight: 1 }}>{signal.symbol}</div>
-        <div style={{ fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.08em', color: COLORS.muted, fontFamily: FONTS.body }}>
-          {signal.label}
+          {best && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
+              <span style={{
+                fontSize: 11, padding: '3px 10px', borderRadius: 20,
+                background: 'rgba(91,158,86,0.08)', border: '1px solid rgba(91,158,86,0.2)',
+                color: RC.ideal, fontFamily: "'DM Sans', sans-serif",
+              }}>↑ {best.label} {best.score}/100</span>
+              {worst && worst.key !== best.key && (
+                <span style={{
+                  fontSize: 11, padding: '3px 10px', borderRadius: 20,
+                  background: 'rgba(193,127,74,0.06)', border: '1px solid rgba(193,127,74,0.2)',
+                  color: RC.cg, fontFamily: "'DM Sans', sans-serif",
+                }}>↓ {worst.label}</span>
+              )}
+            </div>
+          )}
+
+          {trendLabel && (
+            <div style={{ marginTop: 6 }}>
+              <span style={{
+                fontSize: 10, fontWeight: 500, textTransform: 'uppercase',
+                padding: '2px 8px', borderRadius: 12,
+                background: `${trendLabel.color}15`, color: trendLabel.color,
+                fontFamily: "'DM Sans', sans-serif",
+              }}>{trendLabel.arrow} {trendLabel.text}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Right: Thumbnail with score ring overlay */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+          {storedRide?.videoUrl ? (
+            <div style={{
+              position: 'relative', width: 92, height: 92, borderRadius: 10,
+              overflow: 'hidden', background: '#EDE7DF',
+              boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
+            }}>
+              <video
+                src={`${storedRide.videoUrl}#t=2`}
+                preload="metadata"
+                muted
+                playsInline
+                style={{
+                  position: 'absolute', inset: 0,
+                  width: '100%', height: '100%', objectFit: 'cover',
+                  pointerEvents: 'none',
+                }}
+              />
+              {/* Score ring overlay — bottom-right corner */}
+              {score !== null && (() => {
+                const bandColor =
+                score >= 90 ? '#5B9E56' :
+                score >= 75 ? '#7D9B76' :
+                score >= 60 ? '#C9A96E' :
+                score >= 40 ? '#C17F4A' :
+                '#C4714A';
+                const r = 14;
+                const c = 2 * Math.PI * r;
+                const dash = (score / 100) * c;
+                return (
+                  <div style={{
+                    position: 'absolute', bottom: 4, right: 4,
+                    width: 34, height: 34, borderRadius: '50%',
+                    background: 'rgba(28,20,14,0.72)',
+                    backdropFilter: 'blur(6px)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <svg width="34" height="34" viewBox="0 0 34 34" style={{ position: 'absolute', transform: 'rotate(-90deg)' }}>
+                      <circle cx="17" cy="17" r={r} fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="2.2"/>
+                      <circle cx="17" cy="17" r={r} fill="none" stroke={bandColor} strokeWidth="2.2"
+                        strokeDasharray={`${dash} ${c}`} strokeLinecap="round"/>
+                    </svg>
+                    <span style={{
+                      fontSize: 12, fontWeight: 700, color: bandColor,
+                      fontFamily: "'DM Mono', monospace", position: 'relative',
+                    }}>{score}</span>
+                  </div>
+                );
+              })()}
+            </div>
+          ) : score !== null ? (
+            // No video — show score ring alone
+            (() => {
+              const bandColor =
+                score >= 90 ? '#5B9E56' :
+                score >= 75 ? '#7D9B76' :
+                score >= 60 ? '#C9A96E' :
+                score >= 40 ? '#C17F4A' :
+                '#C4714A';
+              const r = 26;
+              const c = 2 * Math.PI * r;
+              const dash = (score / 100) * c;
+              return (
+                <div style={{ position: 'relative', width: 60, height: 60 }}>
+                  <svg width="60" height="60" viewBox="0 0 60 60" style={{ transform: 'rotate(-90deg)' }}>
+                    <circle cx="30" cy="30" r={r} fill="none" stroke="rgba(28,28,30,0.08)" strokeWidth="3.5"/>
+                    <circle cx="30" cy="30" r={r} fill="none" stroke={bandColor} strokeWidth="3.5"
+                      strokeDasharray={`${dash} ${c}`} strokeLinecap="round"/>
+                  </svg>
+                  <div style={{
+                    position: 'absolute', inset: 0, display: 'flex',
+                    alignItems: 'center', justifyContent: 'center',
+                    fontSize: 18, fontWeight: 700, color: bandColor,
+                    fontFamily: "'DM Mono', monospace",
+                  }}>
+                    {score}
+                  </div>
+                </div>
+              );
+            })()
+          ) : null}
+          <span style={{ color: 'rgba(28,28,30,0.25)', fontSize: 14 }}>›</span>
         </div>
       </div>
-
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
-        <path d="M9 6l6 6-6 6" stroke="#D4C9BC" strokeWidth="1.7" strokeLinecap="round" />
-      </svg>
     </div>
   );
 }

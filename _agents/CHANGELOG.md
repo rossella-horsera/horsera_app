@@ -8,6 +8,57 @@ A running record of every meaningful change to the product, codebase, or documen
 
 ---
 
+## 2026-04-05 (Marathon session — infra + UI polish + intelligence pass)
+
+**Theme:** Stand up GCP backend, unify the rider experience, start personalizing Cadence.
+
+### Infra / backend
+- [Rossella+Beau] [new] Deployed pose API to GCP from scratch via terraform. Cloud Run service live at `horsera-pose-api-680892443107.us-east4.run.app`. Goran's crop_rider_pose PR merged and running (YOLOv8m + smart crop + horse detection).
+- [Beau] [fix] CPU worker defaulted to 512MB RAM → OOM on YOLOv8m. Raised to 2 vCPU / 4Gi.
+- [Beau] [new] CORS headers added to `api/pose.js` Vercel proxy so localhost dev can hit the prod pose proxy.
+
+### Video testing / ops
+- [Beau] [new] Horse-detection pipeline (YOLOv8n locally) to auto-trim 22 full-length iPhone ride videos → 20s 720p H.264 clips for testing. Date-based filenames, motion-aware window selection.
+
+### Rides + ride detail UI
+- [Lauren+Beau] [code] Ride cards restructured to 2-col layout: content left, 92×92 video thumbnail right with score ring overlaid in bottom-right corner.
+- [Lauren+Beau] [code] Collapsible month groups with trajectory sparkline (first score → line → last score + delta) replacing "avg X" text. Default: all collapsed for progress-at-a-glance.
+- [Beau] [fix] Date off-by-one bug eliminated — `new Date(ride.date)` replaced with local-date parsing helper in `lib/utils.ts`.
+- [Beau] [fix] Ride duration now derived from actual video duration, not hardcoded 45min.
+- [Lauren+Beau] [code] Video thumbnails on ride cards (seek to t=2s) replaced the "VIDEO" text chip.
+- [Lauren+Beau] [code] Swipe-to-delete fixed — whole red strip is the tap target. Trash icon on hover for web.
+- [Lauren+Beau] [code] Optional ride name + notes via pen icon next to title. Apple Notes style, no modal. Replaced a dashed "+ Add a name or note" button Rossella rejected as 90s-functional.
+- [Lauren+Beau] [code] Date conflict preview during save — thumbnail/duration/score of existing ride + explicit Replace or Save-as-new.
+- [Beau] [fix] Date picker opens native calendar on first click (showPicker API).
+
+### Cadence + insights
+- [Beau] [new] Ride Detail Cadence card: full-width primary CTA using real CadenceIcon from the FAB. Two context-specific suggested prompts below as compact pills.
+- [Beau] [code] Cadence Pattern Insight on Progress page is DATA-DRIVEN: derives strongest + weakest biomechanics from windowed rides, compares first/second half for weak-metric trend, picks headline by score spread.
+- [Beau] [new] Fun-fact carousel during analysis cycles through all 25 facts (Fisher-Yates shuffled fresh-first), avoiding within-session repeats.
+
+### Progress page
+- [Beau] [code] Header shows rider name (not horse) + score as ring consistent with ride cards + month headers.
+- [Beau] [code] Progression Signal card live — derived from latest ride's biomechanics.
+- [Beau] [new] Biomechanics Trends redesigned: 2-col small-multiples sparkline grid replacing horizontal-scroll bar chart. X-axis labeled "oldest → newest". Gaps where data missing.
+
+### Journey page
+- [Beau] [new] Level auto-inference (beta) from last 3 rides' average overall score if rider hasn't set a level manually. Small "Inferred · Beta" chip next to level header.
+
+### Design system / scoring
+- [Beau] [code] Score-band scale expanded 3 → 5 tiers everywhere: Excellent (≥90), On target (≥75), Working (≥60), Building (≥40), Focus area (<40).
+- [Beau] [code] Score ring text bumped from 18px → 30px.
+- [Beau] [code] Riding Quality labels: Mastered / Consistent / Developing / Emerging / Focus.
+
+### Cleanup
+- [Beau] [fix] Deleted stale dead code: old `RideDetailPage.tsx` v1, `InsightsPage.tsx`, `VideoSilhouetteOverlay.tsx`, never-opened `RideDetailView` block (~400 lines). Bundle shrunk ~18 KB. This was the cause of old layouts flashing briefly during transitions.
+- [Beau] [fix] "Add a Ride" omnipresent FAB removed.
+- [Beau] [fix] Video player fullscreen button collision fixed; native volume + FS re-enabled.
+
+### Memory / principles
+- [Ross+Daniel] [docs] Saved Rossella's UI principle to permanent memory + `_agents/FEEDBACK.md`: Horsera UI must be Apple/Oura caliber. No dashed reveals, no 90s-functional patterns, icons over button-text, every pixel justified.
+
+---
+
 ## 2026-03-15 (Session — 8 cards)
 
 - [Beau] [code] [new] Card 1 — Onboarding gate centralized in AppShell.tsx; ProfileSetupModal shown before any route if !isProfileComplete()

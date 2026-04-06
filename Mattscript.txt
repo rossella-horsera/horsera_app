@@ -1,0 +1,33 @@
+#!/bin/bash
+PROJECT_ID=horsera
+PROJECT_NUMBER=680892443107
+POOL_ID=vercel-pool
+PROVIDER_ID=vercel-provider
+TEAM_SLUG=rossella-horseras-projects
+VERCEL_PROJECT=horsera-app
+SA_EMAIL=vercel-pose-proxy@horsera.iam.gserviceaccount.com
+ENVIRONMENTS="production preview development"
+
+gcloud iam workload-identity-pools providers update-oidc "$PROVIDER_ID" \
+  --project "$PROJECT_ID" \
+  --location global \
+  --workload-identity-pool "$POOL_ID" \
+  --issuer-uri "https://oidc.vercel.com/${TEAM_SLUG}" \
+  --allowed-audiences "https://vercel.com/${TEAM_SLUG}" \
+  --attribute-mapping "google.subject=assertion.sub,attribute.owner=assertion.owner,attribute.project=assertion.project,attribute.environment=assertion.environment" \
+  --attribute-condition "assertion.owner=='${TEAM_SLUG}' && assertion.project=='${VERCEL_PROJECT}' && (assertion.environment=='production' || assertion.environment=='preview' || assertion.environment=='development')"
+
+for ENV in $ENVIRONMENTS; do
+  gcloud iam service-accounts remove-iam-policy-binding "$SA_EMAIL" \
+    --project "$PROJECT_ID" \
+    --role roles/iam.workloadIdentityUser \
+    --member "principal://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/subject/owner:${TEAM_SLUG}:project:horsera_app:environment:${ENV}" \
+    || true
+done
+
+for ENV in $ENVIRONMENTS; do
+  gcloud iam service-accounts add-iam-policy-binding "$SA_EMAIL" \
+    --project "$PROJECT_ID" \
+    --role roles/iam.workloadIdentityUser \
+    --member "principal://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/subject/owner:${TEAM_SLUG}:project:${VERCEL_PROJECT}:environment:${ENV}"
+done

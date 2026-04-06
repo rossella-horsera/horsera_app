@@ -1,7 +1,9 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getRides } from '../../lib/storage';
+import { getUserProfile } from '../../lib/userProfile';
 import { useCadence } from '../../context/CadenceContext';
+import { CadenceIcon } from '../../components/layout/CadenceFAB';
 
 // ── Design tokens ──────────────────────────────────────────────────────────
 const C = {
@@ -16,11 +18,20 @@ const C = {
   muted: 'rgba(28,28,30,0.38)',
 };
 
+// 5-band scale — matches the rest of the app
 function scoreColor(s: number) {
-  return s >= 80 ? C.ideal : s >= 60 ? C.good : C.focus;
+  if (s >= 90) return '#5B9E56';  // Excellent
+  if (s >= 75) return '#7D9B76';  // On target
+  if (s >= 60) return '#C9A96E';  // Working
+  if (s >= 40) return '#C17F4A';  // Building
+  return '#C4714A';                // Focus area
 }
 function scoreLabel(s: number) {
-  return s >= 80 ? 'Good' : s >= 60 ? 'Working' : 'Focus area';
+  if (s >= 90) return 'Excellent';
+  if (s >= 75) return 'On target';
+  if (s >= 60) return 'Working';
+  if (s >= 40) return 'Building';
+  return 'Focus area';
 }
 
 // ── Mock fallback data ─────────────────────────────────────────────────────
@@ -58,9 +69,13 @@ function ScoreRing({ score, size = 52 }: { score: number; size?: number }) {
       <circle cx="50" cy="50" r={r} fill="none" stroke="#EDE7DF" strokeWidth="6" />
       <circle cx="50" cy="50" r={r} fill="none" stroke={color} strokeWidth="6"
         strokeDasharray={`${dash} ${circ}`} strokeLinecap="round" transform="rotate(-90 50 50)" />
-      <text x="50" y="50" textAnchor="middle" style={{ fontFamily: "'DM Mono', monospace", fontWeight: 600 }}>
-        <tspan fontSize="18" fill={color}>{score}</tspan>
-        <tspan fontSize="10" fill="#BBB">/100</tspan>
+      <text x="50" y="48" textAnchor="middle" dominantBaseline="middle"
+        style={{ fontFamily: "'DM Mono', monospace", fontWeight: 700 }}>
+        <tspan fontSize="28" fill={color}>{score}</tspan>
+      </text>
+      <text x="50" y="70" textAnchor="middle" dominantBaseline="middle"
+        style={{ fontFamily: "'DM Mono', monospace", fontSize: '9px', fill: 'rgba(28,28,30,0.3)' }}>
+        /100
       </text>
     </svg>
   );
@@ -120,11 +135,14 @@ export default function InsightsTab() {
   // Bio scroll state
   const bioScrollRef = useRef<HTMLDivElement>(null);
   const [showScrollArrow, setShowScrollArrow] = useState(true);
+  const [showLeftArrow, setShowLeftArrow] = useState(false);
+  const [hoveredScoreIdx, setHoveredScoreIdx] = useState<number | null>(null);
 
   const checkScroll = useCallback(() => {
     const el = bioScrollRef.current;
     if (!el) return;
     setShowScrollArrow(el.scrollLeft + el.clientWidth < el.scrollWidth - 10);
+    setShowLeftArrow(el.scrollLeft > 10);
   }, []);
 
   useEffect(() => {
@@ -137,6 +155,9 @@ export default function InsightsTab() {
 
   const scrollBioRight = () => {
     bioScrollRef.current?.scrollBy({ left: 160, behavior: 'smooth' });
+  };
+  const scrollBioLeft = () => {
+    bioScrollRef.current?.scrollBy({ left: -160, behavior: 'smooth' });
   };
 
   const allRides = useMemo(() =>
@@ -213,7 +234,7 @@ export default function InsightsTab() {
       ` L${sx(n - 1, n)},135 L${sx(0, n)},135 Z`
     : '';
 
-  const horseName = hasReal ? rides[rides.length - 1]?.horse ?? 'Your Horse' : 'Caviar';
+  const riderName = getUserProfile().firstName || 'Your';
   const dateRange = xLabels.length > 1 ? `${xLabels[0]} – ${xLabels[xLabels.length - 1]}` : xLabels[0] ?? '';
 
   const headerSubtext = timeMode === 'months'
@@ -231,13 +252,13 @@ export default function InsightsTab() {
       }}>
         <div>
           <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 15, fontWeight: 600, color: C.ch }}>
-            {horseName} · Your Progress
+            {riderName === 'Your' ? 'Your Progress' : `${riderName} · Your Progress`}
           </div>
           <div style={{ fontSize: 10, letterSpacing: '1.2px', textTransform: 'uppercase', color: C.muted, marginTop: 1 }}>
             {headerSubtext}
           </div>
         </div>
-        <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', gap: 10 }}>
           {trendBadge && (
             <span style={{
               fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px',
@@ -245,20 +266,49 @@ export default function InsightsTab() {
               fontFamily: "'DM Sans', sans-serif",
             }}>{trendBadge.label}</span>
           )}
-          <div>
-            <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 20, fontWeight: 600 }}>
-              <span style={{ color: C.cg }}>{latestScore}</span>
-              <span style={{ color: C.muted, fontSize: 13 }}>/100</span>
-            </div>
-            <div style={{ fontSize: 9.5, color: '#aaa', letterSpacing: '1px', textTransform: 'uppercase' }}>Latest</div>
-          </div>
+          {/* Score ring — consistent with ride cards + month headers */}
+          {(() => {
+            const bandColor =
+              latestScore >= 90 ? '#5B9E56' :
+              latestScore >= 75 ? '#7D9B76' :
+              latestScore >= 60 ? '#C9A96E' :
+              latestScore >= 40 ? '#C17F4A' :
+              '#C4714A';
+            const r = 22;
+            const circ = 2 * Math.PI * r;
+            const dash = (latestScore / 100) * circ;
+            return (
+              <div style={{ position: 'relative', width: 52, height: 52 }}>
+                <svg width="52" height="52" viewBox="0 0 52 52" style={{ transform: 'rotate(-90deg)' }}>
+                  <circle cx="26" cy="26" r={r} fill="none" stroke="rgba(28,28,30,0.08)" strokeWidth="3"/>
+                  <circle cx="26" cy="26" r={r} fill="none" stroke={bandColor} strokeWidth="3"
+                    strokeDasharray={`${dash} ${circ}`} strokeLinecap="round"/>
+                </svg>
+                <div style={{
+                  position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+                  alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <span style={{
+                    fontSize: 16, fontWeight: 700, color: bandColor,
+                    fontFamily: "'DM Mono', monospace", lineHeight: 1,
+                  }}>{latestScore}</span>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       </div>
 
       <div style={{ padding: '20px 18px 28px' }}>
 
-        {/* ── Time selector (two-tier) ────────────────────────────────── */}
-        <div style={{ marginBottom: 18 }}>
+        {/* ── Time selector (two-tier) — sticky as user scrolls ─────── */}
+        <div style={{
+          position: 'sticky', top: 0, zIndex: 20,
+          background: C.pa, paddingTop: 10, paddingBottom: 12,
+          marginBottom: 10, marginTop: -20, marginLeft: -18, marginRight: -18,
+          paddingLeft: 18, paddingRight: 18,
+          borderBottom: '0.5px solid rgba(28,28,30,0.06)',
+        }}>
           {/* Row 1: mode toggle */}
           <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
             <Pill label="By months" active={timeMode === 'months'} onClick={() => setTimeMode('months')} />
@@ -280,43 +330,146 @@ export default function InsightsTab() {
         {/* ── Cadence Pattern Insight ─────────────────────────────────── */}
         <div style={{ marginBottom: 22 }}>
           <SecHdr>Cadence · Pattern insight</SecHdr>
-          <div style={{
-            background: '#fff', borderRadius: 12, padding: '18px 20px',
-            borderLeft: `3px solid ${C.cg}`,
-            boxShadow: '0 2px 12px rgba(0,0,0,0.06)',
+          <div className="cadence-aura" style={{
+            position: 'relative', borderRadius: 14, padding: 1.5,
+            background: `conic-gradient(from var(--aura-angle,0deg), ${C.cg}, ${C.ch}, ${C.cg}66, ${C.cg})`,
           }}>
-            <div style={{
-              fontSize: 10, fontWeight: 600, letterSpacing: '1.3px',
-              textTransform: 'uppercase', color: C.cg, marginBottom: 9,
-              display: 'flex', alignItems: 'center', gap: 7,
-            }}>
-              <span style={{
-                width: 6, height: 6, borderRadius: '50%', background: C.good, flexShrink: 0,
-                animation: 'cadPulse 2.4s ease-in-out infinite',
-              }}/>
-              {n} rides · {dateRange}
+          <div style={{
+            background: C.na, borderRadius: 12.5, padding: '18px 20px',
+            position: 'relative', overflow: 'hidden',
+          }}>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', marginBottom: 12 }}>
+              <div style={{
+                width: 44, height: 44, borderRadius: '50%', background: C.cg, flexShrink: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 0 0 2px rgba(212,175,118,0.25)',
+              }}>
+                <span style={{ fontFamily: "'Playfair Display', serif", fontStyle: 'italic', fontSize: 22, color: '#fff' }}>C</span>
+              </div>
+              <div style={{
+                fontSize: 10, fontWeight: 600, letterSpacing: '0.15em',
+                textTransform: 'uppercase', color: C.ch, paddingTop: 14,
+              }}>
+                {n} rides · {dateRange}
+              </div>
             </div>
             <p style={{
               fontFamily: "'DM Sans', sans-serif",
-              fontSize: 13, color: C.na, lineHeight: 1.7, margin: 0,
+              fontSize: 13, color: C.ch, lineHeight: 1.7, margin: 0, marginBottom: 14,
             }}>
-              <span style={{ fontFamily: "'Playfair Display', serif", fontStyle: 'italic' }}>
-                A consistent pattern is emerging.
-              </span>{' '}
-              Across your last {n} rides, your core strength has been your standout area,
-              while lower leg stability shows the most room for growth.
-              This compensation pattern is common — addressing the leg brace directly
-              will unlock improvements across all the training scales.
+              {(() => {
+                // Derive strongest + weakest metrics from actual rides in the window
+                if (!hasReal || rides.length === 0) {
+                  return (
+                    <>
+                      <span style={{ fontFamily: "'Playfair Display', serif", fontStyle: 'italic' }}>
+                        Your pattern will emerge here.
+                      </span>{' '}
+                      Upload a handful of rides and Cadence will show you which biomechanics
+                      are your strengths and which are holding you back.
+                    </>
+                  );
+                }
+                // Average each biomechanic across the windowed rides
+                const avgBy = (key: keyof typeof MOCK_BIO) => {
+                  const vals = rides.map(r => Math.round((r.biometrics[key] ?? 0) * 100)).filter(v => v > 0);
+                  if (vals.length === 0) return { avg: 0, count: 0 };
+                  return { avg: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length), count: vals.length };
+                };
+                const metricRows = BIO_METRICS.map(m => ({
+                  label: m.label,
+                  key: m.key,
+                  ...avgBy(m.key),
+                })).filter(m => m.count > 0);
+
+                if (metricRows.length < 2) {
+                  return (
+                    <>
+                      <span style={{ fontFamily: "'Playfair Display', serif", fontStyle: 'italic' }}>
+                        Early days.
+                      </span>{' '}
+                      Upload a few more rides to surface the pattern in your biomechanics —
+                      Cadence needs at least two metrics with data to compare strengths and gaps.
+                    </>
+                  );
+                }
+                const sorted = [...metricRows].sort((a, b) => b.avg - a.avg);
+                const strongest = sorted[0];
+                const weakest = sorted[sorted.length - 1];
+                const spread = strongest.avg - weakest.avg;
+
+                // Trend: compare first-half avg vs second-half avg for weakest
+                const halfIdx = Math.floor(rides.length / 2);
+                const weakFirst = rides.slice(0, halfIdx).map(r => Math.round((r.biometrics[weakest.key] ?? 0) * 100)).filter(v => v > 0);
+                const weakSecond = rides.slice(halfIdx).map(r => Math.round((r.biometrics[weakest.key] ?? 0) * 100)).filter(v => v > 0);
+                const weakFirstAvg = weakFirst.length ? weakFirst.reduce((a,b)=>a+b,0)/weakFirst.length : 0;
+                const weakSecondAvg = weakSecond.length ? weakSecond.reduce((a,b)=>a+b,0)/weakSecond.length : 0;
+                const weakDelta = Math.round(weakSecondAvg - weakFirstAvg);
+
+                const trendPhrase = weakDelta >= 3
+                  ? `and ${weakest.label.toLowerCase()} is already climbing (+${weakDelta} pts in the second half of this window).`
+                  : weakDelta <= -3
+                  ? `and ${weakest.label.toLowerCase()} has dipped ${weakDelta} pts recently — worth flagging with your trainer.`
+                  : `addressing ${weakest.label.toLowerCase()} will unlock improvements across the training scales.`;
+
+                const headline = spread >= 25
+                  ? 'A clear compensation pattern is emerging.'
+                  : spread >= 12
+                  ? 'A consistent pattern is emerging.'
+                  : 'Your biomechanics are tracking close together.';
+
+                return (
+                  <>
+                    <span style={{ fontFamily: "'Playfair Display', serif", fontStyle: 'italic' }}>
+                      {headline}
+                    </span>{' '}
+                    Across your last {n} ride{n !== 1 ? 's' : ''},
+                    {' '}<strong style={{ color: '#fff' }}>{strongest.label.toLowerCase()}</strong> is your standout at {strongest.avg}%,
+                    while <strong style={{ color: '#fff' }}>{weakest.label.toLowerCase()}</strong> sits at {weakest.avg}% — {trendPhrase}
+                  </>
+                );
+              })()}
             </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <button
+                onClick={openCadence}
+                style={{
+                  width: '100%', padding: '10px 14px', borderRadius: 10,
+                  background: C.cg, border: 'none', color: '#fff',
+                  fontFamily: "'DM Sans', sans-serif", fontWeight: 600, fontSize: 13,
+                  cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                  WebkitTapHighlightColor: 'transparent',
+                  boxShadow: '0 2px 12px rgba(193,127,74,0.35)',
+                }}
+              >
+                <CadenceIcon size={16} animated={false} />
+                Ask Cadence about your progress
+              </button>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {[
+                  'What pattern should I work on?',
+                  'Compare this window to before',
+                ].map((q, i) => (
+                  <button
+                    key={i}
+                    onClick={openCadence}
+                    style={{
+                      fontSize: 11, padding: '5px 10px', borderRadius: 14,
+                      background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(212,175,118,0.25)',
+                      color: 'rgba(212,175,118,0.85)',
+                      fontFamily: "'DM Sans', sans-serif", fontWeight: 400,
+                      cursor: 'pointer', textAlign: 'left',
+                      WebkitTapHighlightColor: 'transparent',
+                    }}
+                  >
+                    {q}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
-          <button onClick={openCadence} style={{
-            width: '100%', height: 42, marginTop: 10,
-            border: '1px solid rgba(193,127,74,0.4)', borderRadius: 21,
-            background: 'transparent', color: C.cg, cursor: 'pointer',
-            fontFamily: "'DM Sans', sans-serif", fontSize: 12.5,
-          }}>
-            Ask Cadence about your progress →
-          </button>
+          </div>
         </div>
 
         {/* ── Ride Score Chart ────────────────────────────────────────── */}
@@ -336,6 +489,7 @@ export default function InsightsTab() {
             </div>
 
             {n > 1 && (
+              <div style={{ position: 'relative' }}>
               <svg viewBox="0 0 280 145" style={{ width: '100%', height: 'auto', display: 'block' }} preserveAspectRatio="xMidYMid meet">
                 <defs>
                   <linearGradient id="areaGradP" x1="0" y1="0" x2="0" y2="1">
@@ -349,13 +503,23 @@ export default function InsightsTab() {
                 <polyline points={polyPts} fill="none" stroke={C.cg} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
                 {overallScores.map((s, i) => {
                   const last = i === n - 1;
+                  const hovered = hoveredScoreIdx === i;
+                  const ride = hasReal && rides[i] ? rides[i] : null;
                   return (
-                    <g key={i}>
+                    <g
+                      key={i}
+                      onMouseEnter={() => setHoveredScoreIdx(i)}
+                      onMouseLeave={() => setHoveredScoreIdx(null)}
+                      onClick={() => ride && navigate(`/rides/${ride.id}`)}
+                      style={{ cursor: ride ? 'pointer' : 'default' }}
+                    >
+                      {/* Invisible hit target — larger than visible dot for easy tap/hover */}
+                      <circle cx={sx(i, n)} cy={sy(s, overallScores)} r="14" fill="transparent"/>
                       {last
-                        ? <circle cx={sx(i, n)} cy={sy(s, overallScores)} r="7" fill={C.cg} stroke="#fff" strokeWidth="2"/>
-                        : <circle cx={sx(i, n)} cy={sy(s, overallScores)} r="4" fill="#fff" stroke={C.cg} strokeWidth="1.5"/>
+                        ? <circle cx={sx(i, n)} cy={sy(s, overallScores)} r={hovered ? 9 : 7} fill={C.cg} stroke="#fff" strokeWidth="2"/>
+                        : <circle cx={sx(i, n)} cy={sy(s, overallScores)} r={hovered ? 6 : 4} fill={hovered ? C.cg : '#fff'} stroke={C.cg} strokeWidth="1.5"/>
                       }
-                      {last && (
+                      {last && !hovered && (
                         <text x={sx(i, n)} y={sy(s, overallScores) - 12} textAnchor="middle"
                           fontSize="12" fontWeight="700" fill={C.cg}
                           fontFamily="'Playfair Display',serif">{s}</text>
@@ -374,88 +538,132 @@ export default function InsightsTab() {
                   );
                 })}
               </svg>
+              {/* Tooltip */}
+              {hoveredScoreIdx !== null && overallScores[hoveredScoreIdx] !== undefined && (() => {
+                const idx = hoveredScoreIdx;
+                const score = overallScores[idx];
+                const ride = hasReal && rides[idx] ? rides[idx] : null;
+                const dateLbl = xLabels[idx] ?? '';
+                // Position as % of svg width
+                const leftPct = n > 1 ? (idx / (n - 1)) * 100 : 50;
+                return (
+                  <div style={{
+                    position: 'absolute', left: `${leftPct}%`, top: -8,
+                    transform: 'translate(-50%, -100%)',
+                    background: '#1C1C1E', color: '#fff',
+                    borderRadius: 8, padding: '6px 10px',
+                    fontSize: 11, fontFamily: "'DM Sans', sans-serif",
+                    pointerEvents: 'none', whiteSpace: 'nowrap',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.2)', zIndex: 5,
+                  }}>
+                    <div style={{ fontWeight: 600 }}>{dateLbl}</div>
+                    <div style={{ color: 'rgba(255,255,255,0.75)', fontFamily: "'DM Mono', monospace" }}>
+                      {score}<span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 9 }}>/100</span>
+                      {ride && <span style={{ marginLeft: 8, color: 'rgba(255,255,255,0.55)', fontSize: 9 }}>tap to open →</span>}
+                    </div>
+                  </div>
+                );
+              })()}
+              </div>
             )}
           </div>
         </div>
 
-        {/* ── Biomechanics Trends ─────────────────────────────────────── */}
+        {/* ── Biomechanics Trends — small-multiples sparkline grid ────── */}
         <div style={{ marginBottom: 22 }}>
           <SecHdr>Biomechanics trends</SecHdr>
-          <div style={{ position: 'relative' }}>
-            <div
-              ref={bioScrollRef}
-              style={{
-                display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 8,
-                WebkitOverflowScrolling: 'touch',
-              } as React.CSSProperties}
-            >
-              {bioData.map(m => {
-                const maxS = Math.max(...m.scores.filter(s => s > 0), 1);
-                const nonZeroCount = m.scores.filter(s => s > 0).length;
-                const showDash = m.cur === 0 && nonZeroCount <= 1;
-                return (
-                  <div key={m.label} style={{
-                    flexShrink: 0, width: 130, background: '#fff',
-                    borderRadius: 10, padding: '12px 12px 10px',
-                    boxShadow: '0 1px 8px rgba(0,0,0,0.06)',
-                  }}>
-                    <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.8px', textTransform: 'uppercase', color: C.na, marginBottom: 8 }}>
+          <div style={{ fontSize: 10, color: C.muted, marginBottom: 10, letterSpacing: '0.05em' }}>
+            {headerSubtext} · oldest → newest
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            {bioData.map(m => {
+              const nonZero = m.scores.filter(s => s > 0);
+              const hasData = nonZero.length > 0;
+              const cur = hasData ? nonZero[nonZero.length - 1] : 0;
+              const bandColor = scoreColor(cur);
+              const minS = hasData ? Math.min(...nonZero) : 0;
+              const maxS = hasData ? Math.max(...nonZero) : 0;
+              const rangeS = Math.max(maxS - minS, 1);
+              // Sparkline points (zeros are treated as "no data" gaps)
+              const W = 120, H = 34;
+              const yFor = (s: number) => H - 4 - ((s - minS) / rangeS) * (H - 10);
+              const N = m.scores.length;
+              const xFor = (i: number) => N === 1 ? W / 2 : (i / (N - 1)) * (W - 6) + 3;
+              const segments: string[] = [];
+              let pts: string[] = [];
+              m.scores.forEach((s, i) => {
+                if (s > 0) {
+                  pts.push(`${xFor(i)},${yFor(s)}`);
+                } else if (pts.length > 0) {
+                  segments.push(pts.join(' '));
+                  pts = [];
+                }
+              });
+              if (pts.length > 0) segments.push(pts.join(' '));
+
+              return (
+                <div key={m.label} style={{
+                  background: '#fff', borderRadius: 12, padding: '12px 14px',
+                  boxShadow: '0 1px 8px rgba(0,0,0,0.06)',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <div style={{
+                      fontSize: 10, fontWeight: 600, letterSpacing: '0.08em',
+                      textTransform: 'uppercase', color: C.muted, fontFamily: "'DM Sans', sans-serif",
+                    }}>
                       {m.label}
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 28, marginBottom: 8 }}>
-                      {m.scores.map((s, i) => (
-                        s === 0 ? (
-                          <div key={i} style={{
-                            flex: 1, borderRadius: 2, height: 4,
-                            background: 'transparent',
-                            border: '1.5px dashed rgba(28,28,30,0.15)',
-                          }}/>
-                        ) : (
-                          <div key={i} style={{
-                            flex: 1, borderRadius: 2,
-                            background: scoreColor(s),
-                            height: `${(s / maxS) * 100}%`,
-                          }}/>
-                        )
-                      ))}
-                    </div>
-                    <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 24, fontWeight: 700, color: showDash ? '#ccc' : C.nk, lineHeight: 1 }}>
-                      {showDash ? '–' : m.cur}<span style={{ fontSize: 13, color: '#bbb' }}>/100</span>
-                    </div>
-                    <div style={{
-                      fontSize: 11, fontWeight: 500, marginTop: 4,
-                      color: m.trend !== null ? (m.trend >= 0 ? C.ideal : C.focus) : '#ccc',
-                    }}>
-                      {m.trend !== null
-                        ? `${m.trend >= 0 ? '↑' : '↓'} ${m.trend >= 0 ? '+' : ''}${m.trend}%`
-                        : '–'}
-                    </div>
+                    {m.trend !== null && hasData && (
+                      <span style={{
+                        fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 5,
+                        background: `${m.trend >= 0 ? C.ideal : C.focus}12`,
+                        color: m.trend >= 0 ? C.ideal : C.focus,
+                        fontFamily: "'DM Sans', sans-serif",
+                      }}>
+                        {m.trend >= 0 ? '↑' : '↓'} {m.trend >= 0 ? '+' : ''}{m.trend}
+                      </span>
+                    )}
                   </div>
-                );
-              })}
-            </div>
-
-            {/* Scroll arrow overlay */}
-            {showScrollArrow && (
-              <div style={{
-                position: 'absolute', right: 0, top: 0, bottom: 8, width: 48,
-                background: `linear-gradient(to right, transparent, rgba(245,239,230,0.95))`,
-                display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
-                paddingRight: 8, pointerEvents: 'none',
-              }}>
-                <button onClick={scrollBioRight} style={{
-                  width: 28, height: 28, borderRadius: '50%',
-                  background: '#fff', border: '0.5px solid rgba(28,28,30,0.15)',
-                  boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  cursor: 'pointer', pointerEvents: 'auto',
-                }}>
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                    <path d="M4.5 2L8.5 6L4.5 10" stroke={C.cg} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                </button>
-              </div>
-            )}
+                  <div style={{
+                    fontFamily: "'DM Mono', monospace", fontSize: 28, fontWeight: 700,
+                    color: hasData ? bandColor : '#ccc', lineHeight: 1, marginBottom: 6,
+                  }}>
+                    {hasData ? cur : '–'}<span style={{ fontSize: 12, color: '#bbb' }}>/100</span>
+                  </div>
+                  {/* Bar chart — one bar per ride, hover shows date + score */}
+                  {hasData ? (
+                    <div style={{
+                      display: 'flex', alignItems: 'flex-end', gap: 2, height: H, marginTop: 2,
+                    }}>
+                      {m.scores.map((s, i) => {
+                        const rideDate = hasReal && rides[i]
+                          ? new Date(rides[i].date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                          : `#${i + 1}`;
+                        const barColor = s > 0 ? scoreColor(s) : 'rgba(0,0,0,0.08)';
+                        const height = s > 0 ? Math.max(4, (s / 100) * H) : 3;
+                        return (
+                          <div
+                            key={i}
+                            title={s > 0 ? `${rideDate}: ${s}/100` : `${rideDate}: no data`}
+                            style={{
+                              flex: 1, minWidth: 2, maxWidth: 8,
+                              height, borderRadius: '2px 2px 0 0',
+                              background: barColor,
+                              transition: 'transform 0.15s ease, opacity 0.15s ease',
+                              cursor: 'help',
+                            }}
+                          />
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div style={{ height: H, display: 'flex', alignItems: 'center', fontSize: 10, color: '#ccc', fontStyle: 'italic' }}>
+                      No data yet
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -500,22 +708,67 @@ export default function InsightsTab() {
             }}>
               Intro Level → Training Level
             </div>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 6 }}>
-              <span style={{ fontSize: 32, fontWeight: 700, color: '#fff', fontFamily: "'Inter', sans-serif" }}>68%</span>
-              <span style={{ fontSize: 13, color: C.ch }}>of milestone tasks at Consistent or above</span>
-            </div>
-            <div style={{ height: 5, borderRadius: 3, background: 'rgba(255,255,255,0.13)', marginBottom: 16 }}>
-              <div style={{
-                height: '100%', borderRadius: 3, width: '68%',
-                background: `linear-gradient(to right, ${C.cg}, ${C.ch})`,
-              }}/>
-            </div>
+            {(() => {
+              // Compute progression signal from the latest ride's biometrics:
+              // percentage of metrics at "On target" (>=75) or higher.
+              const latestRide = hasReal ? allRides[allRides.length - 1] : null;
+              const metricsArr = latestRide
+                ? [
+                    Math.round((latestRide.biometrics.upperBodyAlignment ?? 0) * 100),
+                    Math.round((latestRide.biometrics.lowerLegStability ?? 0) * 100),
+                    Math.round((latestRide.biometrics.coreStability ?? 0) * 100),
+                    Math.round((latestRide.biometrics.pelvisStability ?? 0) * 100),
+                    Math.round((latestRide.biometrics.reinSteadiness ?? 0) * 100),
+                    Math.round((latestRide.biometrics.reinSymmetry ?? 0) * 100),
+                  ]
+                : [];
+              const atConsistent = metricsArr.filter(s => s >= 75).length;
+              const total = Math.max(metricsArr.length, 1);
+              const pct = metricsArr.length > 0 ? Math.round((atConsistent / total) * 100) : 68;
+              return (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 6 }}>
+                    <span style={{ fontSize: 32, fontWeight: 700, color: '#fff', fontFamily: "'Inter', sans-serif" }}>{pct}%</span>
+                    <span style={{ fontSize: 13, color: C.ch }}>of biomechanics at On target or above</span>
+                  </div>
+                  <div style={{ height: 5, borderRadius: 3, background: 'rgba(255,255,255,0.13)', marginBottom: 16 }}>
+                    <div style={{
+                      height: '100%', borderRadius: 3, width: `${pct}%`,
+                      background: `linear-gradient(to right, ${C.cg}, ${C.ch})`,
+                    }}/>
+                  </div>
+                </>
+              );
+            })()}
             <p style={{
               fontFamily: "'Playfair Display', serif", fontStyle: 'italic',
               fontSize: 13, color: 'rgba(212,175,118,0.82)', lineHeight: 1.78, margin: 0,
             }}>
-              Relaxation and Straightness are the remaining barriers to Training Level. Once your lower leg
-              releases, both will follow naturally.
+              {(() => {
+                const latestRide = hasReal ? allRides[allRides.length - 1] : null;
+                if (!latestRide) {
+                  return 'Upload a ride to see what\'s keeping you from the next level.';
+                }
+                const bio = latestRide.biometrics;
+                const entries = [
+                  { label: 'Upper Body', score: Math.round((bio.upperBodyAlignment ?? 0) * 100) },
+                  { label: 'Lower Leg', score: Math.round((bio.lowerLegStability ?? 0) * 100) },
+                  { label: 'Core', score: Math.round((bio.coreStability ?? 0) * 100) },
+                  { label: 'Pelvis', score: Math.round((bio.pelvisStability ?? 0) * 100) },
+                  { label: 'Rein Steadiness', score: Math.round((bio.reinSteadiness ?? 0) * 100) },
+                  { label: 'Rein Symmetry', score: Math.round((bio.reinSymmetry ?? 0) * 100) },
+                ].filter(e => e.score > 0);
+                if (entries.length === 0) return 'Your first analyzed ride will set your baseline.';
+                const below = entries.filter(e => e.score < 75).sort((a, b) => a.score - b.score);
+                if (below.length === 0) {
+                  return 'Every biomechanic is at On target or above — you\'re ready to aim higher.';
+                }
+                if (below.length === 1) {
+                  return `${below[0].label} at ${below[0].score}/100 is your last remaining barrier. Stabilize it and the next level opens up.`;
+                }
+                const top2 = below.slice(0, 2).map(e => e.label).join(' and ');
+                return `${top2} are the biggest gaps right now. Focusing there will unlock the rest of the training scales.`;
+              })()}
             </p>
 
             {/* CTAs */}
@@ -526,24 +779,42 @@ export default function InsightsTab() {
             }}>
               Explore your Journey →
             </button>
-            <button style={{
-              width: '100%', height: 40, marginTop: 8,
-              background: 'transparent', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 22,
-              color: 'rgba(255,255,255,0.4)', fontFamily: "'DM Sans', sans-serif", fontSize: 12,
-              cursor: 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+            <div style={{
+              marginTop: 8, padding: '10px 14px',
+              background: 'transparent', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 14,
             }}>
-              Run the Test
-              <span style={{
-                fontSize: 9, fontWeight: 600, padding: '2px 8px', borderRadius: 8,
-                background: C.ch, color: C.nk,
-              }}>Coming soon</span>
-            </button>
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+              }}>
+                <span style={{
+                  color: 'rgba(255,255,255,0.55)', fontFamily: "'DM Sans', sans-serif",
+                  fontSize: 13, fontWeight: 600,
+                }}>Run the Test</span>
+                <span style={{
+                  fontSize: 9, fontWeight: 600, padding: '2px 8px', borderRadius: 8,
+                  background: C.ch, color: C.nk,
+                }}>Coming soon</span>
+              </div>
+              <div style={{
+                color: 'rgba(255,255,255,0.4)', fontFamily: "'DM Sans', sans-serif",
+                fontSize: 11, marginTop: 4, lineHeight: 1.45,
+              }}>
+                Ride a full test and see each movement scored like a judge would — your readiness, explained.
+              </div>
+            </div>
           </div>
         </div>
 
       </div>
 
       <style>{`
+        @property --aura-angle {
+          syntax: '<angle>';
+          inherits: false;
+          initial-value: 0deg;
+        }
+        @keyframes aura-rotate { to { --aura-angle: 360deg; } }
+        .cadence-aura { animation: aura-rotate 6s linear infinite; }
         @keyframes cadPulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.3; }

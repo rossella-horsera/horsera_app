@@ -40,10 +40,10 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="Horsera Pose API",
     description=(
-        "YOLOv8s-pose biomechanics analysis for equestrian riders. "
-        "Horse-aware detection, CAE preprocessing, APS v4 scoring."
+        "YOLOv8m-pose biomechanics analysis for equestrian riders. "
+        "Smart cropping for improved accuracy, horse-aware detection, CAE preprocessing, APS v4 scoring."
     ),
-    version="1.0.0",
+    version="2.0.0",
 )
 
 ALLOWED_ORIGINS = os.environ.get(
@@ -630,8 +630,9 @@ def health() -> dict:
         )
     return {
         "status":      "ok",
-        "model":       "yolov8s-pose",
-        "horse_det":   "yolov8n",
+        "model":       "yolov8m-pose",
+        "horse_det":   "yolov8m",
+        "smart_crop":  True,
         "active_jobs": active,
     }
 

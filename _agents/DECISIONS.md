@@ -8,6 +8,24 @@ A record of significant product, design, and architectural decisions — capturi
 
 ## Product & Strategy Decisions
 
+### 2026-04-05 — Pose API runs on GCP Cloud Run, not Railway
+**Decision:** Pose analysis backend lives on GCP Cloud Run (CPU worker job) + Cloud Storage + Firestore, routed via a Vercel proxy. Railway deployment retired.
+**Why:** Railway's Hobby tier kept OOM-killing the YOLOv8m worker and the instance model didn't scale to GPU bursting. GCP gives scale-to-zero Cloud Run API + separable CPU/GPU worker jobs + a clear upgrade path. Matt had scaffolded terraform + service accounts.
+**Ops notes:** horsera.ai org policy blocks `allUsers` as invoker — explicit `user:rossella@horsera.ai` + `vercel-pose-proxy@` service account required on the Cloud Run service. CPU worker needs min 4Gi RAM for YOLOv8m.
+
+### 2026-04-05 — 5-tier score band scale, not 3
+**Decision:** Score labels everywhere use 5 tiers: Excellent (≥90), On target (≥75), Working (≥60), Building (≥40), Focus area (<40). Same thresholds drive color, label, and Training Scale tier (Mastered/Consistent/Developing/Emerging/Focus).
+**Why:** 3 tiers gave "Good" to scores of 80 AND 100, and "Focus Area" to both 0 and 49 — no differentiation where it mattered. 5 tiers give riders meaningful feedback gradation without being overwhelming.
+
+### 2026-04-05 — Level auto-inference is beta, profile.level wins
+**Decision:** If a rider has set their level on their profile, we use it. If not, we infer from the last 3 rides' average overall score (≥85 Third, ≥75 Second, ≥65 First, ≥50 Training, else Intro) and surface an "Inferred · Beta" chip.
+**Why:** Forcing new riders to self-categorize upfront is friction. A heuristic based on scores gets them into the Journey experience immediately and can be overridden. Called out as beta so riders understand accuracy will improve as we add canter detection, circle precision, and other signals.
+
+### 2026-04-05 — Horsera UI must be Apple/Oura caliber — non-negotiable
+**Decision:** Every UI element shipped must pass: "would Apple Fitness or Oura ship this exact pixel?" If no, redesign.
+**Why:** Rossella explicitly rejected a dashed "+ Add a name or note" reveal as "functional and 90s". Horsera's differentiation is premium rider experience. A single dated UI element undermines the whole product. Icons over verbose CTAs. No dashed reveals. Score rings consistent EVERYWHERE.
+**Captured in:** `_agents/FEEDBACK.md` + permanent agent memory.
+
 ### 2026-03-11 — AI companion named Cadence, not Genie
 **Decision:** The AI advisor is called Cadence.
 **Why:** "Genie" felt whimsical and lamp-rubbing — wrong tone for a premium product. Cadence is a dressage term for rhythmic, expressive movement that emerges when horse and rider are truly in harmony. It implies helping riders find their rhythm. Sounds elegant when spoken: "Ask Cadence."
