@@ -65,6 +65,12 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function isPersistentVideoUrl(url?: string): boolean {
+  if (!url) return false;
+  const trimmed = url.trim();
+  return !!trimmed && !trimmed.startsWith('blob:') && !trimmed.startsWith('data:');
+}
+
 // Card #59 — allowed formats + size threshold
 const ALLOWED_FORMATS = ['video/mp4', 'video/quicktime', 'video/avi', 'video/x-msvideo'];
 const SIZE_WARN_MB = 500;
@@ -1006,7 +1012,8 @@ export default function RidesPage() {
       type: logType,
       duration,
       videoFileName: videoFile.name,
-      videoUrl: result.videoPlaybackUrl,
+      // Persist only a durable URL (set after successful storage upload below).
+      videoUrl: undefined,
       biometrics: { ...bio },
       ridingQuality: {
         rhythm:       qualities[0].score,
@@ -1022,7 +1029,7 @@ export default function RidesPage() {
     };
 
     // ── Upload video to Supabase Storage now (deferred from analysis time) ──────
-    let permanentVideoUrl = ride.videoUrl ?? ''; // starts as blob URL
+    let permanentVideoUrl = '';
     try {
       const safeName = `${Date.now()}_${videoFile.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
       const { data: up, error: upErr } = await supabase.storage
@@ -1049,7 +1056,7 @@ export default function RidesPage() {
         await (supabase as any)
           .from('ride_sessions')
           .update({
-            video_url:        permanentVideoUrl,
+            video_url:        permanentVideoUrl || null,
             horse,
             ride_type:        logType,
             duration_minutes: duration,
@@ -1082,14 +1089,27 @@ export default function RidesPage() {
     if (!videoFile) { setVideoDuration(null); return; }
     const url = URL.createObjectURL(videoFile);
     const v = document.createElement('video');
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      try {
+        v.pause();
+        v.removeAttribute('src');
+        v.load();
+      } catch {
+        // ignore cleanup errors
+      }
+      URL.revokeObjectURL(url);
+    };
     v.preload = 'metadata';
     v.src = url;
     v.onloadedmetadata = () => {
       setVideoDuration(v.duration);
-      URL.revokeObjectURL(url);
+      release();
     };
-    v.onerror = () => { URL.revokeObjectURL(url); };
-    return () => { URL.revokeObjectURL(url); };
+    v.onerror = release;
+    return release;
   }, [videoFile]);
 
   // Combine stored rides with mock rides for the history
@@ -1551,7 +1571,7 @@ export default function RidesPage() {
                             ↻ You already have a ride here
                           </div>
                           <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '12px' }}>
-                            {existing.videoUrl ? (
+                            {isPersistentVideoUrl(existing.videoUrl) ? (
                               <video
                                 src={`${existing.videoUrl}#t=2`}
                                 preload="metadata" muted playsInline
@@ -2346,7 +2366,7 @@ function SwipeRideRow({ ride, storedRide, trendDelta, onNavigate, onDelete }: {
 
         {/* Right: Thumbnail with score ring overlay */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-          {storedRide?.videoUrl ? (
+          {isPersistentVideoUrl(storedRide?.videoUrl) ? (
             <div style={{
               position: 'relative', width: 92, height: 92, borderRadius: 10,
               overflow: 'hidden', background: '#EDE7DF',
