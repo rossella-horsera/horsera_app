@@ -114,4 +114,7 @@ in the Horsera frontend (`src/lib/storage.ts`).
 | `CLOUD_RUN_REGION` | _(empty)_ | Cloud Run region for Job dispatch |
 | `CLOUD_RUN_CPU_JOB` | _(empty)_ | Cloud Run Job name for CPU worker |
 | `CLOUD_RUN_GPU_JOB` | _(empty)_ | Cloud Run Job name for GPU worker |
+| `SAMPLE_FPS` | `1` | Frame sampling rate for video analysis |
+| `INFER_BATCH_SIZE` | `1` | Max sampled frames per ONNX inference call (effective when model supports batch > 1) |
+| `ORT_CUDNN_CONV_ALGO_SEARCH` | `HEURISTIC` | CUDA provider convolution search mode (`HEURISTIC` or `EXHAUSTIVE`) |
 | `HORSERA_PHASE2` | `0` | Set to `1` to enable MediaPipe hybrid merging (see `pipeline.py`) |

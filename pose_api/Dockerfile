@@ -17,9 +17,9 @@ RUN pip install --no-cache-dir ultralytics==8.4.22 onnx==1.16.0
 RUN python -c "\
 from ultralytics import YOLO; \
 print('Exporting yolov8m → ONNX (horse detection)...'); \
-YOLO('yolov8m.pt').export(format='onnx', opset=12, simplify=False); \
+YOLO('yolov8m.pt').export(format='onnx', opset=12, simplify=False, dynamic=True); \
 print('Exporting yolov8m-pose → ONNX (pose estimation)...'); \
-YOLO('yolov8m-pose.pt').export(format='onnx', opset=12, simplify=False); \
+YOLO('yolov8m-pose.pt').export(format='onnx', opset=12, simplify=False, dynamic=True); \
 print('ONNX export complete.')"
 
 # ── Stage 2: Runtime — no torch, no ultralytics ───────────────────────────────
@@ -29,11 +29,14 @@ FROM python:3.14-slim
 
 WORKDIR /app
 
+ARG PIP_REQUIREMENTS=requirements.txt
+ENV LD_LIBRARY_PATH="/usr/local/lib/python3.14/site-packages/nvidia/cublas/lib:/usr/local/lib/python3.14/site-packages/nvidia/cudnn/lib:/usr/local/lib/python3.14/site-packages/nvidia/cuda_runtime/lib:/usr/local/lib/python3.14/site-packages/nvidia/cuda_nvrtc/lib:/usr/local/lib/python3.14/site-packages/nvidia/cufft/lib:/usr/local/lib/python3.14/site-packages/nvidia/curand/lib:/usr/local/lib/python3.14/site-packages/nvidia/cusolver/lib:/usr/local/lib/python3.14/site-packages/nvidia/cusparse/lib:/usr/local/lib/python3.14/site-packages/nvidia/nvjitlink/lib:${LD_LIBRARY_PATH}"
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 libgl1 && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements*.txt ./
+RUN pip install --no-cache-dir -r "${PIP_REQUIREMENTS}"
 
 # Copy only the ONNX weights from the exporter stage — no torch binary
 COPY --from=exporter /export/yolov8m.onnx .

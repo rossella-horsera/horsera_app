@@ -28,10 +28,12 @@ Or run manually:
 PROJECT_ID="your-gcp-project-id"
 REGION="us-east4"
 TAG="$(git rev-parse --short HEAD)"
-REPO="${REGION}-docker.pkg.dev/${PROJECT_ID}/horsera-pose-repo/pose-api:${TAG}"
+CPU_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/horsera-pose-repo/pose-api:${TAG}"
+GPU_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/horsera-pose-repo/pose-api:${TAG}-gpu"
 
 gcloud auth configure-docker "${REGION}-docker.pkg.dev"
-docker buildx build --platform linux/amd64 -f ../Dockerfile -t "${REPO}" --push ..
+docker buildx build --platform linux/amd64 -f ../Dockerfile --build-arg PIP_REQUIREMENTS=requirements.cpu.txt -t "${CPU_IMAGE}" --push ..
+docker buildx build --platform linux/amd64 -f ../Dockerfile --build-arg PIP_REQUIREMENTS=requirements.gpu.txt -t "${GPU_IMAGE}" --push ..
 ```
 
 2. Copy and edit variables:
@@ -40,7 +42,10 @@ docker buildx build --platform linux/amd64 -f ../Dockerfile -t "${REPO}" --push 
 cp terraform.tfvars.example terraform.tfvars
 ```
 
-Set both `api_image` and `worker_image` to the pushed image tag.
+Set:
+- `api_image` to `${CPU_IMAGE}`
+- `worker_image` to `${CPU_IMAGE}`
+- `worker_gpu_image` to `${GPU_IMAGE}` (or leave empty to reuse `worker_image`)
 
 3. Initialize and preview:
 
@@ -111,9 +116,10 @@ Then set:
   - If injecting into Cloud Run, keep `inject_supabase_secrets = true` and ensure those secret names exist.
 
 - `Image ... not found` when creating Cloud Run jobs:
-  - Push the exact image tag referenced by `api_image` / `worker_image`.
+  - Push the exact image tag referenced by `api_image` / `worker_image` / `worker_gpu_image`.
   - Example:
     - `docker push us-east4-docker.pkg.dev/<project>/horsera-pose-repo/pose-api:<tag>`
+    - `docker push us-east4-docker.pkg.dev/<project>/horsera-pose-repo/pose-api:<tag>-gpu`
 - `exec format error` at startup (`/usr/local/bin/uvicorn`):
   - Build and push as `linux/amd64` for Cloud Run:
     - `docker buildx build --platform linux/amd64 ... --push`

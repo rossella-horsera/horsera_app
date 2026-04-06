@@ -1,12 +1,5 @@
-fastapi==0.115.0
-uvicorn==0.30.6
-python-multipart==0.0.9
-pydantic==2.12.3
-httpx==0.27.2
-Pillow==12.1.1
-onnxruntime==1.24.3
-opencv-python-headless==4.10.0.84
-numpy==2.3.4
-google-cloud-storage==2.18.2
-google-cloud-firestore==2.21.0
-# torch and ultralytics are build-time only (ONNX export) — not installed at runtime
+# Default install remains CPU for local dev and non-GPU runtimes.
+-r requirements.cpu.txt
+
+# For GPU workers use requirements.gpu.txt (onnxruntime-gpu).
+# torch and ultralytics are build-time only (ONNX export) — not installed at runtime.
