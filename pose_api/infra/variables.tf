@@ -46,7 +46,7 @@ variable "cors_origins" {
 variable "allow_unauthenticated_api" {
   type        = bool
   description = "Allow unauthenticated public access to the API Cloud Run service."
-  default     = true
+  default     = false
 }
 
 variable "api_invoker_members" {

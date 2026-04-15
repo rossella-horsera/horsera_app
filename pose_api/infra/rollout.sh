@@ -12,6 +12,7 @@ REGION="$2"
 TAG="${3:-$(git rev-parse --short HEAD)}"
 APPLY_FLAG="${4:-}"
 PLATFORM="${PLATFORM:-linux/amd64}"
+UPLOAD_BUCKET_NAME="${UPLOAD_BUCKET_NAME:-horsera-pose-input-${PROJECT_ID}}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 INFRA_DIR="${ROOT_DIR}/pose_api/infra"
@@ -45,7 +46,8 @@ terraform plan \
   -var "region=${REGION}" \
   -var "api_image=${CPU_IMAGE}" \
   -var "worker_image=${CPU_IMAGE}" \
-  -var "worker_gpu_image=${GPU_IMAGE}"
+  -var "worker_gpu_image=${GPU_IMAGE}" \
+  -var "upload_bucket_name=${UPLOAD_BUCKET_NAME}"
 
 if [[ "${APPLY_FLAG}" == "--apply" ]]; then
   echo "==> Applying terraform"
@@ -55,6 +57,7 @@ if [[ "${APPLY_FLAG}" == "--apply" ]]; then
     -var "api_image=${CPU_IMAGE}" \
     -var "worker_image=${CPU_IMAGE}" \
     -var "worker_gpu_image=${GPU_IMAGE}" \
+    -var "upload_bucket_name=${UPLOAD_BUCKET_NAME}" \
     -auto-approve
 fi
 
