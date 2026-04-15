@@ -28,7 +28,13 @@ variable "api_image" {
 
 variable "worker_image" {
   type        = string
-  description = "Container image for CPU/GPU worker Cloud Run Jobs."
+  description = "Container image for CPU worker Cloud Run Job."
+}
+
+variable "worker_gpu_image" {
+  type        = string
+  description = "Optional container image for GPU worker Cloud Run Job. Defaults to worker_image when empty."
+  default     = ""
 }
 
 variable "cors_origins" {
@@ -76,6 +82,12 @@ variable "gpu_zonal_redundancy_disabled" {
   type        = bool
   description = "Disable GPU zonal redundancy for Cloud Run Jobs when required by regional capacity constraints."
   default     = true
+}
+
+variable "gpu_infer_batch_size" {
+  type        = number
+  description = "Frame batch size for GPU worker ONNX inference."
+  default     = 4
 }
 
 variable "create_firestore_database" {

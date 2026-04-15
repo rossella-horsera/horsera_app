@@ -1,0 +1,4 @@
+-r requirements.base.txt
+
+# CPU runtime for API + CPU Cloud Run worker
+onnxruntime==1.24.4
