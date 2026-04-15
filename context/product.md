@@ -36,7 +36,7 @@ The learning loop never closes. Horsera fixes this with a longitudinal system of
 - Cadence AI advisor wired to real LLM (OpenAI) with rider context
 - Simplified navigation: video-first flow
 - Basic ride logging with focus areas
-- Basic persistence via Supabase
+- Basic persistence via Firebase Auth + Firestore
 - "Journey" shown as teaser/coming soon
 
 ### Deferred (V2+)

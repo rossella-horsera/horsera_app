@@ -9,6 +9,8 @@ Receives a riding video → returns 6 biomechanics scores + Training Scale quali
 |--------|------|-------------|
 | `GET` | `/health` | Health check, active job count |
 | `POST` | `/uploads/video-url` | Create signed URL for direct video upload to GCS |
+| `POST` | `/videos/pin` | Copy an uploaded object into the durable saved-rides prefix |
+| `POST` | `/videos/read-url` | Mint a signed playback URL for a saved GCS object |
 | `POST` | `/analyze/video/object` | Start analysis from uploaded GCS object path |
 | `POST` | `/analyze/video` | Upload video → returns `job_id` (async) |
 | `GET` | `/jobs/{job_id}` | Poll job status + results |
@@ -103,8 +105,10 @@ in the Horsera frontend (`src/lib/storage.ts`).
 | `CORS_ORIGINS` | `https://horsera.app,...` | Comma-separated allowed origins |
 | `GCS_UPLOAD_BUCKET` | _(empty)_ | Bucket for signed uploads + server-side reads |
 | `GCS_UPLOAD_PREFIX` | `uploads` | Prefix inside the upload bucket |
+| `GCS_SAVED_PREFIX` | `saved-rides` | Prefix for pinned ride videos that should remain available for playback |
 | `GCS_SIGNING_SERVICE_ACCOUNT_EMAIL` | _(empty)_ | Optional override for V4 signed URL signer identity (recommended on Cloud Run) |
 | `SIGNED_URL_TTL_SECONDS` | `900` | Signed upload URL TTL in seconds |
+| `READ_URL_TTL_SECONDS` | `900` | Signed playback URL TTL in seconds |
 | `JOB_STORE_BACKEND` | `memory` | `memory` or `firestore` |
 | `FIRESTORE_COLLECTION` | `pose_jobs` | Firestore collection for job state |
 | `EXECUTION_BACKEND` | `inline` | `inline` (background thread) or `cloud_run_job` |

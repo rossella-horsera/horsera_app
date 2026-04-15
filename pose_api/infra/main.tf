@@ -10,19 +10,6 @@ locals {
     if trimspace(origin) != ""
   ]
 
-  supabase_secret_env = var.inject_supabase_secrets ? [
-    {
-      name      = "SUPABASE_URL"
-      secret_id = var.supabase_url_secret_id
-    },
-    {
-      name      = "SUPABASE_KEY"
-      secret_id = var.supabase_key_secret_id
-    },
-  ] : []
-
-  supabase_url_secret_name   = "projects/${var.project_id}/secrets/${var.supabase_url_secret_id}"
-  supabase_key_secret_name   = "projects/${var.project_id}/secrets/${var.supabase_key_secret_id}"
   worker_gpu_image_effective = trimspace(var.worker_gpu_image) != "" ? var.worker_gpu_image : var.worker_image
 
   required_services = toset([
@@ -32,7 +19,6 @@ locals {
     "storage.googleapis.com",
     "iam.googleapis.com",
     "iamcredentials.googleapis.com",
-    "secretmanager.googleapis.com",
   ])
 }
 
@@ -100,30 +86,6 @@ resource "google_service_account" "worker" {
   display_name = "Horsera Pose Worker Service Account"
 }
 
-resource "google_secret_manager_secret" "supabase_url" {
-  count     = var.manage_supabase_secrets ? 1 : 0
-  secret_id = var.supabase_url_secret_id
-  labels    = local.common_labels
-
-  replication {
-    auto {}
-  }
-
-  depends_on = [google_project_service.required]
-}
-
-resource "google_secret_manager_secret" "supabase_key" {
-  count     = var.manage_supabase_secrets ? 1 : 0
-  secret_id = var.supabase_key_secret_id
-  labels    = local.common_labels
-
-  replication {
-    auto {}
-  }
-
-  depends_on = [google_project_service.required]
-}
-
 resource "google_project_iam_member" "api_run_jobs" {
   count = var.manage_iam_bindings ? 1 : 0
 
@@ -186,38 +148,6 @@ resource "google_project_iam_member" "worker_logs" {
   project = var.project_id
   role    = "roles/logging.logWriter"
   member  = "serviceAccount:${google_service_account.worker.email}"
-}
-
-resource "google_secret_manager_secret_iam_member" "api_supabase_url_accessor" {
-  count = var.manage_iam_bindings && var.inject_supabase_secrets ? 1 : 0
-
-  secret_id = local.supabase_url_secret_name
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.api.email}"
-}
-
-resource "google_secret_manager_secret_iam_member" "api_supabase_key_accessor" {
-  count = var.manage_iam_bindings && var.inject_supabase_secrets ? 1 : 0
-
-  secret_id = local.supabase_key_secret_name
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.api.email}"
-}
-
-resource "google_secret_manager_secret_iam_member" "worker_supabase_url_accessor" {
-  count = var.manage_iam_bindings && var.inject_supabase_secrets ? 1 : 0
-
-  secret_id = local.supabase_url_secret_name
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.worker.email}"
-}
-
-resource "google_secret_manager_secret_iam_member" "worker_supabase_key_accessor" {
-  count = var.manage_iam_bindings && var.inject_supabase_secrets ? 1 : 0
-
-  secret_id = local.supabase_key_secret_name
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.worker.email}"
 }
 
 resource "google_cloud_run_v2_service" "pose_api" {
@@ -302,19 +232,6 @@ resource "google_cloud_run_v2_service" "pose_api" {
         value = "horsera-pose-worker-gpu"
       }
 
-      dynamic "env" {
-        for_each = local.supabase_secret_env
-        content {
-          name = env.value.name
-          value_source {
-            secret_key_ref {
-              secret  = env.value.secret_id
-              version = "latest"
-            }
-          }
-        }
-      }
-
       resources {
         limits = {
           cpu    = "1"
@@ -336,8 +253,6 @@ resource "google_cloud_run_v2_service" "pose_api" {
     google_service_account_iam_member.api_act_as_worker,
     google_service_account_iam_member.api_sign_blob,
     google_storage_bucket_iam_member.api_upload_creator,
-    google_secret_manager_secret_iam_member.api_supabase_url_accessor,
-    google_secret_manager_secret_iam_member.api_supabase_key_accessor,
   ]
 }
 
@@ -387,18 +302,6 @@ resource "google_cloud_run_v2_job" "pose_worker_cpu" {
           name  = "FIRESTORE_COLLECTION"
           value = var.firestore_collection
         }
-        dynamic "env" {
-          for_each = local.supabase_secret_env
-          content {
-            name = env.value.name
-            value_source {
-              secret_key_ref {
-                secret  = env.value.secret_id
-                version = "latest"
-              }
-            }
-          }
-        }
         resources {
           limits = {
             cpu    = "2"
@@ -414,8 +317,6 @@ resource "google_cloud_run_v2_job" "pose_worker_cpu" {
     google_storage_bucket_iam_member.worker_upload_viewer,
     google_project_iam_member.worker_firestore,
     google_project_iam_member.worker_logs,
-    google_secret_manager_secret_iam_member.worker_supabase_url_accessor,
-    google_secret_manager_secret_iam_member.worker_supabase_key_accessor,
   ]
 }
 
@@ -457,18 +358,6 @@ resource "google_cloud_run_v2_job" "pose_worker_gpu" {
           name  = "REQUIRE_CUDA"
           value = "1"
         }
-        dynamic "env" {
-          for_each = local.supabase_secret_env
-          content {
-            name = env.value.name
-            value_source {
-              secret_key_ref {
-                secret  = env.value.secret_id
-                version = "latest"
-              }
-            }
-          }
-        }
         resources {
           limits = {
             cpu              = "4"
@@ -489,7 +378,5 @@ resource "google_cloud_run_v2_job" "pose_worker_gpu" {
     google_storage_bucket_iam_member.worker_upload_viewer,
     google_project_iam_member.worker_firestore,
     google_project_iam_member.worker_logs,
-    google_secret_manager_secret_iam_member.worker_supabase_url_accessor,
-    google_secret_manager_secret_iam_member.worker_supabase_key_accessor,
   ]
 }

@@ -192,7 +192,7 @@ Horsera aims to become the *longitudinal system of record* for rider–horse dev
 - JourneyPage completely rebuilt: level path navigator, skill rings grid, reaching ahead section, locked Ride the Test card
 - HomePage rebuilt: inline styles, mock.ts data, atmospheric CSS hero placeholder (replace with real photo), Cadence CTAs all wired to correct routes
 - Build: ✅ clean (379KB JS)
-- Lint: 7 pre-existing errors in shadcn/ui and Supabase files — none in our code
+- Lint: pre-existing errors were isolated to generated UI files before the Firebase/Firestore migration
 
 **Key decisions made:**
 - Unified on inline-styles system (the mock.ts system) — dropped Tailwind system for app screens

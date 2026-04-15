@@ -9,7 +9,7 @@
 ## 🪨 Rock 1 — Video upload + analysis must feel seamless
 
 ### The problem
-Full-res iPhone video → Supabase upload → Cloud Run CPU worker → YOLOv8m pose at 1 fps. End-to-end: minutes. This is Stage 3 of the JTBD map ("The Activation Moment"). If the first ride record feels slow, the rider doesn't come back.
+Full-res iPhone video → signed GCS upload → Cloud Run CPU worker → YOLOv8m pose at 1 fps. End-to-end: minutes. This is Stage 3 of the JTBD map ("The Activation Moment"). If the first ride record feels slow, the rider doesn't come back.
 
 **Target:** Upload → score + skeleton visible within **≤15 seconds** on wifi.
 

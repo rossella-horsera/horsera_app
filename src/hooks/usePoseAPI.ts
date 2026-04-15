@@ -19,16 +19,11 @@
 // shape as useVideoAnalysis so the rest of RidesPage.tsx is unchanged.
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { supabase } from '../integrations/supabase/client';
 import type { VideoAnalysisResult, AnalysisStatus, TimestampedFrame } from './useVideoAnalysis';
 import type { MovementInsight } from '../lib/poseAnalysis';
+import { createVideoUploadUrl, POSE_API_BASE, uploadFileToSignedUrl } from '../lib/poseApi';
 
-const DEFAULT_POSE_API = (
-  typeof window !== 'undefined' && window.location.hostname === 'localhost'
-    ? 'http://localhost:8000'
-    : '/api/pose'
-);
-const POSE_API  = import.meta.env.VITE_POSE_API_URL ?? DEFAULT_POSE_API;
+const POSE_API  = POSE_API_BASE;
 const ENABLE_LEGACY_UPLOAD_FALLBACK = import.meta.env.VITE_POSE_API_LEGACY_UPLOAD_FALLBACK === '1';
 const POLL_MS   = 3000;
 const MAX_POLL  = 200; // 200 × 3s = 10 min max
@@ -122,7 +117,11 @@ function compressVideo(
       const stopRecording = () => {
         if (stopped) return;
         stopped = true;
-        try { ctx.drawImage(video, 0, 0, outW, outH); } catch {}
+        try {
+          ctx.drawImage(video, 0, 0, outW, outH);
+        } catch {
+          // Ignore final frame draw failures during recorder shutdown.
+        }
         recorder.stop();
       };
 
@@ -143,8 +142,10 @@ function compressVideo(
           onProgress(Math.min(99, Math.round((video.currentTime / duration) * 100)));
         }
         if (hasRVFC) {
-          // @ts-ignore
-          video.requestVideoFrameCallback(drawFrame);
+          const rvfcVideo = video as HTMLVideoElement & {
+            requestVideoFrameCallback?: (callback: () => void) => number;
+          };
+          rvfcVideo.requestVideoFrameCallback?.(drawFrame);
         } else {
           requestAnimationFrame(drawFrame);
         }
@@ -163,7 +164,8 @@ export function usePoseAPI(): {
   progress:     number;
   result:       VideoAnalysisResult | null;
   error:        string | null;
-  sessionId:    string | null;
+  analysisJobId: string | null;
+  uploadedObjectPath: string | null;
   analyzeVideo: (file: File) => Promise<void>;
   reset:        () => void;
 } {
@@ -171,7 +173,8 @@ export function usePoseAPI(): {
   const [progress,  setProgress]  = useState(0);
   const [result,    setResult]    = useState<VideoAnalysisResult | null>(null);
   const [error,     setError]     = useState<string | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [analysisJobId, setAnalysisJobId] = useState<string | null>(null);
+  const [uploadedObjectPath, setUploadedObjectPath] = useState<string | null>(null);
 
   const pollRef     = useRef<ReturnType<typeof setInterval> | null>(null);
   const blobUrlRef  = useRef<string>('');
@@ -184,31 +187,15 @@ export function usePoseAPI(): {
     setProgress(0);
     setError(null);
     setResult(null);
-    setSessionId(null);
+    setAnalysisJobId(null);
+    setUploadedObjectPath(null);
 
     // Blob URL for immediate in-session video playback (no upload needed)
     const blobUrl = URL.createObjectURL(file);
     blobUrlRef.current = blobUrl;
 
     try {
-      // ── 1. Create ride_sessions row (no video_url yet) ───────────────────────
-      // Best-effort — silently skipped if unauthenticated (401) or Supabase unavailable.
-      // Auth is not required for Railway analysis; we'll add auth gating later.
-      let dbSessionId: string | null = null;
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: sess, error: sessErr } = await (supabase as any)
-          .from('ride_sessions')
-          .insert({ status: 'processing' })
-          .select('id')
-          .single();
-        if (!sessErr) {
-          dbSessionId = sess?.id ?? null;
-          setSessionId(dbSessionId);
-        }
-      } catch { /* non-fatal — proceed to Railway upload regardless */ }
-
-      // ── 2. Upload directly — no client-side compression ────────────────────────
+      // ── 1. Upload directly — no client-side compression ────────────────────────
       // Server-side pipeline handles transcode + analysis in one pass.
       // Client compression was a real-time bottleneck (10-min video = 10-min wait).
       // Phase 1: upload original, let Cloud Run GPU decode.
@@ -223,7 +210,7 @@ export function usePoseAPI(): {
 
       setProgress(10);
 
-      // ── 3. Signed upload flow (URL request + direct storage upload) ───────────
+      // ── 2. Signed upload flow (URL request + direct storage upload) ───────────
       setStatus('extracting');
       _bench('upload: requesting signed URL');
 
@@ -260,52 +247,16 @@ export function usePoseAPI(): {
 
       let job_id: string;
       try {
-        const signedUploadRes = await fetch(`${POSE_API}/uploads/video-url`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            filename: uploadFilename,
-            content_type: uploadBlob.type || 'video/mp4',
-            size_bytes: uploadBlob.size,
-          }),
-        });
-        if (!signedUploadRes.ok) {
-          throw new Error(`Failed to create upload URL: ${signedUploadRes.status} ${signedUploadRes.statusText}`);
-        }
-
-        const signedUpload = await signedUploadRes.json() as {
-          upload_url: string;
-          object_path: string;
-          required_headers?: Record<string, string>;
-        };
-        if (!signedUpload.upload_url || !signedUpload.object_path) {
-          throw new Error('Invalid signed upload response from Pose API');
-        }
-
+        const signedUpload = await createVideoUploadUrl(
+          uploadFilename,
+          uploadBlob.type || 'video/mp4',
+          uploadBlob.size,
+        );
+        setUploadedObjectPath(signedUpload.object_path);
         _bench('upload: signed URL received — starting GCS upload');
-        await new Promise<void>((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.timeout = 30 * 60 * 1000; // 30 min hard limit (large originals)
-          xhr.upload.onprogress = (e) => {
-            if (e.lengthComputable) {
-              const pct = e.loaded / e.total;
-              setProgress(10 + Math.round(pct * 8));
-              if (pct === 1) _bench(`upload: GCS upload complete (${(e.total / 1024 ** 2).toFixed(1)} MB sent)`);
-            }
-          };
-          xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) resolve();
-            else reject(new Error(`Upload failed ${xhr.status}: ${xhr.responseText || xhr.statusText}`));
-          };
-          xhr.onerror = () => reject(new Error('Network error while uploading video to storage'));
-          xhr.ontimeout = () => reject(new Error('Upload timed out — try a smaller clip or better network'));
-          xhr.open('PUT', signedUpload.upload_url);
-          if (signedUpload.required_headers) {
-            Object.entries(signedUpload.required_headers).forEach(([k, v]) => xhr.setRequestHeader(k, v));
-          } else if (uploadBlob.type) {
-            xhr.setRequestHeader('Content-Type', uploadBlob.type);
-          }
-          xhr.send(uploadBlob);
+        await uploadFileToSignedUrl(uploadBlob, signedUpload, (pct) => {
+          setProgress(10 + Math.round(pct * 8));
+          if (pct === 1) _bench(`upload: GCS upload complete (${(uploadBlob.size / 1024 ** 2).toFixed(1)} MB sent)`);
         });
 
         _bench('analyze: submitting job');
@@ -327,28 +278,19 @@ export function usePoseAPI(): {
           throw new Error('No job_id in analyze response');
         }
         job_id = analyzePayload.job_id;
+        setAnalysisJobId(job_id);
       } catch (signedUploadErr) {
         if (!ENABLE_LEGACY_UPLOAD_FALLBACK) {
           throw signedUploadErr;
         }
         console.warn('[Horsera] Signed upload flow unavailable; falling back to legacy /analyze/video:', signedUploadErr);
         job_id = await uploadViaLegacyEndpoint();
+        setAnalysisJobId(job_id);
       }
 
       setProgress(20);
 
-      // Store job_id on ride_sessions row
-      if (dbSessionId) {
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          await (supabase as any)
-            .from('ride_sessions')
-            .update({ job_id })
-            .eq('id', dbSessionId);
-        } catch { /* non-fatal */ }
-      }
-
-      // ── 4. Poll for results (20→95%) ──────────────────────────────────────────
+      // ── 3. Poll for results (20→95%) ──────────────────────────────────────────
       _bench('poll: starting — job_id=' + job_id);
       setStatus('processing');
       let attempts = 0;
@@ -380,24 +322,6 @@ export function usePoseAPI(): {
             _bench(`DONE: analysis complete after ${attempts} polls`);
             const r = job.result;
 
-            // Update ride_sessions with scores (video_url added on Save Ride)
-            if (dbSessionId) {
-              try {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                await (supabase as any)
-                  .from('ride_sessions')
-                  .update({
-                    status:         'complete',
-                    overall_score:  r.overallScore,
-                    detection_rate: r.detectionRate,
-                    biometrics:     r.biometrics,
-                    riding_quality: r.ridingQuality,
-                    insights:       r.insights,
-                  })
-                  .eq('id', dbSessionId);
-              } catch { /* non-fatal */ }
-            }
-
             const allFrames: TimestampedFrame[] = (r.framesData ?? []).map(
               (fd: { frame_time?: number; keypoints: [number, number, number][] }) => ({
                 time:  fd.frame_time ?? 0,
@@ -421,15 +345,6 @@ export function usePoseAPI(): {
             clearInterval(pollRef.current!);
             setStatus('error');
             setError(job.error || 'Analysis failed on the server — try again');
-            if (dbSessionId) {
-              try {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                await (supabase as any)
-                  .from('ride_sessions')
-                  .update({ status: 'failed' })
-                  .eq('id', dbSessionId);
-              } catch { /* non-fatal */ }
-            }
           }
         } catch (pollErr) {
           console.warn('[Horsera] Poll error (will retry):', pollErr);
@@ -450,7 +365,8 @@ export function usePoseAPI(): {
     setProgress(0);
     setResult(null);
     setError(null);
-    setSessionId(null);
+    setAnalysisJobId(null);
+    setUploadedObjectPath(null);
   }, []);
 
   useEffect(() => () => {
@@ -458,5 +374,5 @@ export function usePoseAPI(): {
     if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
   }, []);
 
-  return { status, progress, result, error, sessionId, analyzeVideo, reset };
+  return { status, progress, result, error, analysisJobId, uploadedObjectPath, analyzeVideo, reset };
 }

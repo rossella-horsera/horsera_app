@@ -17,7 +17,3 @@ gpu_infer_batch_size           = 4
 create_firestore_database      = false
 firestore_collection           = "pose_jobs"
 manage_iam_bindings            = true
-supabase_url_secret_id         = "horsera-supabase-url"
-supabase_key_secret_id         = "horsera-supabase-key"
-inject_supabase_secrets        = true
-manage_supabase_secrets        = true

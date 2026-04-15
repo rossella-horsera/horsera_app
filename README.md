@@ -8,6 +8,11 @@
 
 - Vercel -> authenticated Cloud Run Pose API proxy setup:
   - `docs/vercel-pose-proxy.md`
+- Frontend Firebase env vars required for ride sync:
+  - `VITE_FIREBASE_API_KEY`
+  - `VITE_FIREBASE_AUTH_DOMAIN`
+  - `VITE_FIREBASE_PROJECT_ID`
+  - `VITE_FIREBASE_APP_ID`
 
 ## How can I edit this code?
 
