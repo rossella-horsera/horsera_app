@@ -25,6 +25,8 @@ export const firebaseDb: Firestore | null = firebaseApp ? getFirestore(firebaseA
 
 let initialAuthStatePromise: Promise<void> | null = null;
 let ensureUserPromise: Promise<User | null> | null = null;
+let didWarnMissingFirebaseConfig = false;
+let didWarnAnonymousAuthFailure = false;
 
 async function waitForInitialAuthState(): Promise<void> {
   if (!firebaseAuth) return;
@@ -42,7 +44,8 @@ async function waitForInitialAuthState(): Promise<void> {
 
 export async function ensureFirebaseUser(): Promise<User | null> {
   if (!firebaseAuth) {
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && !didWarnMissingFirebaseConfig) {
+      didWarnMissingFirebaseConfig = true;
       console.warn('[Horsera] Firebase env vars are missing; ride sync will stay local-only.');
     }
     return null;
@@ -58,7 +61,10 @@ export async function ensureFirebaseUser(): Promise<User | null> {
         const cred = await signInAnonymously(firebaseAuth);
         return cred.user;
       } catch (error) {
-        console.warn('[Horsera] Anonymous Firebase auth failed; ride sync will stay local-only.', error);
+        if (!didWarnAnonymousAuthFailure) {
+          didWarnAnonymousAuthFailure = true;
+          console.warn('[Horsera] Anonymous Firebase auth failed; ride sync will stay local-only.', error);
+        }
         return null;
       }
     })();

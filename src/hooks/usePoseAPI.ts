@@ -178,10 +178,32 @@ export function usePoseAPI(): {
 
   const pollRef     = useRef<ReturnType<typeof setInterval> | null>(null);
   const blobUrlRef  = useRef<string>('');
+  const revokeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cancelPendingBlobRevoke = useCallback(() => {
+    if (revokeTimerRef.current) {
+      clearTimeout(revokeTimerRef.current);
+      revokeTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleBlobUrlRevoke = useCallback((blobUrl?: string) => {
+    if (!blobUrl) return;
+    cancelPendingBlobRevoke();
+    // Give React/router time to unmount the preview player before revoking the blob URL.
+    revokeTimerRef.current = setTimeout(() => {
+      URL.revokeObjectURL(blobUrl);
+      if (blobUrlRef.current === blobUrl) {
+        blobUrlRef.current = '';
+      }
+      revokeTimerRef.current = null;
+    }, 5000);
+  }, [cancelPendingBlobRevoke]);
 
   const analyzeVideo = useCallback(async (file: File) => {
     if (pollRef.current) clearInterval(pollRef.current);
-    if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
+    cancelPendingBlobRevoke();
+    scheduleBlobUrlRevoke(blobUrlRef.current);
 
     setStatus('loading-model');
     setProgress(0);
@@ -356,23 +378,23 @@ export function usePoseAPI(): {
       setStatus('error');
       setError(err instanceof Error ? err.message : 'Analysis failed — please try again');
     }
-  }, []);
+  }, [cancelPendingBlobRevoke, scheduleBlobUrlRevoke]);
 
   const reset = useCallback(() => {
     if (pollRef.current) clearInterval(pollRef.current);
-    if (blobUrlRef.current) { URL.revokeObjectURL(blobUrlRef.current); blobUrlRef.current = ''; }
+    scheduleBlobUrlRevoke(blobUrlRef.current);
     setStatus('idle');
     setProgress(0);
     setResult(null);
     setError(null);
     setAnalysisJobId(null);
     setUploadedObjectPath(null);
-  }, []);
+  }, [scheduleBlobUrlRevoke]);
 
   useEffect(() => () => {
     if (pollRef.current) clearInterval(pollRef.current);
-    if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
-  }, []);
+    scheduleBlobUrlRevoke(blobUrlRef.current);
+  }, [scheduleBlobUrlRevoke]);
 
   return { status, progress, result, error, analysisJobId, uploadedObjectPath, analyzeVideo, reset };
 }
