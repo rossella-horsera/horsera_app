@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -12,12 +13,21 @@ import AnalysisShell from "./pages/analysis/AnalysisShell";
 import RideTab from "./pages/analysis/RideTab";
 import ReportTab from "./pages/analysis/ReportTab";
 import InsightsTab from "./pages/analysis/InsightsTab";
+import { initializeRideStore } from "./lib/storage";
 
 const queryClient = new QueryClient();
+
+function AppBootstrap() {
+  useEffect(() => {
+    void initializeRideStore();
+  }, []);
+  return null;
+}
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
+      <AppBootstrap />
       <Toaster />
       <Sonner />
       <HashRouter>

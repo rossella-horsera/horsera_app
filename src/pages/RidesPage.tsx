@@ -5,10 +5,10 @@ import type { Ride, BiometricsSnapshot } from '../data/mock';
 import { usePoseAPI } from '../hooks/usePoseAPI';
 import { computeRidingQualities, generateInsights } from '../lib/poseAnalysis';
 import type { MovementInsight } from '../lib/poseAnalysis';
-import { saveRide, getRides, deleteRide } from '../lib/storage';
+import { saveRide, getRides, deleteRide, useStoredRides } from '../lib/storage';
 import type { StoredRide } from '../lib/storage';
 import { getUserProfile } from '../lib/userProfile';
-import { supabase } from '../integrations/supabase/client';
+import { createVideoReadUrl, pinVideoObject } from '../lib/poseApi';
 
 // ─────────────────────────────────────────────────────────
 // DESIGN TOKENS
@@ -841,7 +841,7 @@ export default function RidesPage() {
   // Video analysis
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [videoFile, setVideoFile] = useState<File | null>(null);
-  const { status, progress, result, error, sessionId, analyzeVideo, reset } = usePoseAPI();
+  const { status, progress, result, error, analysisJobId, uploadedObjectPath, analyzeVideo, reset } = usePoseAPI();
 
   // Saved ride state
   const [sessionSaved, setSessionSaved] = useState(false);
@@ -864,7 +864,7 @@ export default function RidesPage() {
   const [horseFactIdx, setHorseFactIdx] = useState(0);
 
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'score'>('newest');
-  const [storedRides, setStoredRides] = useState<StoredRide[]>(getRides);
+  const storedRides = useStoredRides();
   const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(new Set());
   const toggleMonth = (key: string) => {
     setCollapsedMonths(prev => {
@@ -873,11 +873,6 @@ export default function RidesPage() {
       return next;
     });
   };
-
-  // Refresh stored rides on mount
-  useEffect(() => {
-    setStoredRides(getRides());
-  }, []);
 
   const isDone = status === 'done' && result !== null;
   const isAnalyzing = status === 'loading-model' || status === 'compressing' || status === 'extracting' || status === 'processing';
@@ -897,7 +892,11 @@ export default function RidesPage() {
     if (!isAnalyzing) return;
     const RECENT_KEY = 'horsera_recent_facts';
     let recent: string[] = [];
-    try { recent = JSON.parse(sessionStorage.getItem(RECENT_KEY) || '[]'); } catch {}
+    try {
+      recent = JSON.parse(sessionStorage.getItem(RECENT_KEY) || '[]');
+    } catch {
+      // Ignore invalid recent-facts cache entries.
+    }
     // Put NOT-recently-shown facts first, then recent ones at the tail, so the
     // longest possible analysis still stays unique-heavy at the start.
     const fresh = HORSE_FACTS.filter(f => !recent.includes(f));
@@ -918,7 +917,9 @@ export default function RidesPage() {
     try {
       const next = [...queue.slice(0, 10), ...recent].slice(0, 20);
       sessionStorage.setItem(RECENT_KEY, JSON.stringify(next));
-    } catch {}
+    } catch {
+      // Ignore sessionStorage write failures.
+    }
     const interval = setInterval(() => {
       setHorseFactIdx(i => (i + 1) % queue.length);
     }, 9000);
@@ -1001,7 +1002,7 @@ export default function RidesPage() {
     const existing = getRides().find(r => r.date === logDate && r.horse === horse && r.type === logType);
     const rideId = (existing && conflictMode === 'replace')
       ? existing.id
-      : (sessionId ?? `stored-${Date.now()}`);
+      : (analysisJobId ?? `stored-${Date.now()}`);
 
     const ride: StoredRide = {
       id: rideId,
@@ -1012,8 +1013,9 @@ export default function RidesPage() {
       type: logType,
       duration,
       videoFileName: videoFile.name,
-      // Persist only a durable URL (set after successful storage upload below).
       videoUrl: undefined,
+      videoObjectPath: existing?.videoObjectPath,
+      poseJobId: analysisJobId ?? undefined,
       biometrics: { ...bio },
       ridingQuality: {
         rhythm:       qualities[0].score,
@@ -1026,46 +1028,23 @@ export default function RidesPage() {
       overallScore: Math.round(overall * 100) / 100,
       insights: result.insights.map(i => i.text),
       keyframes: result.allFrames ?? [],
+      schemaVersion: 2,
     };
 
-    // ── Upload video to Supabase Storage now (deferred from analysis time) ──────
-    let permanentVideoUrl = '';
-    try {
-      const safeName = `${Date.now()}_${videoFile.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-      const { data: up, error: upErr } = await supabase.storage
-        .from('ride-videos')
-        .upload(safeName, videoFile, { cacheControl: '3600', upsert: false });
-      if (!upErr && up) {
-        const { data: { publicUrl } } = supabase.storage.from('ride-videos').getPublicUrl(up.path);
-        permanentVideoUrl = publicUrl;
-        ride.videoUrl = publicUrl;
-      }
-    } catch (storageErr) {
-      console.warn('[Horsera] Storage upload skipped on save:', storageErr);
-    }
-
-    // Persist to localStorage (always)
-    saveRide(ride);
-    setStoredRides(getRides());
-    navigate(`/rides/${ride.id}`);
-
-    // Update Supabase ride_sessions with video_url + user metadata (non-fatal)
-    if (sessionId) {
+    if (uploadedObjectPath) {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (supabase as any)
-          .from('ride_sessions')
-          .update({
-            video_url:        permanentVideoUrl || null,
-            horse,
-            ride_type:        logType,
-            duration_minutes: duration,
-          })
-          .eq('id', sessionId);
-      } catch (dbErr) {
-        console.warn('[Horsera] ride_sessions save update skipped:', dbErr);
+        const pinnedObjectPath = await pinVideoObject(uploadedObjectPath, videoFile.name, ride.id);
+        ride.videoObjectPath = pinnedObjectPath;
+        const { readUrl, expiresAt } = await createVideoReadUrl(pinnedObjectPath);
+        ride.videoUrl = readUrl;
+        ride.videoUrlExpiresAt = expiresAt;
+      } catch (storageErr) {
+        console.warn('[Horsera] Video pinning skipped on save:', storageErr);
       }
     }
+
+    await saveRide(ride);
+    navigate(`/rides/${ride.id}`);
 
     setSessionSaved(true);
   };
@@ -2046,8 +2025,7 @@ export default function RidesPage() {
                     trendDelta={trendDelta}
                     onNavigate={() => navigate(`/rides/${ride.id}`)}
                     onDelete={() => {
-                      deleteRide(ride.id);
-                      setStoredRides(getRides());
+                      void deleteRide(ride.id);
                     }}
                   />
                 );

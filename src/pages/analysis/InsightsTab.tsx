@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getRides } from '../../lib/storage';
+import { useStoredRides } from '../../lib/storage';
 import { getUserProfile } from '../../lib/userProfile';
 import { useCadence } from '../../context/CadenceContext';
 import { CadenceIcon } from '../../components/layout/CadenceFAB';
@@ -126,6 +126,7 @@ function Pill({ label, active, onClick }: { label: string; active: boolean; onCl
 export default function InsightsTab() {
   const navigate = useNavigate();
   const { openCadence } = useCadence();
+  const storedRides = useStoredRides();
 
   // Time selector state
   const [timeMode, setTimeMode] = useState<'months' | 'rides'>('months');
@@ -161,8 +162,8 @@ export default function InsightsTab() {
   };
 
   const allRides = useMemo(() =>
-    getRides().sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()),
-  []);
+    [...storedRides].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()),
+  [storedRides]);
 
   const hasReal = allRides.length > 0;
 

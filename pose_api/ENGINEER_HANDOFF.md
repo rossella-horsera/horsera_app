@@ -129,7 +129,6 @@ For full end-to-end testing (API + skeleton overlay + UI): use `https://app.hors
 |------|---------|
 | `pose_api/main.py` | FastAPI app, in-memory job store, video upload endpoint, background worker |
 | `pose_api/pipeline.py` | ONNX inference pipeline — horse detection, pose estimation, keypoint normalisation, biomechanics scoring |
-| `pose_api/db.py` | Supabase write helpers (best-effort, non-blocking — a DB error never affects analysis results) |
 | `pose_api/requirements.txt` | Python deps — includes `onnxruntime` runtime dependency (keep aligned with target Python minor version and wheel availability) |
 | `pose_api/railway.toml` | Railway build + deploy config |
 | `pose_api/Dockerfile` | Container build — `EXPOSE 8000` is in the file but the server runs on `${PORT}` (8080). Do not change the Railway Networking domain back to 8000. |
@@ -145,4 +144,4 @@ For full end-to-end testing (API + skeleton overlay + UI): use `https://app.hors
 | `startCommand` | `sh -c 'uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080} --loop asyncio'` | `sh -c` wrapper required for `${PORT}` expansion |
 | `PORT` env var | Do not set | Railway injects it automatically (8080) |
 | `CORS_ORIGINS` | `https://horsera.app,https://app.horsera.ai,http://localhost:5173,http://localhost:8080` | All four origins required |
-| `SUPABASE_KEY` | Publishable key | Not a service role key — DB writes are best-effort only |
+| `GCS_UPLOAD_BUCKET` | Your bucket name | Required for signed upload, pin, and playback flows |

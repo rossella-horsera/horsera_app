@@ -7,7 +7,6 @@ This directory provisions rollout-ready GCP infrastructure for the Pose API migr
 - Cloud Run API service (optionally public)
 - Cloud Run CPU worker Job
 - Cloud Run GPU worker Job (optional)
-- Secret Manager secrets (`SUPABASE_URL`, `SUPABASE_KEY`)
 - Service accounts + least-privilege IAM bindings
 - Optional Firestore default database creation
 
@@ -60,24 +59,6 @@ terraform plan
 terraform apply
 ```
 
-## Secret Manager Setup
-
-Terraform creates secret containers but does not upload secret values.
-Add versions before enabling `inject_supabase_secrets`.
-
-```bash
-printf '%s' 'https://<project-ref>.supabase.co' | \
-  gcloud secrets versions add horsera-supabase-url --data-file=-
-
-printf '%s' 'sb_publishable_...' | \
-  gcloud secrets versions add horsera-supabase-key --data-file=-
-```
-
-Then set:
-
-- `inject_supabase_secrets = true`
-- `manage_supabase_secrets = false` if those secrets already exist and should be reused
-
 ## Notes
 
 - `create_firestore_database` defaults to `false` to avoid conflicts in projects where Firestore already exists.
@@ -109,11 +90,6 @@ Then set:
 
 - `Error creating Database ... caller does not have permission`:
   - Set `create_firestore_database = false` unless your caller can create the default Firestore DB.
-
-- Secret Manager `404 not found`:
-  - `supabase_url_secret_id` / `supabase_key_secret_id` must be secret **names**, not URL/key values.
-  - If secrets already exist, set `manage_supabase_secrets = false`.
-  - If injecting into Cloud Run, keep `inject_supabase_secrets = true` and ensure those secret names exist.
 
 - `Image ... not found` when creating Cloud Run jobs:
   - Push the exact image tag referenced by `api_image` / `worker_image` / `worker_gpu_image`.

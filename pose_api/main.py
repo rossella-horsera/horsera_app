@@ -23,7 +23,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-import db as _db
 # pipeline is imported at module load so that onnxruntime + ONNX models are
 # resident in memory before any request arrives.  Loading them lazily on the
 # first video request caused an OOM spike mid-processing that killed the
@@ -61,8 +60,10 @@ app.add_middleware(
 
 GCS_UPLOAD_BUCKET = os.environ.get("GCS_UPLOAD_BUCKET", "").strip()
 GCS_UPLOAD_PREFIX = os.environ.get("GCS_UPLOAD_PREFIX", "uploads").strip("/") or "uploads"
+GCS_SAVED_PREFIX = os.environ.get("GCS_SAVED_PREFIX", "saved-rides").strip("/") or "saved-rides"
 GCS_SIGNING_SERVICE_ACCOUNT_EMAIL = os.environ.get("GCS_SIGNING_SERVICE_ACCOUNT_EMAIL", "").strip()
 SIGNED_URL_TTL_SECONDS = int(os.environ.get("SIGNED_URL_TTL_SECONDS", "900"))
+READ_URL_TTL_SECONDS = int(os.environ.get("READ_URL_TTL_SECONDS", "900"))
 JOB_STORE_BACKEND = os.environ.get("JOB_STORE_BACKEND", "memory").strip().lower()
 FIRESTORE_COLLECTION = os.environ.get("FIRESTORE_COLLECTION", "pose_jobs").strip() or "pose_jobs"
 EXECUTION_BACKEND = os.environ.get("EXECUTION_BACKEND", "inline").strip().lower()
@@ -113,44 +114,6 @@ _jobs: dict[str, dict] = {}
 _jobs_lock = threading.Lock()
 
 
-def _db_row_to_job_payload(row: dict) -> dict:
-    status_raw = str(row.get("status") or JobStatus.FAILED)
-    try:
-        status = JobStatus(status_raw)
-    except Exception:
-        status = JobStatus.FAILED
-
-    result = None
-    if status == JobStatus.COMPLETE:
-        biometrics = row.get("biometrics")
-        riding_quality = row.get("riding_quality")
-        if isinstance(biometrics, dict) and isinstance(riding_quality, dict):
-            result = {
-                "biometrics": biometrics,
-                "ridingQuality": riding_quality,
-                "overallScore": row.get("overall_score"),
-                "detectionRate": row.get("detection_rate"),
-                "caeIndex": row.get("cae_index"),
-                "apsScore": row.get("aps_score"),
-                "framesAnalyzed": row.get("frames_analyzed"),
-                "framesTotal": row.get("frames_total"),
-                "insights": row.get("insights") or [],
-                # DB does not currently store framesData for API replay.
-                "framesData": [],
-            }
-
-    return {
-        "job_id": row.get("job_id"),
-        "filename": row.get("filename"),
-        "size_mb": float(row.get("size_mb") or 0.0),
-        "status": status,
-        "created_at": row.get("created_at"),
-        "completed_at": row.get("completed_at"),
-        "result": result,
-        "error": row.get("error"),
-    }
-
-
 def _get_job(job_id: str) -> dict:
     # In cloud_run_job mode, worker updates happen out-of-process and are written
     # to Firestore. Read Firestore first so polling does not get stuck on stale
@@ -163,12 +126,6 @@ def _get_job(job_id: str) -> dict:
         job = _jobs.get(job_id)
     if job is not None:
         return job
-
-    # Fallback to Supabase persistence so completed/failed jobs can still be
-    # retrieved after process restarts while we migrate off in-memory state.
-    row = _db.get_job(job_id)
-    if row is not None:
-        return _db_row_to_job_payload(row)
 
     raise HTTPException(404, f"Job {job_id!r} not found")
 
@@ -277,6 +234,55 @@ def _generate_signed_upload_url(blob: Any, content_type: str) -> str:
     except Exception as fallback_exc:
         raise RuntimeError(
             f"Failed to generate signed URL. direct_sign={direct_exc}; iam_sign_blob={fallback_exc}"
+        ) from fallback_exc
+
+
+def _generate_signed_read_url(blob: Any) -> str:
+    expiration = timedelta(seconds=READ_URL_TTL_SECONDS)
+    direct_exc: Exception | None = None
+
+    try:
+        return blob.generate_signed_url(
+            version="v4",
+            expiration=expiration,
+            method="GET",
+        )
+    except Exception as exc:
+        direct_exc = exc
+        logger.warning(f"Direct V4 read signing failed; trying IAM signBlob fallback: {exc}")
+
+    try:
+        import google.auth
+        from google.auth.transport.requests import Request as GoogleAuthRequest
+    except Exception as exc:
+        raise RuntimeError(
+            f"google-auth libraries unavailable for V4 read signing fallback: {exc}"
+        ) from exc
+
+    scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+    creds, _project = google.auth.default(scopes=scopes)
+    creds.refresh(GoogleAuthRequest())
+    if not creds.token:
+        raise RuntimeError("Failed to obtain access token for signed read URL generation")
+
+    signer_email = _resolve_signing_service_account_email(creds)
+    if not signer_email:
+        raise RuntimeError(
+            "Failed to resolve signing service account email. "
+            "Set GCS_SIGNING_SERVICE_ACCOUNT_EMAIL in the API environment."
+        )
+
+    try:
+        return blob.generate_signed_url(
+            version="v4",
+            expiration=expiration,
+            method="GET",
+            service_account_email=signer_email,
+            access_token=creds.token,
+        )
+    except Exception as fallback_exc:
+        raise RuntimeError(
+            f"Failed to generate read URL. direct_sign={direct_exc}; iam_sign_blob={fallback_exc}"
         ) from fallback_exc
 
 
@@ -490,6 +496,12 @@ def _build_object_name(filename: str) -> str:
     return f"{GCS_UPLOAD_PREFIX}/{uuid.uuid4()}_{safe_name}"
 
 
+def _build_saved_object_name(filename: str, ride_id: str | None = None) -> str:
+    safe_name = _sanitize_filename(filename)
+    safe_ride_id = _sanitize_filename(ride_id or "ride")
+    return f"{GCS_SAVED_PREFIX}/{safe_ride_id}/{uuid.uuid4()}_{safe_name}"
+
+
 def _parse_gs_uri(uri: str) -> tuple[str, str]:
     if not uri.startswith("gs://"):
         raise ValueError("object_path must start with gs://")
@@ -512,21 +524,23 @@ def _download_from_gcs(object_path: str, dest_path: str) -> None:
     blob.download_to_filename(dest_path)
 
 
+def _copy_gcs_object(source_object_path: str, dest_object_name: str) -> str:
+    bucket_name, source_object_name = _parse_gs_uri(source_object_path)
+    client = _get_gcs_client()
+    bucket = client.bucket(bucket_name)
+    source_blob = bucket.blob(source_object_name)
+    if not source_blob.exists():
+        raise FileNotFoundError(f"GCS object not found: {source_object_path}")
+
+    bucket.copy_blob(source_blob, bucket, new_name=dest_object_name)
+    return f"gs://{bucket_name}/{dest_object_name}"
+
+
 # ── Background processing ────────────────────────────────────────────────────
 
 def _process_video(job_id: str, tmp_path: str, filename: str, size_mb: float) -> None:
     started_at = time.time()
     _update_job(job_id, status=JobStatus.PROCESSING, started_at=started_at)
-    # DB writes are best-effort — a Supabase error must never block pose analysis.
-    try:
-        _db.upsert_job(job_id, {
-            "filename":   filename,
-            "size_mb":    size_mb,
-            "status":     JobStatus.PROCESSING,
-            "created_at": started_at,
-        })
-    except Exception as db_exc:
-        logger.warning(f"[db] upsert_job(processing) failed — continuing: {db_exc}")
 
     try:
         result      = _pipeline.analyze_video(tmp_path)
@@ -538,31 +552,10 @@ def _process_video(job_id: str, tmp_path: str, filename: str, size_mb: float) ->
             result       = result_dict,
             completed_at = completed,
         )
-        try:
-            _db.upsert_job(job_id, {
-                "status":          JobStatus.COMPLETE,
-                "overall_score":   result.overallScore,
-                "detection_rate":  result.detectionRate,
-                "cae_index":       result.caeIndex,
-                "aps_score":       result.apsScore,
-                "frames_analyzed": result.framesAnalyzed,
-                "frames_total":    result.framesTotal,
-                "biometrics":      result_dict["biometrics"],
-                "riding_quality":  result_dict["ridingQuality"],
-                "insights":        result.insights,
-                "completed_at":    completed,
-            })
-            _db.insert_frames(job_id, result.frames_data)
-        except Exception as db_exc:
-            logger.warning(f"[db] upsert_job(complete) failed — results still returned: {db_exc}")
         logger.info(f"Job {job_id} complete — overall {result.overallScore:.2f}")
     except Exception as exc:
         logger.exception(f"Job {job_id} failed")
         _update_job(job_id, status=JobStatus.FAILED, error=str(exc))
-        try:
-            _db.upsert_job(job_id, {"status": JobStatus.FAILED, "filename": filename, "error": str(exc)})
-        except Exception as db_exc:
-            logger.warning(f"[db] upsert_job(failed) failed: {db_exc}")
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
@@ -581,10 +574,6 @@ def _process_video_from_gcs(
     except Exception as exc:
         logger.exception(f"Job {job_id} failed to download object {object_path!r}")
         _update_job(job_id, status=JobStatus.FAILED, error=f"Failed to download object: {exc}")
-        try:
-            _db.upsert_job(job_id, {"status": JobStatus.FAILED, "filename": filename, "error": str(exc)})
-        except Exception as db_exc:
-            logger.warning(f"[db] upsert_job(failed_download) failed: {db_exc}")
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
         return
@@ -649,6 +638,16 @@ class AnalyzeObjectRequest(BaseModel):
     size_mb: Optional[float] = None
 
 
+class PinVideoRequest(BaseModel):
+    object_path: str
+    filename: str
+    ride_id: Optional[str] = None
+
+
+class ReadUrlRequest(BaseModel):
+    object_path: str
+
+
 @app.post("/uploads/video-url")
 def create_video_upload_url(req: UploadUrlRequest) -> JSONResponse:
     """
@@ -676,6 +675,60 @@ def create_video_upload_url(req: UploadUrlRequest) -> JSONResponse:
         "object_path": object_path,
         "expires_in_seconds": SIGNED_URL_TTL_SECONDS,
         "required_headers": {"Content-Type": req.content_type},
+    })
+
+
+@app.post("/videos/pin")
+def pin_video_object(req: PinVideoRequest) -> JSONResponse:
+    if not GCS_UPLOAD_BUCKET:
+        raise HTTPException(500, "GCS_UPLOAD_BUCKET is not configured")
+
+    try:
+        bucket_name, _source_object_name = _parse_gs_uri(req.object_path)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    if bucket_name != GCS_UPLOAD_BUCKET:
+        raise HTTPException(400, "object_path bucket does not match GCS_UPLOAD_BUCKET")
+
+    dest_object_name = _build_saved_object_name(req.filename, req.ride_id)
+    try:
+        pinned_object_path = _copy_gcs_object(req.object_path, dest_object_name)
+    except Exception as exc:
+        logger.exception("Failed to pin uploaded object")
+        raise HTTPException(500, f"Failed to pin object: {exc}") from exc
+
+    return JSONResponse({
+        "object_path": pinned_object_path,
+        "source_object_path": req.object_path,
+    })
+
+
+@app.post("/videos/read-url")
+def create_video_read_url(req: ReadUrlRequest) -> JSONResponse:
+    try:
+        bucket_name, object_name = _parse_gs_uri(req.object_path)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    if GCS_UPLOAD_BUCKET and bucket_name != GCS_UPLOAD_BUCKET:
+        raise HTTPException(400, "object_path bucket does not match GCS_UPLOAD_BUCKET")
+
+    try:
+        client = _get_gcs_client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(object_name)
+        if not blob.exists():
+            raise FileNotFoundError(f"GCS object not found: {req.object_path}")
+        read_url = _generate_signed_read_url(blob)
+    except Exception as exc:
+        logger.exception("Failed to generate signed read URL")
+        raise HTTPException(500, f"Failed to create signed read URL: {exc}") from exc
+
+    return JSONResponse({
+        "read_url": read_url,
+        "object_path": req.object_path,
+        "expires_in_seconds": READ_URL_TTL_SECONDS,
     })
 
 
@@ -741,10 +794,6 @@ def analyze_video_object_endpoint(
         except Exception as exc:
             logger.exception(f"Failed to dispatch Cloud Run job for {job_id}")
             _update_job(job_id, status=JobStatus.FAILED, error=f"Failed to dispatch worker: {exc}")
-            try:
-                _db.upsert_job(job_id, {"status": JobStatus.FAILED, "filename": req.filename, "error": str(exc)})
-            except Exception as db_exc:
-                logger.warning(f"[db] upsert_job(failed_dispatch) failed: {db_exc}")
             raise HTTPException(500, f"Failed to dispatch worker job: {exc}") from exc
     else:
         background_tasks.add_task(

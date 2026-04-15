@@ -11,7 +11,7 @@ _Living document. Updated weekly. High-level big rocks only — not a changelog.
 - Real-time biomechanics score overlay on video playback
 - Cadence AI advisor wired to real LLM (OpenAI) with rider context
 - Simplified navigation (video-first flow)
-- Supabase persistence for ride history
+- Firebase Auth + Firestore persistence for ride history
 - Cadence icon/UX redesign (warm, intelligent, alive)
 
 ---
@@ -31,7 +31,7 @@ _Living document. Updated weekly. High-level big rocks only — not a changelog.
 - [ ] Video analysis with real-time biomechanics overlay
 - [ ] Cadence wired to OpenAI with rider context
 - [ ] Ride logging with focus areas
-- [ ] Basic persistence (rides accumulate in Supabase)
+- [ ] Basic persistence (rides accumulate in Firestore)
 - [ ] Barn user testing cohort
 
 ### V2 — Post-Validation

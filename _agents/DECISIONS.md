@@ -73,7 +73,7 @@ A record of significant product, design, and architectural decisions — capturi
 
 ### 2026-03-11 — mock.ts as single data source
 **Decision:** All MVP data lives in src/data/mock.ts with co-located TypeScript interfaces.
-**Why:** Simplest approach for MVP. Single source of truth prevents data drift across components. Replace with real data layer (Supabase or similar) post-MVP.
+**Why:** Simplest approach for MVP. Single source of truth prevents data drift across components. Replaced with Firebase Auth + Firestore once cross-device persistence shipped.
 
 ---
 

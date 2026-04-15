@@ -11,7 +11,7 @@ A living list of known work-items that haven't been scheduled yet. Grouped by th
 ## 🪨 Big rocks (the two things Rossella called out as next)
 
 ### Rock 1 — Video upload + analysis must feel seamless
-**Current pain:** full-res iPhone video → Supabase upload → Cloud Run CPU worker → YOLOv8m pose at 1 fps. End-to-end takes minutes. This is the single biggest friction point in the core loop (JTBD Stage 3: "The Activation Moment"). If the first ride record feels slow, the rider doesn't come back.
+**Current pain:** full-res iPhone video → signed GCS upload → Cloud Run CPU worker → YOLOv8m pose at 1 fps. End-to-end takes minutes. This is the single biggest friction point in the core loop (JTBD Stage 3: "The Activation Moment"). If the first ride record feels slow, the rider doesn't come back.
 
 **Target:** Rider uploads a video → sees score + skeleton within **<15 seconds** on wifi.
 
@@ -63,8 +63,8 @@ A living list of known work-items that haven't been scheduled yet. Grouped by th
 
 ## 🔄 Sync / auth (V1.5 blocker)
 
-- [P1] [Beau+Ross] Cross-device sync decision — Firebase (extend Matt's Firestore) vs Supabase auth. Currently data is localStorage-per-device which blocks any multi-user testing.
-- [P1] [Beau] Supabase/Firebase auth wiring with email magic link
+- [P1] [Beau+Ross] Cross-device sync hardening — extend Firebase auth beyond anonymous users for multi-device testing.
+- [P1] [Beau] Firebase email-link auth wiring
 - [P2] [Beau] Migrate existing localStorage data to cloud on first login
 
 ---

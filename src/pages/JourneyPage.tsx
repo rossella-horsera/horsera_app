@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { getUserProfile } from '../lib/userProfile';
-import { getRides } from '../lib/storage';
+import { useStoredRides } from '../lib/storage';
 
 // ── Design tokens ──────────────────────────────────────────────────────────
 const C = {
@@ -180,11 +180,12 @@ function inferLevelFromRides(rides: Array<{ overallScore: number }>): {
 
 export default function JourneyPage() {
   const profile = getUserProfile();
+  const storedRides = useStoredRides();
   const [selectedDiscipline, setSelectedDiscipline] = useState(profile.discipline ?? 'usdf-dressage');
   const [showDisciplineSelector, setShowDisciplineSelector] = useState(false);
 
   // Seed the level from profile if set, else infer from ride data (beta)
-  const _seedRides = getRides().sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  const _seedRides = [...storedRides].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   const _profileLevel = (profile.level || '').toLowerCase();
   const _knownLevels = ['intro', 'training', 'first', 'second', 'third', 'fourth'];
   const _inferred = inferLevelFromRides(_seedRides);
@@ -208,7 +209,7 @@ export default function JourneyPage() {
     if (level) setSelectedTest(level.tests[0]);
   }, [selectedLevel]);
 
-  const allRides = getRides().sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  const allRides = [...storedRides].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   const latest = allRides.length > 0 ? allRides[allRides.length - 1] : null;
 
   const mvtScores = MOVEMENTS.map(m => movementReadiness(latest, m.metrics));

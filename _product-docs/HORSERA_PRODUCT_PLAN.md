@@ -187,7 +187,7 @@ See `_agents/BACKLOG.md` for detailed sub-items.
 - [ ] **Rock 2: Real Cadence intelligence** — Haiku 4.5 + Monty's system prompt + rider context injection + structured outputs
 
 ### Phase 4 — Cross-device sync (blocker for real users)
-- [ ] Decide Firebase vs Supabase auth
+- [x] Standardize on Firebase auth
 - [ ] Migrate localStorage → cloud
 - [ ] Magic-link auth flow
 

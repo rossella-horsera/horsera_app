@@ -1,10 +1,19 @@
 import { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getRides, updateRide, deleteRide, type StoredRide } from '@/lib/storage';
+import {
+  deleteRide,
+  hydrateRide,
+  resolveRidePlaybackUrl,
+  updateRide,
+  useRideStoreReady,
+  useStoredRides,
+  type StoredRide,
+} from '@/lib/storage';
 import { parseLocalDate } from '@/lib/utils';
 import { useCadence } from '@/context/CadenceContext';
 import { CadenceIcon } from '@/components/layout/CadenceFAB';
 import VideoWithSkeleton from '../components/VideoWithSkeleton';
+import { createVideoReadUrl, createVideoUploadUrl, pinVideoObject, uploadFileToSignedUrl } from '../lib/poseApi';
 
 const C = {
   pa: '#F5EFE6',
@@ -107,10 +116,15 @@ function RideNotesEditor({ ride, isEditing, setIsEditing, onChange }: {
   const [name, setName] = useState(ride.name || '');
   const [notes, setNotes] = useState(ride.notes || '');
 
+  useEffect(() => {
+    setName(ride.name || '');
+    setNotes(ride.notes || '');
+  }, [ride.id, ride.name, ride.notes]);
+
   const hasContent = !!(ride.name || ride.notes);
 
   const save = () => {
-    updateRide(ride.id, {
+    void updateRide(ride.id, {
       name: name.trim() || undefined,
       notes: notes.trim() || undefined,
     });
@@ -233,11 +247,13 @@ export default function RideDetailPage2() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { openCadence } = useCadence();
+  const storedRides = useStoredRides();
+  const storeReady = useRideStoreReady();
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [selectedMoment, setSelectedMoment] = useState<null | 'best' | 'focus'>(null);
   const [editingNotes, setEditingNotes] = useState(false);
-  const [, forceUpdate] = useState(0);
+  const [playbackUrl, setPlaybackUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const emptyFileInputRef = useRef<HTMLInputElement>(null);
   const emptyDateRef = useRef<HTMLInputElement>(null);
@@ -250,7 +266,31 @@ export default function RideDetailPage2() {
     return () => clearTimeout(t);
   }, [uploadError]);
 
-  const ride: StoredRide | undefined = getRides().find(r => r.id === id);
+  const ride: StoredRide | undefined = storedRides.find(r => r.id === id);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!ride) {
+      setPlaybackUrl(null);
+      return;
+    }
+
+    setPlaybackUrl(ride.videoUrl ?? null);
+
+    void (async () => {
+      const hydratedRide = await hydrateRide(ride.id);
+      const sourceRide = hydratedRide ?? ride;
+      const resolvedPlaybackUrl = await resolveRidePlaybackUrl(sourceRide);
+      if (!cancelled) {
+        setPlaybackUrl(resolvedPlaybackUrl ?? sourceRide.videoUrl ?? null);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [ride]);
 
   async function handleVideoReplace(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -258,23 +298,47 @@ export default function RideDetailPage2() {
     setUploading(true);
     setUploadError(null);
     try {
-      const { supabase } = await import('../integrations/supabase/client');
-      const ext = file.name.split('.').pop() ?? 'mp4';
-      const path = `videos/${ride.id}-${Date.now()}.${ext}`;
-      const { error } = await supabase.storage
-        .from('ride-videos')
-        .upload(path, file, { upsert: true });
-      if (error) throw error;
-      const { data: { publicUrl } } = supabase.storage
-        .from('ride-videos')
-        .getPublicUrl(path);
-      updateRide(ride.id, { videoUrl: publicUrl });
-      forceUpdate(n => n + 1);
+      const upload = await createVideoUploadUrl(file.name, file.type || 'video/mp4', file.size);
+      await uploadFileToSignedUrl(file, upload);
+      const pinnedObjectPath = await pinVideoObject(upload.object_path, file.name, ride.id);
+      const { readUrl, expiresAt } = await createVideoReadUrl(pinnedObjectPath);
+      await updateRide(ride.id, {
+        videoFileName: file.name,
+        videoObjectPath: pinnedObjectPath,
+        videoUrl: readUrl,
+        videoUrlExpiresAt: expiresAt,
+      });
+      setPlaybackUrl(readUrl);
     } catch {
       setUploadError('Upload failed — please try again.');
     } finally {
       setUploading(false);
     }
+  }
+
+  if (!ride && !storeReady) {
+    return (
+      <div style={{
+        minHeight: '100dvh', background: C.pa,
+        display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center',
+        padding: '40px 28px', gap: 16,
+      }}>
+        <div style={{
+          width: 42, height: 42, borderRadius: '50%',
+          border: '3px solid rgba(193,127,74,0.15)',
+          borderTopColor: C.cg,
+          animation: 'spin 0.8s linear infinite',
+        }} />
+        <div style={{
+          fontFamily: "'DM Sans', sans-serif",
+          fontSize: 13,
+          color: 'rgba(28,28,30,0.5)',
+        }}>
+          Loading your ride…
+        </div>
+      </div>
+    );
   }
 
   if (!ride) {
@@ -415,11 +479,16 @@ export default function RideDetailPage2() {
           </div>
           <div
             onClick={() => {
-              const input = headerDateRef.current;
+              const input = headerDateRef.current as (HTMLInputElement & { showPicker?: () => void }) | null;
               if (!input) return;
               // Try to open the native date picker immediately
-              if (typeof (input as any).showPicker === 'function') {
-                try { (input as any).showPicker(); return; } catch {}
+              if (typeof input.showPicker === 'function') {
+                try {
+                  input.showPicker();
+                  return;
+                } catch {
+                  // Fall back to focus/click for browsers that block showPicker.
+                }
               }
               input.focus();
               input.click();
@@ -441,7 +510,7 @@ export default function RideDetailPage2() {
               type="date"
               value={ride.date.slice(0, 10)}
               max={new Date().toISOString().split('T')[0]}
-              onChange={e => { updateRide(ride.id, { date: e.target.value }); forceUpdate(n => n + 1); }}
+              onChange={e => { void updateRide(ride.id, { date: e.target.value }); }}
               style={{
                 position: 'absolute', left: 0, top: 0,
                 width: '100%', height: '100%',
@@ -455,7 +524,7 @@ export default function RideDetailPage2() {
         <button
           onClick={() => {
             if (window.confirm(`Delete this ${ride.type} ride from ${dateStr}? This cannot be undone.`)) {
-              deleteRide(ride.id);
+              void deleteRide(ride.id);
               navigate('/rides');
             }
           }}
@@ -489,12 +558,23 @@ export default function RideDetailPage2() {
 
       {/* ── S2: VIDEO ── */}
       <div style={{ position: 'relative' }}>
-        {ride.videoUrl ? (
+        {playbackUrl ? (
           <VideoWithSkeleton
-            videoUrl={ride.videoUrl}
+            videoUrl={playbackUrl}
             keyframes={ride.keyframes ?? []}
             biometrics={ride.biometrics}
           />
+        ) : ride.videoObjectPath ? (
+          <div style={{
+            width: '100%', aspectRatio: '16/9', background: '#1a1a1a',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8,
+            position: 'relative',
+          }}>
+            <div style={{ width: 20, height: 20, border: '2px solid rgba(255,255,255,0.2)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+            <span style={{ color: 'rgba(255,255,255,0.55)', fontSize: 11, fontFamily: "'DM Sans', sans-serif" }}>
+              Preparing video…
+            </span>
+          </div>
         ) : (
           <div style={{
             width: '100%', aspectRatio: '16/9', background: '#1a1a1a',
@@ -521,7 +601,7 @@ export default function RideDetailPage2() {
         )}
 
         {/* Replace-video button — video-swap icon */}
-        {ride.videoUrl && (
+        {playbackUrl && (
           <button onClick={() => fileInputRef.current?.click()} aria-label="Replace video" title="Replace video" style={{
             position: 'absolute', top: 10, right: 10, zIndex: 10,
             height: 30, borderRadius: 15,
@@ -573,7 +653,7 @@ export default function RideDetailPage2() {
         ride={ride}
         isEditing={editingNotes}
         setIsEditing={setEditingNotes}
-        onChange={() => forceUpdate(n => n + 1)}
+        onChange={() => {}}
       />
 
       {/* ── S5: POSITION SCORES (6 metrics, 3-col grid) ── */}
@@ -741,9 +821,9 @@ export default function RideDetailPage2() {
               <div style={{
                 position: 'relative', height: 80, background: '#1a1a1a', overflow: 'hidden',
               }}>
-                {ride.videoUrl && (
+                {playbackUrl && (
                   <video
-                    src={`${ride.videoUrl}#t=${m.seekSec}`}
+                    src={`${playbackUrl}#t=${m.seekSec}`}
                     preload="metadata"
                     muted
                     playsInline
@@ -835,13 +915,13 @@ export default function RideDetailPage2() {
                   }}
                 >×</button>
               </div>
-              {ride.videoUrl && (
+              {playbackUrl && (
                 <div style={{
                   position: 'relative', width: '100%', aspectRatio: '16/9',
                   borderRadius: 12, overflow: 'hidden', background: '#1a1a1a', marginBottom: 12,
                 }}>
                   <video
-                    src={`${ride.videoUrl}#t=${seekSec}`}
+                    src={`${playbackUrl}#t=${seekSec}`}
                     preload="metadata"
                     controls
                     playsInline

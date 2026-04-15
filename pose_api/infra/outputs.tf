@@ -37,13 +37,3 @@ output "worker_service_account_email" {
   description = "Service account used by worker jobs."
   value       = google_service_account.worker.email
 }
-
-output "supabase_url_secret_name" {
-  description = "Secret Manager secret name for SUPABASE_URL."
-  value       = var.supabase_url_secret_id
-}
-
-output "supabase_key_secret_name" {
-  description = "Secret Manager secret name for SUPABASE_KEY."
-  value       = var.supabase_key_secret_id
-}

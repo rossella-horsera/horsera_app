@@ -46,7 +46,7 @@ variable "cors_origins" {
 variable "allow_unauthenticated_api" {
   type        = bool
   description = "Allow unauthenticated public access to the API Cloud Run service."
-  default     = true
+  default     = false
 }
 
 variable "api_invoker_members" {
@@ -105,39 +105,5 @@ variable "firestore_collection" {
 variable "manage_iam_bindings" {
   type        = bool
   description = "Manage IAM bindings (project/service account/bucket/secret) via Terraform. Set false when lacking IAM policy update permissions."
-  default     = true
-}
-
-variable "supabase_url_secret_id" {
-  type        = string
-  description = "Secret Manager secret ID that stores SUPABASE_URL."
-  default     = "horsera-supabase-url"
-
-  validation {
-    condition     = can(regex("^[A-Za-z0-9_-]{1,255}$", var.supabase_url_secret_id))
-    error_message = "supabase_url_secret_id must be a Secret Manager secret ID (letters, numbers, '_' or '-'), not a URL or secret value."
-  }
-}
-
-variable "supabase_key_secret_id" {
-  type        = string
-  description = "Secret Manager secret ID that stores SUPABASE_KEY."
-  default     = "horsera-supabase-key"
-
-  validation {
-    condition     = can(regex("^[A-Za-z0-9_-]{1,255}$", var.supabase_key_secret_id))
-    error_message = "supabase_key_secret_id must be a Secret Manager secret ID (letters, numbers, '_' or '-'), not an API key value."
-  }
-}
-
-variable "inject_supabase_secrets" {
-  type        = bool
-  description = "Inject SUPABASE_URL/SUPABASE_KEY into API and workers from Secret Manager."
-  default     = false
-}
-
-variable "manage_supabase_secrets" {
-  type        = bool
-  description = "Create Secret Manager secret containers via Terraform; set false to reuse existing secrets."
   default     = true
 }

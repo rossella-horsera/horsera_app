@@ -11,6 +11,4 @@ restartPolicyMaxRetries = 3
 
 [environments.production.variables]
 PYTHON_VERSION = "3.14"
-SUPABASE_URL = "https://tgtomkkhenclkgzdyane.supabase.co"
-SUPABASE_KEY = "sb_publishable_R95K5siGi979rflXTzSYSg_xB7ZBgWG"
 CORS_ORIGINS = "https://horsera.app,https://app.horsera.ai,http://localhost:5173,http://localhost:8080"
