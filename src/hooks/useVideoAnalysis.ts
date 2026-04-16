@@ -13,8 +13,12 @@ import type { PoseFrame, MovementInsight } from '../lib/poseAnalysis';
 import type { BiometricsSnapshot } from '../data/mock';
 
 export interface TimestampedFrame {
-  time:  number;    // seconds into the video
-  frame: PoseFrame; // normalized keypoints (x, y 0–1)
+  time: number;               // seconds into the video
+  frame: PoseFrame | null;    // normalized keypoints (x, y 0–1)
+  detected?: boolean;
+  sampleIndex?: number;
+  sourceFrameIndex?: number;
+  sampleIntervalSec?: number;
 }
 
 export interface VideoAnalysisResult {

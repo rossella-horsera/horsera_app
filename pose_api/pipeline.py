@@ -53,7 +53,7 @@ def _env_int(name: str, default: int, minimum: int = 1) -> int:
         return default
 
 
-SAMPLE_FPS       = _env_int("SAMPLE_FPS", 1)         # default sampling rate for full-video analysis
+SAMPLE_FPS       = _env_int("SAMPLE_FPS", 3)         # default sampling rate for full-video analysis
 INFER_BATCH_SIZE = _env_int("INFER_BATCH_SIZE", 1)   # max sampled frames per ONNX inference call
 
 # Keypoint indices for occlusion handling
@@ -118,7 +118,10 @@ class PipelineResult:
     caeIndex:      float
     apsScore:      float
     framesAnalyzed: int
+    framesSampled: int
     framesTotal:   int
+    sampleFps:     float
+    sampleIntervalSec: float
     insights:      list[str]
     frames_data:   list[dict]
 
@@ -131,7 +134,10 @@ class PipelineResult:
             "caeIndex":       self.caeIndex,
             "apsScore":       self.apsScore,
             "framesAnalyzed": self.framesAnalyzed,
+            "framesSampled":  self.framesSampled,
             "framesTotal":    self.framesTotal,
+            "sampleFps":      self.sampleFps,
+            "sampleIntervalSec": self.sampleIntervalSec,
             "insights":       self.insights,
             "framesData":     self.frames_data,
         }
@@ -1132,15 +1138,45 @@ def _generate_insights(bio: BiometricsResult, det_rate: float) -> list[str]:
 
 # ── Video metadata ────────────────────────────────────────────────────────────
 
-def _video_meta(video_path: str, sample_fps: int = SAMPLE_FPS) -> tuple[float, int, int]:
+def _video_meta(video_path: str) -> tuple[float, int]:
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise IOError(f"Cannot open video: {video_path}")
     native_fps   = cap.get(cv2.CAP_PROP_FPS) or 30.0
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     cap.release()
-    step = max(1, int(native_fps / sample_fps))
-    return native_fps, total_frames, step
+    return native_fps, total_frames
+
+
+def _frame_timestamp_seconds(
+    cap: cv2.VideoCapture,
+    frame_idx: int,
+    native_fps: float,
+    last_frame_time: float,
+) -> float:
+    """
+    Best-effort per-frame timestamp.
+
+    Prefer the decoder's millisecond position when available, and fall back to
+    frame_idx / native_fps if the codec/container does not report timestamps.
+    """
+    if frame_idx == 0:
+        return 0.0
+
+    fallback = frame_idx / max(native_fps, 1e-6)
+    pos_msec = cap.get(cv2.CAP_PROP_POS_MSEC)
+
+    if pos_msec is None or not math.isfinite(pos_msec) or pos_msec < 0:
+        frame_time = fallback
+    else:
+        frame_time = pos_msec / 1000.0
+        if frame_time <= 0:
+            frame_time = fallback
+
+    if frame_time < last_frame_time:
+        frame_time = max(last_frame_time, fallback)
+
+    return frame_time
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
@@ -1156,16 +1192,19 @@ def analyze_video(
 
     Args:
         video_path: Path to the video file
-        sample_fps: Frame sampling rate (default 1 fps)
+        sample_fps: Frame sampling rate (default 3 fps)
         use_smart_crop: Enable smart cropping for better pose accuracy (default True)
         use_smoothing: Enable EMA smoothing for crop region stability (default True)
     """
     horse_sess, pose_sess = _get_sessions()
 
-    native_fps, total_frames, step = _video_meta(video_path, sample_fps)
+    native_fps, total_frames = _video_meta(video_path)
+    sample_interval = 1.0 / max(float(sample_fps), 1.0)
+    sample_epsilon = 0.5 / max(native_fps, float(sample_fps), 1.0)
+    approx_effective = min(float(sample_fps), native_fps)
     logger.info(
         f"[analyze_video] {total_frames} frames @ {native_fps:.1f} fps — "
-        f"sampling every {step} frames (~{sample_fps} fps effective)"
+        f"sampling on a {sample_interval:.3f}s cadence (~{approx_effective:.1f} fps target)"
     )
     logger.info(
         f"[analyze_video] smart_crop={use_smart_crop} smoothing={use_smoothing}"
@@ -1186,6 +1225,9 @@ def analyze_video(
     crop_count     = 0
     sampled_frames: list[np.ndarray] = []
     sampled_indices: list[int] = []
+    sampled_times: list[float] = []
+    sampled_slots: list[int] = []
+    timeline_entries: list[dict] = []
 
     def _flush_sampled_batch() -> None:
         nonlocal horse_count, crop_count
@@ -1197,23 +1239,34 @@ def analyze_video(
         horse_count += horse_hits
         crop_count += crop_hits
 
-        for frame_idx, kps in zip(sampled_indices, selected_batch):
-            if kps is None:
-                continue
-            # Apply occlusion detection per frame
-            kps, _camera_side = process_keypoints_with_occlusion(kps)
-            valid_kps.append(kps)
-            valid_times.append(frame_idx / native_fps)
-            ls = _pt(kps, "left_shoulder")
-            rs = _pt(kps, "right_shoulder")
-            cae_per_frame.append(
-                abs(ls[0] - rs[0])
-                if ls is not None and rs is not None
-                else 0.0
-            )
+        for sample_slot, frame_idx, frame_time, kps in zip(sampled_slots, sampled_indices, sampled_times, selected_batch):
+            timeline_entry = {
+                "sample_index": sample_slot,
+                "source_frame_index": frame_idx,
+                "frame_time": frame_time,
+                "keypoints": None,
+            }
+
+            if kps is not None:
+                # Apply occlusion detection per frame
+                kps, _camera_side = process_keypoints_with_occlusion(kps)
+                valid_kps.append(kps)
+                valid_times.append(frame_time)
+                ls = _pt(kps, "left_shoulder")
+                rs = _pt(kps, "right_shoulder")
+                cae_per_frame.append(
+                    abs(ls[0] - rs[0])
+                    if ls is not None and rs is not None
+                    else 0.0
+                )
+                timeline_entry["keypoints"] = kps
+
+            timeline_entries.append(timeline_entry)
 
         sampled_frames.clear()
         sampled_indices.clear()
+        sampled_times.clear()
+        sampled_slots.clear()
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -1222,20 +1275,30 @@ def analyze_video(
     frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     idx = 0
+    next_sample_time = 0.0
+    last_frame_time = 0.0
     try:
         while True:
             ok, raw_frame = cap.read()
             if not ok:
                 break
 
-            if idx % step == 0:
+            frame_time = _frame_timestamp_seconds(cap, idx, native_fps, last_frame_time)
+            last_frame_time = frame_time
+
+            if frame_time + sample_epsilon >= next_sample_time:
+                sample_slot = sampled_count
                 sampled_count += 1
                 frame = np.ascontiguousarray(raw_frame, dtype=np.uint8)
                 del raw_frame
                 sampled_frames.append(frame)
                 sampled_indices.append(idx)
+                sampled_times.append(frame_time)
+                sampled_slots.append(sample_slot)
                 if len(sampled_frames) >= INFER_BATCH_SIZE:
                     _flush_sampled_batch()
+                while next_sample_time <= frame_time + sample_epsilon:
+                    next_sample_time += sample_interval
             else:
                 del raw_frame
 
@@ -1245,9 +1308,12 @@ def analyze_video(
         cap.release()
 
     det_rate = len(valid_kps) / max(sampled_count, 1)
+    duration_sec = (timeline_entries[-1]["frame_time"] if timeline_entries else 0.0) + (1.0 / max(native_fps, 1.0))
+    effective_sample_fps = sampled_count / max(duration_sec, 1e-6) if sampled_count else 0.0
     logger.info(
         f"[analyze_video] sampled={sampled_count} horse_frames={horse_count} "
-        f"cropped_frames={crop_count} valid_poses={len(valid_kps)} det_rate={det_rate:.1%}"
+        f"cropped_frames={crop_count} valid_poses={len(valid_kps)} "
+        f"det_rate={det_rate:.1%} effective_sample_fps={effective_sample_fps:.2f}"
     )
 
     max_cae_w = max(cae_per_frame) if cae_per_frame else 1.0
@@ -1267,16 +1333,28 @@ def analyze_video(
     _fw = max(frame_w, 1)
     _fh = max(frame_h, 1)
     frames_data = []
-    for i in range(len(valid_kps)):
-        kp = valid_kps[i].copy()
-        kp[:, 0] = np.clip(kp[:, 0] / _fw, 0.0, 1.0)   # normalize x → 0-1
-        kp[:, 1] = np.clip(kp[:, 1] / _fh, 0.0, 1.0)   # normalize y → 0-1
+    valid_idx = 0
+    for entry in timeline_entries:
+        kp = entry["keypoints"]
+        normalized_kps = None
+        aps_value = None
+        cae_value = None
+        if isinstance(kp, np.ndarray):
+            normalized_kps = kp.copy()
+            normalized_kps[:, 0] = np.clip(normalized_kps[:, 0] / _fw, 0.0, 1.0)   # normalize x → 0-1
+            normalized_kps[:, 1] = np.clip(normalized_kps[:, 1] / _fh, 0.0, 1.0)   # normalize y → 0-1
+            aps_value = round(aps_scores[valid_idx], 3) if valid_idx < len(aps_scores) else None
+            cae_value = round(cae_norm[valid_idx], 3) if valid_idx < len(cae_norm) else None
+            valid_idx += 1
         frames_data.append({
-            "frame_index": i,
-            "frame_time":  round(valid_times[i], 3) if i < len(valid_times) else round(float(i), 3),
-            "aps_score":   round(aps_scores[i], 3) if i < len(aps_scores) else None,
-            "cae_value":   round(cae_norm[i], 3)   if i < len(cae_norm)   else None,
-            "keypoints":   kp.tolist(),
+            "frame_index": entry["source_frame_index"],
+            "source_frame_index": entry["source_frame_index"],
+            "sample_index": entry["sample_index"],
+            "frame_time":  round(float(entry["frame_time"]), 3),
+            "detected":    normalized_kps is not None,
+            "aps_score":   aps_value,
+            "cae_value":   cae_value,
+            "keypoints":   normalized_kps.tolist() if normalized_kps is not None else None,
         })
 
     return PipelineResult(
@@ -1287,7 +1365,10 @@ def analyze_video(
         caeIndex       = round(cae_index, 3),
         apsScore       = round(aps_score, 3),
         framesAnalyzed = len(valid_kps),
+        framesSampled  = sampled_count,
         framesTotal    = total_frames,
+        sampleFps      = round(float(sample_fps), 3),
+        sampleIntervalSec = round(sample_interval, 6),
         insights       = _generate_insights(bio, det_rate),
         frames_data    = frames_data,
     )

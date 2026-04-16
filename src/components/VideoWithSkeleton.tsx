@@ -1,8 +1,10 @@
 import { useRef, useState, useEffect, useMemo } from 'react';
+import type { TimestampedFrame } from '../hooks/useVideoAnalysis';
+import { hasPoseFrame, resolvePoseFrameAtTime } from '../lib/videoPlayback';
 
 interface VideoWithSkeletonProps {
   videoUrl: string;
-  keyframes: Array<{ time: number; frame: Array<{ x: number; y: number; score: number }> }>;
+  keyframes: TimestampedFrame[];
   biometrics: {
     lowerLegStability: number;
     reinSteadiness: number;
@@ -38,14 +40,41 @@ function jointColor(idx: number, bm: VideoWithSkeletonProps['biometrics']): stri
   return '#C14A2A';
 }
 
+function isNormalizedFrame(keypoints: Array<{ x: number; y: number; score: number }>): boolean {
+  const firstKp = keypoints.find(k => k.score > 0.2);
+  return firstKp ? (firstKp.x <= 1.5 && firstKp.y <= 1.5) : true;
+}
+
+function getVideoDrawRect(video: HTMLVideoElement, canvasWidth: number, canvasHeight: number) {
+  const sourceWidth = Math.max(video.videoWidth || canvasWidth, 1);
+  const sourceHeight = Math.max(video.videoHeight || canvasHeight, 1);
+  const scale = Math.min(canvasWidth / sourceWidth, canvasHeight / sourceHeight);
+  const width = sourceWidth * scale;
+  const height = sourceHeight * scale;
+
+  return {
+    x: (canvasWidth - width) / 2,
+    y: (canvasHeight - height) / 2,
+    width,
+    height,
+    sourceWidth,
+    sourceHeight,
+  };
+}
+
 function drawSkeleton(
   ctx: CanvasRenderingContext2D,
   keypoints: Array<{ x: number; y: number; score: number }>,
   biometrics: VideoWithSkeletonProps['biometrics'],
-  scaleX: number,
-  scaleY: number,
+  drawRect: ReturnType<typeof getVideoDrawRect>,
   ghost: boolean,
 ) {
+  const normalized = isNormalizedFrame(keypoints);
+  const scaleX = normalized ? drawRect.width : (drawRect.width / drawRect.sourceWidth);
+  const scaleY = normalized ? drawRect.height : (drawRect.height / drawRect.sourceHeight);
+  const offsetX = drawRect.x;
+  const offsetY = drawRect.y;
+
   ctx.lineWidth = ghost ? 1.5 : 3;
 
   CONNECTIONS.forEach(([a, b]) => {
@@ -62,16 +91,16 @@ function drawSkeleton(
     }
 
     ctx.beginPath();
-    ctx.moveTo(kpA.x * scaleX, kpA.y * scaleY);
-    ctx.lineTo(kpB.x * scaleX, kpB.y * scaleY);
+    ctx.moveTo(offsetX + (kpA.x * scaleX), offsetY + (kpA.y * scaleY));
+    ctx.lineTo(offsetX + (kpB.x * scaleX), offsetY + (kpB.y * scaleY));
     ctx.stroke();
   });
   ctx.setLineDash([]);
 
   keypoints.forEach((kp, idx) => {
     if (!kp || kp.score < MIN_CONF) return;
-    const cx = kp.x * scaleX;
-    const cy = kp.y * scaleY;
+    const cx = offsetX + (kp.x * scaleX);
+    const cy = offsetY + (kp.y * scaleY);
     const r = ghost ? 3 : 5;
 
     ctx.beginPath();
@@ -122,8 +151,9 @@ export default function VideoWithSkeleton({ videoUrl, keyframes, biometrics }: V
   }, []);
 
   const ghostFrame = useMemo(() => {
-    if (!keyframes.length) return null;
-    return keyframes.reduce((best, kf) => {
+    const framesWithPose = keyframes.filter(hasPoseFrame);
+    if (!framesWithPose.length) return null;
+    return framesWithPose.reduce((best, kf) => {
       const detected = kf.frame.filter(k => k.score > 0.3).length;
       const bestDetected = best.frame.filter(k => k.score > 0.3).length;
       return detected > bestDetected ? kf : best;
@@ -135,7 +165,24 @@ export default function VideoWithSkeleton({ videoUrl, keyframes, biometrics }: V
     const canvas = canvasRef.current;
     if (!video || !canvas || !keyframes.length) return;
 
-    const draw = () => {
+    let rafId: number | null = null;
+    let videoFrameId: number | null = null;
+
+    const cancelScheduledDraw = () => {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      const videoWithCallback = video as HTMLVideoElement & {
+        cancelVideoFrameCallback?: (handle: number) => void;
+      };
+      if (videoFrameId !== null && videoWithCallback.cancelVideoFrameCallback) {
+        videoWithCallback.cancelVideoFrameCallback(videoFrameId);
+        videoFrameId = null;
+      }
+    };
+
+    const draw = (time = video.currentTime) => {
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
@@ -147,32 +194,72 @@ export default function VideoWithSkeleton({ videoUrl, keyframes, biometrics }: V
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       if (!keyframes.length) return;
+      const drawRect = getVideoDrawRect(video, canvas.width, canvas.height);
+      const activeFrame = resolvePoseFrameAtTime(keyframes, time);
 
-      const t = video.currentTime;
-      const closest = keyframes.reduce((best, kf) =>
-        Math.abs(kf.time - t) < Math.abs(best.time - t) ? kf : best
-      );
-
-      const firstKp = closest.frame.find(k => k.score > 0.2);
-      const isNormalized = firstKp ? (firstKp.x <= 1.5 && firstKp.y <= 1.5) : true;
-      const scaleX = isNormalized ? canvas.width : 1;
-      const scaleY = isNormalized ? canvas.height : 1;
-
-      if (ghostOn && ghostFrame) {
-        drawSkeleton(ctx, ghostFrame, biometrics, scaleX, scaleY, true);
+      if (ghostOn && ghostFrame && activeFrame) {
+        drawSkeleton(ctx, ghostFrame, biometrics, drawRect, true);
       }
 
-      drawSkeleton(ctx, closest.frame, biometrics, scaleX, scaleY, false);
+      if (activeFrame) {
+        drawSkeleton(ctx, activeFrame, biometrics, drawRect, false);
+      }
     };
 
-    video.addEventListener('timeupdate', draw);
-    video.addEventListener('seeked', draw);
-    video.addEventListener('loadeddata', draw);
+    const scheduleDraw = () => {
+      cancelScheduledDraw();
+      const videoWithCallback = video as HTMLVideoElement & {
+        requestVideoFrameCallback?: (callback: () => void) => number;
+      };
+      if (videoWithCallback.requestVideoFrameCallback) {
+        videoFrameId = videoWithCallback.requestVideoFrameCallback(() => {
+          videoFrameId = null;
+          draw(video.currentTime);
+          if (!video.paused && !video.ended) {
+            scheduleDraw();
+          }
+        });
+      } else {
+        rafId = requestAnimationFrame(() => {
+          rafId = null;
+          draw(video.currentTime);
+          if (!video.paused && !video.ended) {
+            scheduleDraw();
+          }
+        });
+      }
+    };
+
+    const handlePlay = () => scheduleDraw();
+    const handlePause = () => {
+      cancelScheduledDraw();
+      draw(video.currentTime);
+    };
+    const handleSeeked = () => draw(video.currentTime);
+    const handleLoadedData = () => {
+      draw(video.currentTime);
+      if (!video.paused && !video.ended) {
+        scheduleDraw();
+      }
+    };
+
+    video.addEventListener('play', handlePlay);
+    video.addEventListener('pause', handlePause);
+    video.addEventListener('seeked', handleSeeked);
+    video.addEventListener('loadeddata', handleLoadedData);
+    video.addEventListener('loadedmetadata', handleLoadedData);
+    draw(video.currentTime);
+    if (!video.paused && !video.ended) {
+      scheduleDraw();
+    }
 
     return () => {
-      video.removeEventListener('timeupdate', draw);
-      video.removeEventListener('seeked', draw);
-      video.removeEventListener('loadeddata', draw);
+      cancelScheduledDraw();
+      video.removeEventListener('play', handlePlay);
+      video.removeEventListener('pause', handlePause);
+      video.removeEventListener('seeked', handleSeeked);
+      video.removeEventListener('loadeddata', handleLoadedData);
+      video.removeEventListener('loadedmetadata', handleLoadedData);
     };
   }, [keyframes, ghostOn, ghostFrame, biometrics]);
 
@@ -208,7 +295,7 @@ export default function VideoWithSkeleton({ videoUrl, keyframes, biometrics }: V
         webkit-playsinline="true"
         style={{
           position: 'absolute', inset: 0, width: '100%', height: '100%',
-          objectFit: isFullscreen ? 'contain' : 'cover',
+          objectFit: 'contain',
         }}
       />
       <canvas

@@ -21,6 +21,7 @@ import type { PoseFrame, MovementInsight, RidingQualityScore } from '../../lib/p
 import type { BiometricsSnapshot } from '../../data/mock';
 import { getHorseName } from '../../lib/userProfile';
 import type { VideoAnalysisResult, AnalysisStatus, TimestampedFrame } from '../../hooks/useVideoAnalysis';
+import { hasPoseFrame, resolvePoseFrameAtTime } from '../../lib/videoPlayback';
 
 type AnalysisTab = 'movement' | 'body' | 'quality';
 
@@ -1212,7 +1213,7 @@ function VideoClipPlayer({
 }) {
   const videoRef       = useRef<HTMLVideoElement>(null);
   const [activeFrame,  setActiveFrame]  = useState<PoseFrame | null>(
-    allFrames.length > 0 ? allFrames[0].frame : null
+    allFrames.find(hasPoseFrame)?.frame ?? null
   );
   const [isPlaying,    setIsPlaying]    = useState(false);
   const [fullMode,     setFullMode]     = useState(false);
@@ -1222,53 +1223,103 @@ function VideoClipPlayer({
 
   const clipEnd = bestMomentStart + 6;
 
-  const findNearestFrame = useCallback((time: number): PoseFrame | null => {
-    if (allFrames.length === 0) return null;
-    return allFrames.reduce((closest, f) =>
-      Math.abs(f.time - time) < Math.abs(closest.time - time) ? f : closest,
-      allFrames[0]
-    ).frame;
+  const syncActiveFrame = useCallback((time: number) => {
+    setActiveFrame(resolvePoseFrameAtTime(allFrames, time));
+    setCurrentTime(time);
   }, [allFrames]);
 
   // Re-run whenever mode changes or video URL changes
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
+    let rafId: number | null = null;
+    let videoFrameId: number | null = null;
+
+    const cancelScheduledSync = () => {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      const videoWithCallback = video as HTMLVideoElement & {
+        cancelVideoFrameCallback?: (handle: number) => void;
+      };
+      if (videoFrameId !== null && videoWithCallback.cancelVideoFrameCallback) {
+        videoWithCallback.cancelVideoFrameCallback(videoFrameId);
+        videoFrameId = null;
+      }
+    };
+
+    const syncFromVideo = () => {
+      let time = video.currentTime;
+      if (!fullMode && time >= clipEnd) {
+        video.currentTime = bestMomentStart;
+        time = bestMomentStart;
+      }
+      syncActiveFrame(time);
+    };
+
+    const scheduleSync = () => {
+      cancelScheduledSync();
+      const videoWithCallback = video as HTMLVideoElement & {
+        requestVideoFrameCallback?: (callback: () => void) => number;
+      };
+      if (videoWithCallback.requestVideoFrameCallback) {
+        videoFrameId = videoWithCallback.requestVideoFrameCallback(() => {
+          videoFrameId = null;
+          syncFromVideo();
+          if (!video.paused && !video.ended) {
+            scheduleSync();
+          }
+        });
+      } else {
+        rafId = requestAnimationFrame(() => {
+          rafId = null;
+          syncFromVideo();
+          if (!video.paused && !video.ended) {
+            scheduleSync();
+          }
+        });
+      }
+    };
 
     if (!fullMode) {
       video.currentTime = bestMomentStart;
       video.playbackRate = 1;
     }
-    setActiveFrame(findNearestFrame(video.currentTime));
+    syncActiveFrame(video.currentTime);
 
-    const onTimeUpdate = () => {
-      if (!fullMode && video.currentTime >= clipEnd) {
-        video.currentTime = bestMomentStart;
-      }
-      setActiveFrame(findNearestFrame(video.currentTime));
-      setCurrentTime(video.currentTime);
-    };
     const onLoadedMetadata = () => setDuration(video.duration);
-    const onPlay  = () => setIsPlaying(true);
-    const onPause = () => setIsPlaying(false);
+    const onPlay  = () => {
+      setIsPlaying(true);
+      scheduleSync();
+    };
+    const onPause = () => {
+      setIsPlaying(false);
+      cancelScheduledSync();
+      syncFromVideo();
+    };
+    const onSeeked = () => syncFromVideo();
 
-    video.addEventListener('timeupdate',     onTimeUpdate);
     video.addEventListener('loadedmetadata', onLoadedMetadata);
     video.addEventListener('play',           onPlay);
     video.addEventListener('pause',          onPause);
+    video.addEventListener('seeked',         onSeeked);
 
     if (!fullMode) {
       video.play().catch(() => {});
+    } else if (!video.paused && !video.ended) {
+      scheduleSync();
     }
 
     return () => {
-      video.removeEventListener('timeupdate',     onTimeUpdate);
+      cancelScheduledSync();
       video.removeEventListener('loadedmetadata', onLoadedMetadata);
       video.removeEventListener('play',           onPlay);
       video.removeEventListener('pause',          onPause);
+      video.removeEventListener('seeked',         onSeeked);
       if (!fullMode) video.pause();
     };
-  }, [videoUrl, bestMomentStart, clipEnd, fullMode, findNearestFrame]);
+  }, [videoUrl, bestMomentStart, clipEnd, fullMode, syncActiveFrame]);
 
   const togglePlay = () => {
     const video = videoRef.current;
@@ -1282,8 +1333,7 @@ function VideoClipPlayer({
     if (!video) return;
     const t = parseFloat(e.target.value);
     video.currentTime = t;
-    setCurrentTime(t);
-    setActiveFrame(findNearestFrame(t));
+    syncActiveFrame(t);
   };
 
   const cycleSpeed = () => {
