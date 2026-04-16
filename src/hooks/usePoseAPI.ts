@@ -344,12 +344,26 @@ export function usePoseAPI(): {
             _bench(`DONE: analysis complete after ${attempts} polls`);
             const r = job.result;
 
+            const sampleIntervalSec = typeof r.sampleIntervalSec === 'number' ? r.sampleIntervalSec : undefined;
             const allFrames: TimestampedFrame[] = (r.framesData ?? []).map(
-              (fd: { frame_time?: number; keypoints: [number, number, number][] }) => ({
-                time:  fd.frame_time ?? 0,
-                frame: fd.keypoints.map(([x, y, conf]) => ({ x, y, score: conf })),
+              (fd: {
+                frame_time?: number;
+                detected?: boolean;
+                sample_index?: number;
+                source_frame_index?: number;
+                keypoints?: [number, number, number][] | null;
+              }) => ({
+                time: fd.frame_time ?? 0,
+                detected: fd.detected,
+                sampleIndex: fd.sample_index,
+                sourceFrameIndex: fd.source_frame_index,
+                sampleIntervalSec,
+                frame: Array.isArray(fd.keypoints)
+                  ? fd.keypoints.map(([x, y, conf]) => ({ x, y, score: conf }))
+                  : null,
               })
             );
+            const firstDetectedFrame = allFrames.find((frame) => Array.isArray(frame.frame));
             setResult({
               biometrics:       r.biometrics,
               insights:         toMovementInsights(r.insights ?? []),
@@ -358,7 +372,7 @@ export function usePoseAPI(): {
               bestMomentStart:  allFrames.length > 0 ? allFrames[0].time : 0,
               allFrames,
               thumbnailDataUrl: '',
-              bestFrame:        allFrames.length > 0 ? allFrames[0].frame : null,
+              bestFrame:        firstDetectedFrame?.frame ?? null,
             });
             setProgress(100);
             setStatus('done');

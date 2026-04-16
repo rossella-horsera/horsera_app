@@ -17,7 +17,11 @@ import { safeStorage } from './safeStorage';
 
 export interface StoredKeyframe {
   time: number;
-  frame: Array<{ x: number; y: number; score: number }>;
+  frame: Array<{ x: number; y: number; score: number }> | null;
+  detected?: boolean;
+  sampleIndex?: number;
+  sourceFrameIndex?: number;
+  sampleIntervalSec?: number;
 }
 
 export interface StoredRide {
@@ -129,6 +133,25 @@ function sanitizeVideoUrl(videoUrl?: string): string | undefined {
   return trimmed;
 }
 
+function normalizeKeyframe(keyframe: StoredKeyframe): StoredKeyframe {
+  const frame = Array.isArray(keyframe.frame)
+    ? keyframe.frame.map((kp) => ({
+        x: Number(kp?.x ?? 0),
+        y: Number(kp?.y ?? 0),
+        score: Number(kp?.score ?? 0),
+      }))
+    : null;
+
+  return {
+    time: Number(keyframe.time ?? 0),
+    frame,
+    detected: typeof keyframe.detected === 'boolean' ? keyframe.detected : !!frame,
+    sampleIndex: typeof keyframe.sampleIndex === 'number' ? keyframe.sampleIndex : undefined,
+    sourceFrameIndex: typeof keyframe.sourceFrameIndex === 'number' ? keyframe.sourceFrameIndex : undefined,
+    sampleIntervalSec: typeof keyframe.sampleIntervalSec === 'number' ? keyframe.sampleIntervalSec : undefined,
+  };
+}
+
 function normalizeRide(ride: Partial<StoredRide> & { id: string }): StoredRide {
   const sanitizedVideoUrl = sanitizeVideoUrl(ride.videoUrl);
   return {
@@ -160,7 +183,9 @@ function normalizeRide(ride: Partial<StoredRide> & { id: string }): StoredRide {
     } : undefined,
     overallScore: Number(ride.overallScore ?? 0),
     insights: Array.isArray(ride.insights) ? ride.insights.map(String) : [],
-    keyframes: Array.isArray(ride.keyframes) ? ride.keyframes : undefined,
+    keyframes: Array.isArray(ride.keyframes)
+      ? [...ride.keyframes].map(normalizeKeyframe).sort((a, b) => a.time - b.time)
+      : undefined,
     name: ride.name?.trim() || undefined,
     notes: ride.notes?.trim() || undefined,
     schemaVersion: Number(ride.schemaVersion ?? SCHEMA_VERSION),
