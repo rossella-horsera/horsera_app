@@ -74,7 +74,7 @@ variable "gpu_threshold_mb" {
 
 variable "enable_gpu_job" {
   type        = bool
-  description = "Whether to provision a GPU worker Cloud Run Job."
+  description = "Whether Terraform should attempt to provision the GPU worker Cloud Run Job directly. Keep false unless the Cloud Run v2 GPU annotation bug is resolved; rollout.sh manages the GPU job via gcloud."
   default     = false
 }
 
