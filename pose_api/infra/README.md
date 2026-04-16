@@ -6,7 +6,7 @@ This directory provisions rollout-ready GCP infrastructure for the Pose API migr
 - GCS upload bucket (with lifecycle delete + browser upload CORS)
 - Cloud Run API service (optionally public)
 - Cloud Run CPU worker Job
-- Cloud Run GPU worker Job (optional)
+- Cloud Run GPU worker Job via `gcloud run jobs replace` during rollout
 - Service accounts + least-privilege IAM bindings
 - Optional Firestore default database creation
 
@@ -45,6 +45,7 @@ Set:
 - `api_image` to `${CPU_IMAGE}`
 - `worker_image` to `${CPU_IMAGE}`
 - `worker_gpu_image` to `${GPU_IMAGE}` (or leave empty to reuse `worker_image`)
+- Leave `enable_gpu_job = false`; `rollout.sh --apply` updates the GPU worker by default via `gcloud`, because the Terraform Cloud Run v2 GPU job path is currently unreliable for the required zonal redundancy annotation
 
 3. Initialize and preview:
 
@@ -59,9 +60,12 @@ terraform plan
 terraform apply
 ```
 
+5. If you are using `./rollout.sh ... --apply`, the script automatically creates or updates the GPU worker job after Terraform finishes. If you are deploying manually, use `gcloud run jobs replace` with a Cloud Run Job YAML that includes `run.googleapis.com/gpu-zonal-redundancy-disabled: "true"`.
+
 ## Notes
 
 - `create_firestore_database` defaults to `false` to avoid conflicts in projects where Firestore already exists.
+- `rollout.sh --apply` always builds both CPU and GPU images, applies Terraform for the API + CPU worker, and then upserts the GPU worker job with `gcloud run jobs replace`.
 - API runtime defaults:
   - `JOB_STORE_BACKEND=firestore`
   - `EXECUTION_BACKEND=cloud_run_job`
@@ -101,8 +105,8 @@ terraform apply
     - `docker buildx build --platform linux/amd64 ... --push`
 
 - GPU job fails with zonal redundancy/capacity error:
-  - Set `gpu_zonal_redundancy_disabled = true` (default).
-  - Or temporarily set `enable_gpu_job = false` and deploy CPU-only while requesting/confirming GPU capacity.
+  - `rollout.sh` applies `run.googleapis.com/gpu-zonal-redundancy-disabled: "true"` when it upserts the GPU worker job.
+  - If the job still fails, the project may not currently have usable L4 capacity or quota in that region.
 
 - `One or more users named in the policy do not belong to a permitted customer`:
   - Your org likely blocks `allUsers` via Domain Restricted Sharing.
