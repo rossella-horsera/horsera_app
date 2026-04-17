@@ -590,7 +590,7 @@ def _load_result_from_gcs(object_path: str) -> dict:
         raise FileNotFoundError(f"GCS object not found: {object_path}")
 
     raw = blob.download_as_bytes()
-    if object_name.endswith(".gz"):
+    if object_name.endswith(".gz") and raw.startswith(b"\x1f\x8b"):
         raw = gzip.decompress(raw)
     payload = json.loads(raw.decode("utf-8"))
     if not isinstance(payload, dict):

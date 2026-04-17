@@ -15,6 +15,7 @@ PLATFORM="${PLATFORM:-linux/amd64}"
 UPLOAD_BUCKET_NAME="${UPLOAD_BUCKET_NAME:-horsera-pose-input-${PROJECT_ID}}"
 NAME_PREFIX="${NAME_PREFIX:-horsera-pose}"
 FIRESTORE_COLLECTION="${FIRESTORE_COLLECTION:-pose_jobs}"
+GCS_RESULTS_PREFIX="${GCS_RESULTS_PREFIX:-job-results}"
 GPU_JOB_NAME="${GPU_JOB_NAME:-${NAME_PREFIX}-worker-gpu}"
 GPU_CPU="${GPU_CPU:-4}"
 GPU_MEMORY="${GPU_MEMORY:-16Gi}"
@@ -108,6 +109,12 @@ spec:
                   value: firestore
                 - name: FIRESTORE_COLLECTION
                   value: ${FIRESTORE_COLLECTION}
+                - name: GCS_UPLOAD_BUCKET
+                  value: ${UPLOAD_BUCKET_NAME}
+                - name: GCS_RESULTS_PREFIX
+                  value: ${GCS_RESULTS_PREFIX}
+                - name: STRICT_JOB_PERSISTENCE
+                  value: "1"
                 - name: INFER_BATCH_SIZE
                   value: "${GPU_INFER_BATCH_SIZE}"
                 - name: REQUIRE_CUDA
