@@ -26,7 +26,9 @@ import { createVideoUploadUrl, POSE_API_BASE, uploadFileToSignedUrl } from '../l
 const POSE_API  = POSE_API_BASE;
 const ENABLE_LEGACY_UPLOAD_FALLBACK = import.meta.env.VITE_POSE_API_LEGACY_UPLOAD_FALLBACK === '1';
 const POLL_MS   = 3000;
-const MAX_POLL  = 200; // 200 × 3s = 10 min max
+const FAST_POLL_MS = 1000;
+const ACTIVE_POLL_MS = 2000;
+const MAX_POLL  = 360; // Adaptive polling, roughly 10-12 min max depending on stage
 
 // Always compress — iPhone 4K HEVC videos are massive. Anything under this
 // tiny floor is left alone (already small enough to upload fast).
@@ -51,6 +53,190 @@ function toMovementInsights(texts: string[]): MovementInsight[] {
     const metric = metricMatch ? metricMatch[1] : 'Analysis';
     return { metric, quality: slot === 0 ? 'good' : slot === 2 ? 'poor' : 'moderate', icon, iconColor, trend, trendColor, text };
   });
+}
+
+export interface PoseJobAnalysisProgress {
+  phase?: string;
+  sampled_count?: number;
+  estimated_samples?: number;
+  valid_poses?: number;
+  horse_frames?: number;
+  cropped_frames?: number;
+  detection_rate?: number;
+  processed_seconds?: number;
+  duration_seconds_estimate?: number;
+  progress_pct?: number;
+}
+
+interface PoseJobResponse {
+  status?: string;
+  stage?: string;
+  created_at?: number;
+  started_at?: number;
+  completed_at?: number;
+  error?: string | null;
+  result?: {
+    biometrics?: VideoAnalysisResult['biometrics'];
+    insights?: string[];
+    framesAnalyzed?: number;
+    sampleIntervalSec?: number;
+    framesData?: Array<{
+      frame_time?: number;
+      detected?: boolean;
+      sample_index?: number;
+      source_frame_index?: number;
+      keypoints?: [number, number, number][] | null;
+    }>;
+  } | null;
+  analysis_progress?: PoseJobAnalysisProgress | null;
+}
+
+export interface PoseAnalysisMeta {
+  stage: string | null;
+  headline: string;
+  detail: string | null;
+  elapsedSec: number | null;
+}
+
+function readNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function formatDurationShort(totalSeconds: number): string {
+  const safe = Math.max(0, Math.round(totalSeconds));
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  const seconds = safe % 60;
+  if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  if (minutes > 0) return `${minutes}:${String(seconds).padStart(2, '0')}`;
+  return `${seconds}s`;
+}
+
+function getJobStage(job?: PoseJobResponse | null): string | null {
+  if (typeof job?.stage === 'string' && job.stage.trim()) return job.stage.trim();
+  if (job?.status === 'pending') return 'queued';
+  if (job?.status === 'processing') return 'analyzing';
+  if (job?.status === 'complete') return 'complete';
+  if (job?.status === 'failed') return 'failed';
+  return null;
+}
+
+function buildAnalysisMeta(job?: PoseJobResponse | null): PoseAnalysisMeta {
+  const stage = getJobStage(job);
+  const createdAt = readNumber(job?.created_at);
+  const startedAt = readNumber(job?.started_at) ?? createdAt;
+  const completedAt = readNumber(job?.completed_at);
+  const endTime = completedAt ?? (Date.now() / 1000);
+  const elapsedSec = startedAt !== null ? Math.max(0, endTime - startedAt) : null;
+  const analysisProgress = job?.analysis_progress ?? null;
+  const processedSeconds = readNumber(analysisProgress?.processed_seconds);
+  const durationEstimate = readNumber(analysisProgress?.duration_seconds_estimate);
+  const detectionRate = readNumber(analysisProgress?.detection_rate);
+  const sampledCount = readNumber(analysisProgress?.sampled_count);
+  const estimatedSamples = readNumber(analysisProgress?.estimated_samples);
+
+  switch (stage) {
+    case 'queued':
+      return {
+        stage,
+        headline: 'Queued for analysis',
+        detail: 'Upload finished. Waiting for a worker to pick up your ride.',
+        elapsedSec,
+      };
+    case 'downloading':
+      return {
+        stage,
+        headline: 'Preparing analysis',
+        detail: 'Moving your uploaded ride into the analysis worker.',
+        elapsedSec,
+      };
+    case 'analyzing': {
+      let detail = 'Tracking horse and rider across the ride.';
+      if (processedSeconds !== null && durationEstimate !== null && durationEstimate > 0) {
+        detail = `Processed ${formatDurationShort(processedSeconds)} of ${formatDurationShort(durationEstimate)}`;
+        if (detectionRate !== null) {
+          detail += ` · pose found in ${Math.round(detectionRate * 100)}% of samples`;
+        }
+      } else if (sampledCount !== null && estimatedSamples !== null && estimatedSamples > 0) {
+        detail = `Read ${Math.min(sampledCount, estimatedSamples)} of ${estimatedSamples} checkpoints`;
+      }
+      return {
+        stage,
+        headline: 'Reading your ride',
+        detail,
+        elapsedSec,
+      };
+    }
+    case 'persisting':
+      return {
+        stage,
+        headline: 'Wrapping your report',
+        detail: 'Saving scores, overlays, and the final ride summary.',
+        elapsedSec,
+      };
+    case 'complete':
+      return {
+        stage,
+        headline: 'Analysis ready',
+        detail: 'Opening your finished report.',
+        elapsedSec,
+      };
+    case 'failed':
+      return {
+        stage,
+        headline: 'Analysis failed',
+        detail: typeof job?.error === 'string' && job.error ? job.error : null,
+        elapsedSec,
+      };
+    default:
+      return {
+        stage,
+        headline: 'Preparing your ride',
+        detail: 'Getting Cadence ready to analyze your video.',
+        elapsedSec,
+      };
+  }
+}
+
+function deriveProgressFromJob(job: PoseJobResponse, attempts: number): number {
+  const stage = getJobStage(job);
+  const stageProgress = readNumber(job.analysis_progress?.progress_pct);
+  switch (stage) {
+    case 'queued':
+      return 22;
+    case 'downloading':
+      return 30;
+    case 'analyzing':
+      if (stageProgress !== null) {
+        return Math.max(35, Math.min(92, Math.round(35 + (stageProgress * 57))));
+      }
+      return Math.min(90, 32 + Math.round(attempts * 1.5));
+    case 'persisting':
+      return 96;
+    case 'complete':
+      return 100;
+    default:
+      if (job.status === 'pending' || job.status === 'processing') {
+        return Math.min(95, 20 + Math.round((attempts / 80) * 75));
+      }
+      return 20;
+  }
+}
+
+function getPollDelay(job?: PoseJobResponse | null): number {
+  const stage = getJobStage(job);
+  if (stage === 'queued' || stage === 'downloading' || stage === 'persisting') {
+    return FAST_POLL_MS;
+  }
+  if (stage === 'analyzing') {
+    return ACTIVE_POLL_MS;
+  }
+  return POLL_MS;
 }
 
 // ── Client-side video compression via canvas + MediaRecorder ──────────────────
@@ -166,6 +352,7 @@ export function usePoseAPI(): {
   error:        string | null;
   analysisJobId: string | null;
   uploadedObjectPath: string | null;
+  analysisMeta: PoseAnalysisMeta | null;
   analyzeVideo: (file: File) => Promise<void>;
   reset:        () => void;
 } {
@@ -175,10 +362,12 @@ export function usePoseAPI(): {
   const [error,     setError]     = useState<string | null>(null);
   const [analysisJobId, setAnalysisJobId] = useState<string | null>(null);
   const [uploadedObjectPath, setUploadedObjectPath] = useState<string | null>(null);
+  const [analysisMeta, setAnalysisMeta] = useState<PoseAnalysisMeta | null>(null);
 
-  const pollRef     = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollRef     = useRef<ReturnType<typeof setTimeout> | null>(null);
   const blobUrlRef  = useRef<string>('');
   const revokeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const runIdRef = useRef(0);
 
   const cancelPendingBlobRevoke = useCallback(() => {
     if (revokeTimerRef.current) {
@@ -201,9 +390,16 @@ export function usePoseAPI(): {
   }, [cancelPendingBlobRevoke]);
 
   const analyzeVideo = useCallback(async (file: File) => {
-    if (pollRef.current) clearInterval(pollRef.current);
+    runIdRef.current += 1;
+    const runId = runIdRef.current;
+    if (pollRef.current) clearTimeout(pollRef.current);
     cancelPendingBlobRevoke();
     scheduleBlobUrlRevoke(blobUrlRef.current);
+
+    const isStale = () => runId !== runIdRef.current;
+    const bumpProgress = (nextProgress: number) => {
+      setProgress((prev) => Math.max(prev, Math.round(nextProgress)));
+    };
 
     setStatus('loading-model');
     setProgress(0);
@@ -211,6 +407,12 @@ export function usePoseAPI(): {
     setResult(null);
     setAnalysisJobId(null);
     setUploadedObjectPath(null);
+    setAnalysisMeta({
+      stage: 'preparing',
+      headline: 'Preparing your ride',
+      detail: 'Getting the upload ready for cloud analysis.',
+      elapsedSec: null,
+    });
 
     // Blob URL for immediate in-session video playback (no upload needed)
     const blobUrl = URL.createObjectURL(file);
@@ -231,6 +433,12 @@ export function usePoseAPI(): {
       _bench(`start: ${(file.size / 1024 ** 2).toFixed(1)} MB, ${file.type}`);
 
       setProgress(10);
+      setAnalysisMeta({
+        stage: 'uploading',
+        headline: 'Preparing upload',
+        detail: 'Requesting a secure upload link.',
+        elapsedSec: null,
+      });
 
       // ── 2. Signed upload flow (URL request + direct storage upload) ───────────
       setStatus('extracting');
@@ -274,14 +482,29 @@ export function usePoseAPI(): {
           uploadBlob.type || 'video/mp4',
           uploadBlob.size,
         );
+        if (isStale()) return;
         setUploadedObjectPath(signedUpload.object_path);
         _bench('upload: signed URL received — starting GCS upload');
+        setAnalysisMeta({
+          stage: 'uploading',
+          headline: 'Uploading your ride',
+          detail: 'Sending the original video to Cadence for analysis.',
+          elapsedSec: null,
+        });
         await uploadFileToSignedUrl(uploadBlob, signedUpload, (pct) => {
-          setProgress(10 + Math.round(pct * 8));
+          if (isStale()) return;
+          bumpProgress(10 + Math.round(pct * 8));
           if (pct === 1) _bench(`upload: GCS upload complete (${(uploadBlob.size / 1024 ** 2).toFixed(1)} MB sent)`);
         });
+        if (isStale()) return;
 
         _bench('analyze: submitting job');
+        setAnalysisMeta({
+          stage: 'queueing',
+          headline: 'Sending to Cadence',
+          detail: 'Upload complete. Handing your ride to the analysis worker.',
+          elapsedSec: null,
+        });
         const analyzeRes = await fetch(`${POSE_API}/analyze/video/object`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -300,6 +523,7 @@ export function usePoseAPI(): {
           throw new Error('No job_id in analyze response');
         }
         job_id = analyzePayload.job_id;
+        if (isStale()) return;
         setAnalysisJobId(job_id);
       } catch (signedUploadErr) {
         if (!ENABLE_LEGACY_UPLOAD_FALLBACK) {
@@ -307,65 +531,85 @@ export function usePoseAPI(): {
         }
         console.warn('[Horsera] Signed upload flow unavailable; falling back to legacy /analyze/video:', signedUploadErr);
         job_id = await uploadViaLegacyEndpoint();
+        if (isStale()) return;
         setAnalysisJobId(job_id);
       }
 
-      setProgress(20);
+      bumpProgress(20);
+      setAnalysisMeta({
+        stage: 'queued',
+        headline: 'Queued for analysis',
+        detail: 'Upload finished. Waiting for Cadence to start reading your ride.',
+        elapsedSec: null,
+      });
 
       // ── 3. Poll for results (20→95%) ──────────────────────────────────────────
       _bench('poll: starting — job_id=' + job_id);
       setStatus('processing');
       let attempts = 0;
+      const schedulePoll = (delayMs: number) => {
+        if (isStale()) return;
+        if (pollRef.current) clearTimeout(pollRef.current);
+        pollRef.current = setTimeout(() => {
+          void pollJob();
+        }, delayMs);
+      };
 
-      pollRef.current = setInterval(async () => {
+      const pollJob = async () => {
+        if (isStale()) return;
         attempts++;
 
         if (attempts > MAX_POLL) {
-          clearInterval(pollRef.current!);
+          if (pollRef.current) clearTimeout(pollRef.current);
           setStatus('error');
           setError('Analysis timed out — try a shorter clip (under 10 minutes)');
+          setAnalysisMeta({
+            stage: 'failed',
+            headline: 'Analysis timed out',
+            detail: 'Cadence took too long to finish this ride. Try a shorter clip.',
+            elapsedSec: null,
+          });
           return;
         }
 
         try {
           const pollRes = await fetch(`${POSE_API}/jobs/${job_id}`);
-          if (!pollRes.ok) return; // transient error, keep polling
-          const job = await pollRes.json();
+          if (isStale()) return;
+          if (!pollRes.ok) {
+            schedulePoll(POLL_MS);
+            return;
+          }
+          const job = await pollRes.json() as PoseJobResponse;
+          if (isStale()) return;
           console.log('[Horsera] poll job:', job);
 
+          setAnalysisMeta(buildAnalysisMeta(job));
+
           if (job.status === 'pending' || job.status === 'processing') {
-            // Progress: 20% → 95% over ~80 poll cycles (~4 min)
-            setProgress(Math.min(95, 20 + Math.round((attempts / 80) * 75)));
+            bumpProgress(deriveProgressFromJob(job, attempts));
+            schedulePoll(getPollDelay(job));
             return;
           }
 
-          if (job.status === 'complete') {
-            clearInterval(pollRef.current!);
+          if (job.status === 'complete' && job.result) {
+            if (pollRef.current) clearTimeout(pollRef.current);
             _bench(`DONE: analysis complete after ${attempts} polls`);
             const r = job.result;
 
             const sampleIntervalSec = typeof r.sampleIntervalSec === 'number' ? r.sampleIntervalSec : undefined;
-            const allFrames: TimestampedFrame[] = (r.framesData ?? []).map(
-              (fd: {
-                frame_time?: number;
-                detected?: boolean;
-                sample_index?: number;
-                source_frame_index?: number;
-                keypoints?: [number, number, number][] | null;
-              }) => ({
-                time: fd.frame_time ?? 0,
-                detected: fd.detected,
-                sampleIndex: fd.sample_index,
-                sourceFrameIndex: fd.source_frame_index,
-                sampleIntervalSec,
-                frame: Array.isArray(fd.keypoints)
-                  ? fd.keypoints.map(([x, y, conf]) => ({ x, y, score: conf }))
-                  : null,
-              })
-            );
+            const allFrames: TimestampedFrame[] = (r.framesData ?? []).map((fd) => ({
+              time: fd.frame_time ?? 0,
+              detected: fd.detected,
+              sampleIndex: fd.sample_index,
+              sourceFrameIndex: fd.source_frame_index,
+              sampleIntervalSec,
+              frame: Array.isArray(fd.keypoints)
+                ? fd.keypoints.map(([x, y, conf]) => ({ x, y, score: conf }))
+                : null,
+            }));
             const firstDetectedFrame = allFrames.find((frame) => Array.isArray(frame.frame));
             setResult({
-              biometrics:       r.biometrics,
+              biometrics:       r.biometrics!,
               insights:         toMovementInsights(r.insights ?? []),
               frameCount:       r.framesAnalyzed ?? 0,
               videoPlaybackUrl: blobUrl,
@@ -376,26 +620,44 @@ export function usePoseAPI(): {
             });
             setProgress(100);
             setStatus('done');
+            setAnalysisMeta(buildAnalysisMeta(job));
+            return;
+          }
 
-          } else if (job.status === 'failed') {
-            clearInterval(pollRef.current!);
+          if (job.status === 'failed') {
+            if (pollRef.current) clearTimeout(pollRef.current);
             setStatus('error');
             setError(job.error || 'Analysis failed on the server — try again');
+            setAnalysisMeta(buildAnalysisMeta(job));
+            return;
           }
+
+          schedulePoll(POLL_MS);
         } catch (pollErr) {
+          if (isStale()) return;
           console.warn('[Horsera] Poll error (will retry):', pollErr);
+          schedulePoll(POLL_MS);
         }
-      }, POLL_MS);
+      };
+
+      schedulePoll(FAST_POLL_MS);
 
     } catch (err) {
       console.error('[Horsera] usePoseAPI error:', err);
       setStatus('error');
       setError(err instanceof Error ? err.message : 'Analysis failed — please try again');
+      setAnalysisMeta({
+        stage: 'failed',
+        headline: 'Analysis failed',
+        detail: err instanceof Error ? err.message : 'Analysis failed — please try again',
+        elapsedSec: null,
+      });
     }
   }, [cancelPendingBlobRevoke, scheduleBlobUrlRevoke]);
 
   const reset = useCallback(() => {
-    if (pollRef.current) clearInterval(pollRef.current);
+    runIdRef.current += 1;
+    if (pollRef.current) clearTimeout(pollRef.current);
     scheduleBlobUrlRevoke(blobUrlRef.current);
     setStatus('idle');
     setProgress(0);
@@ -403,12 +665,14 @@ export function usePoseAPI(): {
     setError(null);
     setAnalysisJobId(null);
     setUploadedObjectPath(null);
+    setAnalysisMeta(null);
   }, [scheduleBlobUrlRevoke]);
 
   useEffect(() => () => {
-    if (pollRef.current) clearInterval(pollRef.current);
+    runIdRef.current += 1;
+    if (pollRef.current) clearTimeout(pollRef.current);
     scheduleBlobUrlRevoke(blobUrlRef.current);
   }, [scheduleBlobUrlRevoke]);
 
-  return { status, progress, result, error, analysisJobId, uploadedObjectPath, analyzeVideo, reset };
+  return { status, progress, result, error, analysisJobId, uploadedObjectPath, analysisMeta, analyzeVideo, reset };
 }

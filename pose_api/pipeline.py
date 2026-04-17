@@ -16,8 +16,9 @@ from __future__ import annotations
 import logging
 import math
 import os
+import time
 from dataclasses import dataclass, asdict
-from typing import Optional, Tuple
+from typing import Any, Callable, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -1186,6 +1187,7 @@ def analyze_video(
     sample_fps: int = SAMPLE_FPS,
     use_smart_crop: bool = True,
     use_smoothing: bool = True,
+    progress_callback: Optional[Callable[[dict[str, Any]], None]] = None,
 ) -> PipelineResult:
     """
     Analyze a video for rider biomechanics.
@@ -1199,6 +1201,8 @@ def analyze_video(
     horse_sess, pose_sess = _get_sessions()
 
     native_fps, total_frames = _video_meta(video_path)
+    duration_estimate_sec = total_frames / max(native_fps, 1e-6)
+    estimated_samples = max(1, int(math.ceil(duration_estimate_sec * max(float(sample_fps), 1.0))))
     sample_interval = 1.0 / max(float(sample_fps), 1.0)
     sample_epsilon = 0.5 / max(native_fps, float(sample_fps), 1.0)
     approx_effective = min(float(sample_fps), native_fps)
@@ -1228,9 +1232,43 @@ def analyze_video(
     sampled_times: list[float] = []
     sampled_slots: list[int] = []
     timeline_entries: list[dict] = []
+    latest_processed_time = 0.0
+    last_progress_emit_at = 0.0
+
+    def emit_progress(phase: str, force: bool = False) -> None:
+        nonlocal last_progress_emit_at
+        if progress_callback is None:
+            return
+
+        now = time.monotonic()
+        if not force and (now - last_progress_emit_at) < 2.0:
+            return
+
+        processed_ratio = 0.0
+        if duration_estimate_sec > 0:
+            processed_ratio = min(1.0, latest_processed_time / duration_estimate_sec)
+        if sampled_count > 0:
+            processed_ratio = max(processed_ratio, min(1.0, sampled_count / max(estimated_samples, 1)))
+
+        payload = {
+            "phase": phase,
+            "sampled_count": sampled_count,
+            "estimated_samples": estimated_samples,
+            "valid_poses": len(valid_kps),
+            "horse_frames": horse_count,
+            "cropped_frames": crop_count,
+            "detection_rate": round(len(valid_kps) / max(sampled_count, 1), 4) if sampled_count else 0.0,
+            "processed_seconds": round(float(latest_processed_time), 3),
+            "duration_seconds_estimate": round(float(duration_estimate_sec), 3),
+            "progress_pct": round(float(processed_ratio), 4),
+        }
+        progress_callback(payload)
+        last_progress_emit_at = now
+
+    emit_progress("starting", force=True)
 
     def _flush_sampled_batch() -> None:
-        nonlocal horse_count, crop_count
+        nonlocal horse_count, crop_count, latest_processed_time
         if not sampled_frames:
             return
         selected_batch, horse_hits, crop_hits = _run_inference_batch(
@@ -1263,10 +1301,14 @@ def analyze_video(
 
             timeline_entries.append(timeline_entry)
 
+        if sampled_times:
+            latest_processed_time = max(latest_processed_time, float(sampled_times[-1]))
+
         sampled_frames.clear()
         sampled_indices.clear()
         sampled_times.clear()
         sampled_slots.clear()
+        emit_progress("sampling")
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -1306,6 +1348,8 @@ def analyze_video(
     finally:
         _flush_sampled_batch()
         cap.release()
+
+    emit_progress("sampling", force=True)
 
     det_rate = len(valid_kps) / max(sampled_count, 1)
     duration_sec = (timeline_entries[-1]["frame_time"] if timeline_entries else 0.0) + (1.0 / max(native_fps, 1.0))

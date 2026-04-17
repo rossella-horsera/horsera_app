@@ -5,6 +5,7 @@ FastAPI server: async video jobs + synchronous single-frame endpoint.
 from __future__ import annotations
 
 import base64
+import gzip
 import json
 import logging
 import math
@@ -61,6 +62,7 @@ app.add_middleware(
 GCS_UPLOAD_BUCKET = os.environ.get("GCS_UPLOAD_BUCKET", "").strip()
 GCS_UPLOAD_PREFIX = os.environ.get("GCS_UPLOAD_PREFIX", "uploads").strip("/") or "uploads"
 GCS_SAVED_PREFIX = os.environ.get("GCS_SAVED_PREFIX", "saved-rides").strip("/") or "saved-rides"
+GCS_RESULTS_PREFIX = os.environ.get("GCS_RESULTS_PREFIX", "job-results").strip("/") or "job-results"
 GCS_SIGNING_SERVICE_ACCOUNT_EMAIL = os.environ.get("GCS_SIGNING_SERVICE_ACCOUNT_EMAIL", "").strip()
 SIGNED_URL_TTL_SECONDS = int(os.environ.get("SIGNED_URL_TTL_SECONDS", "900"))
 READ_URL_TTL_SECONDS = int(os.environ.get("READ_URL_TTL_SECONDS", "900"))
@@ -73,6 +75,7 @@ CLOUD_RUN_REGION = os.environ.get("CLOUD_RUN_REGION", "").strip()
 CLOUD_RUN_CPU_JOB = os.environ.get("CLOUD_RUN_CPU_JOB", "").strip()
 CLOUD_RUN_GPU_JOB = os.environ.get("CLOUD_RUN_GPU_JOB", "").strip()
 PRELOAD_MODELS = os.environ.get("PRELOAD_MODELS", "").strip().lower()
+STRICT_JOB_PERSISTENCE = os.environ.get("STRICT_JOB_PERSISTENCE", "").strip().lower()
 
 _gcs_client = None
 _firestore_client = None
@@ -290,6 +293,14 @@ def _is_firestore_enabled() -> bool:
     return JOB_STORE_BACKEND == "firestore"
 
 
+def _should_raise_job_store_errors() -> bool:
+    if STRICT_JOB_PERSISTENCE in {"1", "true", "yes", "on"}:
+        return True
+    if STRICT_JOB_PERSISTENCE in {"0", "false", "no", "off"}:
+        return False
+    return EXECUTION_BACKEND == "cloud_run_job" and _is_firestore_enabled()
+
+
 def _get_firestore_client():
     global _firestore_client
     if _firestore_client is None:
@@ -403,6 +414,8 @@ def _firestore_upsert_job(job_id: str, payload: dict) -> None:
         doc_ref.set(payload_out, merge=True)
     except Exception as exc:
         logger.warning(f"[firestore] upsert [{job_id}] failed: {exc}")
+        if _should_raise_job_store_errors():
+            raise
 
 
 def _firestore_get_job(job_id: str) -> dict | None:
@@ -502,6 +515,11 @@ def _build_saved_object_name(filename: str, ride_id: str | None = None) -> str:
     return f"{GCS_SAVED_PREFIX}/{safe_ride_id}/{uuid.uuid4()}_{safe_name}"
 
 
+def _build_result_object_name(job_id: str) -> str:
+    safe_job_id = _sanitize_filename(job_id)
+    return f"{GCS_RESULTS_PREFIX}/{safe_job_id}.json.gz"
+
+
 def _parse_gs_uri(uri: str) -> tuple[str, str]:
     if not uri.startswith("gs://"):
         raise ValueError("object_path must start with gs://")
@@ -536,26 +554,190 @@ def _copy_gcs_object(source_object_path: str, dest_object_name: str) -> str:
     return f"gs://{bucket_name}/{dest_object_name}"
 
 
-# ── Background processing ────────────────────────────────────────────────────
+def _result_storage_enabled() -> bool:
+    return _is_firestore_enabled() and bool(GCS_UPLOAD_BUCKET)
 
-def _process_video(job_id: str, tmp_path: str, filename: str, size_mb: float) -> None:
-    started_at = time.time()
-    _update_job(job_id, status=JobStatus.PROCESSING, started_at=started_at)
+
+def _store_result_in_gcs(job_id: str, result_dict: dict) -> str:
+    if not GCS_UPLOAD_BUCKET:
+        raise RuntimeError("GCS_UPLOAD_BUCKET is required to store result payloads externally")
+
+    object_name = _build_result_object_name(job_id)
+    object_path = f"gs://{GCS_UPLOAD_BUCKET}/{object_name}"
+    client = _get_gcs_client()
+    bucket = client.bucket(GCS_UPLOAD_BUCKET)
+    blob = bucket.blob(object_name)
+
+    payload_bytes = json.dumps(
+        _jsonable(result_dict),
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    compressed = gzip.compress(payload_bytes)
+    blob.content_type = "application/json"
+    blob.content_encoding = "gzip"
+    blob.cache_control = "no-store"
+    blob.upload_from_string(compressed, content_type="application/json")
+    return object_path
+
+
+def _load_result_from_gcs(object_path: str) -> dict:
+    bucket_name, object_name = _parse_gs_uri(object_path)
+    client = _get_gcs_client()
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(object_name)
+    if not blob.exists():
+        raise FileNotFoundError(f"GCS object not found: {object_path}")
+
+    raw = blob.download_as_bytes()
+    if object_name.endswith(".gz"):
+        raw = gzip.decompress(raw)
+    payload = json.loads(raw.decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"Unexpected result payload type for {object_path}: {type(payload)!r}")
+    return payload
+
+
+def _inline_result_for_job_store(result_dict: dict) -> dict:
+    inline = dict(result_dict)
+    frames = inline.pop("framesData", None)
+    if isinstance(frames, list):
+        inline["framesDataCount"] = len(frames)
+        inline["framesDetectedCount"] = sum(
+            1 for frame in frames
+            if isinstance(frame, dict) and bool(frame.get("detected"))
+        )
+    return inline
+
+
+def _merge_result_payloads(summary: Any, full: Any) -> Any:
+    if isinstance(summary, dict) and isinstance(full, dict):
+        merged = dict(summary)
+        merged.update(full)
+        return merged
+    return full if full is not None else summary
+
+
+def _hydrate_job_result(job: dict) -> dict:
+    result_object_path = str(job.get("result_object_path") or "").strip()
+    result = job.get("result")
+    status = job.get("status")
+    if status != JobStatus.COMPLETE or not result_object_path:
+        return job
+
+    needs_full_payload = not isinstance(result, dict) or not isinstance(result.get("framesData"), list)
+    if not needs_full_payload:
+        return job
 
     try:
-        result      = _pipeline.analyze_video(tmp_path)
-        completed   = time.time()
+        full_result = _load_result_from_gcs(result_object_path)
+        job["result"] = _merge_result_payloads(result, full_result)
+    except Exception as exc:
+        logger.warning(f"[result-load] failed to load [{job.get('job_id')}] from {result_object_path}: {exc}")
+        job.setdefault("result_load_error", str(exc))
+    return job
+
+
+def _round_seconds(value: float) -> float:
+    return round(float(value), 3)
+
+
+# ── Background processing ────────────────────────────────────────────────────
+
+def _process_video(
+    job_id: str,
+    tmp_path: str,
+    filename: str,
+    size_mb: float,
+    timings: dict[str, Any] | None = None,
+) -> None:
+    started_at = time.time()
+    timing_data = dict(timings or {})
+    timing_data.setdefault("worker_started_at", started_at)
+    timing_data.setdefault("analysis_started_at", started_at)
+    _update_job(
+        job_id,
+        status=JobStatus.PROCESSING,
+        stage="analyzing",
+        started_at=timing_data["worker_started_at"],
+        analysis_progress={
+            "phase": "starting",
+            "sampled_count": 0,
+            "estimated_samples": 0,
+            "valid_poses": 0,
+            "horse_frames": 0,
+            "cropped_frames": 0,
+            "detection_rate": 0.0,
+            "processed_seconds": 0.0,
+            "duration_seconds_estimate": 0.0,
+            "progress_pct": 0.0,
+        },
+        timings=timing_data,
+    )
+
+    try:
+        analysis_start = time.time()
+        def _handle_pipeline_progress(update: dict[str, Any]) -> None:
+            _update_job(
+                job_id,
+                stage="analyzing",
+                analysis_progress=_jsonable(update),
+                timings=timing_data,
+            )
+
+        result = _pipeline.analyze_video(tmp_path, progress_callback=_handle_pipeline_progress)
+        analysis_done = time.time()
+        timing_data["analysis_seconds"] = _round_seconds(analysis_done - analysis_start)
+
         result_dict = result.to_dict()
+        frames_data = result_dict.get("framesData") if isinstance(result_dict, dict) else None
+        if isinstance(frames_data, list):
+            timing_data["result_frames"] = len(frames_data)
+
+        _update_job(job_id, stage="persisting", timings=timing_data)
+
+        persistence_start = time.time()
+        result_object_path = None
+        result_storage = "inline"
+        result_for_store = result_dict
+        if _result_storage_enabled():
+            result_object_path = _store_result_in_gcs(job_id, result_dict)
+            result_for_store = _inline_result_for_job_store(result_dict)
+            result_storage = "gcs"
+        persistence_done = time.time()
+        timing_data["persist_seconds"] = _round_seconds(persistence_done - persistence_start)
+
+        completed = time.time()
+        timing_data["worker_total_seconds"] = _round_seconds(completed - timing_data["worker_started_at"])
         _update_job(
             job_id,
-            status       = JobStatus.COMPLETE,
-            result       = result_dict,
-            completed_at = completed,
+            status=JobStatus.COMPLETE,
+            stage="complete",
+            result=result_for_store,
+            result_object_path=result_object_path,
+            result_storage=result_storage,
+            completed_at=completed,
+            timings=timing_data,
         )
-        logger.info(f"Job {job_id} complete — overall {result.overallScore:.2f}")
+        logger.info(
+            "Job %s complete — overall %.2f analysis=%.3fs persist=%.3fs total=%.3fs storage=%s",
+            job_id,
+            result.overallScore,
+            timing_data.get("analysis_seconds", 0.0),
+            timing_data.get("persist_seconds", 0.0),
+            timing_data.get("worker_total_seconds", 0.0),
+            result_storage,
+        )
     except Exception as exc:
         logger.exception(f"Job {job_id} failed")
-        _update_job(job_id, status=JobStatus.FAILED, error=str(exc))
+        timing_data["worker_total_seconds"] = _round_seconds(time.time() - timing_data["worker_started_at"])
+        _update_job(
+            job_id,
+            status=JobStatus.FAILED,
+            stage="failed",
+            error=str(exc),
+            timings=timing_data,
+        )
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
@@ -569,16 +751,38 @@ def _process_video_from_gcs(
 ) -> None:
     ext = os.path.splitext(filename)[1].lower() or ".mp4"
     tmp_path = f"/tmp/horsera_{job_id}{ext}"
+    worker_started_at = time.time()
+    timing_data: dict[str, Any] = {
+        "worker_started_at": worker_started_at,
+    }
+    _update_job(
+        job_id,
+        status=JobStatus.PROCESSING,
+        stage="downloading",
+        started_at=worker_started_at,
+        timings=timing_data,
+    )
     try:
+        download_started = time.time()
         _download_from_gcs(object_path, tmp_path)
+        download_done = time.time()
+        timing_data["download_seconds"] = _round_seconds(download_done - download_started)
+        timing_data["analysis_started_at"] = download_done
     except Exception as exc:
         logger.exception(f"Job {job_id} failed to download object {object_path!r}")
-        _update_job(job_id, status=JobStatus.FAILED, error=f"Failed to download object: {exc}")
+        timing_data["worker_total_seconds"] = _round_seconds(time.time() - worker_started_at)
+        _update_job(
+            job_id,
+            status=JobStatus.FAILED,
+            stage="failed",
+            error=f"Failed to download object: {exc}",
+            timings=timing_data,
+        )
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
         return
 
-    _process_video(job_id, tmp_path, filename, size_mb)
+    _process_video(job_id, tmp_path, filename, size_mb, timings=timing_data)
 
 
 def run_worker_job(job_id: str, object_path: str, filename: str, size_mb: float) -> None:
@@ -595,6 +799,7 @@ def run_worker_job(job_id: str, object_path: str, filename: str, size_mb: float)
             "size_mb": float(size_mb or 0.0),
             "object_path": object_path,
             "status": JobStatus.PENDING,
+            "stage": "queued",
             "created_at": time.time(),
             "result": None,
             "error": None,
@@ -759,6 +964,7 @@ def analyze_video_object_endpoint(
         "size_mb": size_mb,
         "object_path": req.object_path,
         "status": JobStatus.PENDING,
+        "stage": "queued",
         "created_at": time.time(),
         "result": None,
         "error": None,
@@ -860,6 +1066,7 @@ async def analyze_video_endpoint(
         "filename":    file.filename,
         "size_mb":     size_mb,
         "status":      JobStatus.PENDING,
+        "stage":       "queued",
         "created_at":  time.time(),
         "result":      None,
         "error":       None,
@@ -884,7 +1091,7 @@ def get_job(job_id: str) -> JSONResponse:
       "error":    "..." | null
     }
     """
-    job = _get_job(job_id)
+    job = _hydrate_job_result(_get_job(job_id))
     # Don't expose the internal tmp path
     return JSONResponse({k: v for k, v in job.items() if k not in ("tmp_path",)})
 

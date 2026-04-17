@@ -65,6 +65,16 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function formatElapsedTime(totalSeconds: number | null | undefined): string | null {
+  if (typeof totalSeconds !== 'number' || !Number.isFinite(totalSeconds)) return null;
+  const safe = Math.max(0, Math.round(totalSeconds));
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  const seconds = safe % 60;
+  if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
 function isPersistentVideoUrl(url?: string): boolean {
   if (!url) return false;
   const trimmed = url.trim();
@@ -74,13 +84,6 @@ function isPersistentVideoUrl(url?: string): boolean {
 // Card #59 — allowed formats + size threshold
 const ALLOWED_FORMATS = ['video/mp4', 'video/quicktime', 'video/avi', 'video/x-msvideo'];
 const SIZE_WARN_MB = 500;
-
-// Card #59 — cycling processing messages
-const PROCESSING_MESSAGES = [
-  'Reading your ride…',
-  'Analyzing movement…',
-  'Calculating scores…',
-];
 
 const HORSE_FACTS = [
   "The walk is the hardest gait to improve — and the most revealing of how well a horse is trained.",
@@ -841,7 +844,7 @@ export default function RidesPage() {
   // Video analysis
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [videoFile, setVideoFile] = useState<File | null>(null);
-  const { status, progress, result, error, analysisJobId, uploadedObjectPath, analyzeVideo, reset } = usePoseAPI();
+  const { status, progress, result, error, analysisJobId, uploadedObjectPath, analysisMeta, analyzeVideo, reset } = usePoseAPI();
 
   // Saved ride state
   const [sessionSaved, setSessionSaved] = useState(false);
@@ -858,7 +861,6 @@ export default function RidesPage() {
   // Card #59 — validation & UX state
   const [fileError, setFileError] = useState<string | null>(null);
   const [fileSizeWarning, setFileSizeWarning] = useState<string | null>(null);
-  const [processingMsgIdx, setProcessingMsgIdx] = useState(0);
   const [showSuccessAnim, setShowSuccessAnim] = useState(false);
   const [horseFacts, setHorseFacts] = useState<string[]>([]);
   const [horseFactIdx, setHorseFactIdx] = useState(0);
@@ -876,15 +878,6 @@ export default function RidesPage() {
 
   const isDone = status === 'done' && result !== null;
   const isAnalyzing = status === 'loading-model' || status === 'compressing' || status === 'extracting' || status === 'processing';
-
-  // Card #59 — cycle processing messages every 2s
-  useEffect(() => {
-    if (!isAnalyzing) return;
-    const interval = setInterval(() => {
-      setProcessingMsgIdx(i => (i + 1) % PROCESSING_MESSAGES.length);
-    }, 2000);
-    return () => clearInterval(interval);
-  }, [isAnalyzing]);
 
   // Horse fun facts — build a long shuffled queue and advance through it.
   // Avoids repeats within an analysis AND across analyses in the same session.
@@ -977,7 +970,6 @@ export default function RidesPage() {
 
     setVideoFile(file);
     setSessionSaved(false);
-    setProcessingMsgIdx(0);
     analyzeVideo(file);
   };
 
@@ -1144,11 +1136,22 @@ export default function RidesPage() {
 
   const monthCount = Object.keys(grouped).length;
 
-  // Status message for analysis progress — compression phase shows a fixed label,
-  // all other phases cycle through PROCESSING_MESSAGES (#59)
-  const statusMessage = status === 'compressing'
-    ? 'Preparing your ride...'
-    : PROCESSING_MESSAGES[processingMsgIdx];
+  const analysisHeadline = analysisMeta?.headline ?? (
+    progress <= 18 ? 'Uploading your ride…'
+      : progress <= 25 ? 'Sending to Cadence…'
+      : progress <= 94 ? 'Analyzing movement…'
+      : progress <= 99 ? 'Almost there…'
+      : 'Done'
+  );
+  const analysisDetail = analysisMeta?.detail ?? (
+    progress >= 20
+      ? 'Cadence is working through your ride in the cloud.'
+      : 'Sending your video to Cadence.'
+  );
+  const analysisElapsed = formatElapsedTime(analysisMeta?.elapsedSec);
+  const analysisSupportNote = progress >= 20 && analysisMeta?.stage !== 'complete'
+    ? 'Uploaded safely. Keep this screen open for automatic save when the report is ready.'
+    : 'Longer rides can take a few minutes.';
 
   return (
     <div style={{ background: COLORS.parchment, minHeight: '100%' }}>
@@ -1826,15 +1829,51 @@ export default function RidesPage() {
 
             {/* Status text */}
             <div style={{
-              fontFamily: FONTS.body, fontSize: '14px',
-              color: 'rgba(255,255,255,0.6)',
+              fontFamily: FONTS.body, fontSize: '16px',
+              color: 'rgba(255,255,255,0.88)',
               marginTop: 20, textAlign: 'center',
+              fontWeight: 500,
             }}>
-              {progress <= 18 ? 'Uploading your ride…'
-                : progress <= 25 ? 'Sending to Cadence…'
-                : progress <= 94 ? 'Analyzing movement…'
-                : progress <= 99 ? 'Almost there…'
-                : 'Done'}
+              {analysisHeadline}
+            </div>
+
+            <div style={{
+              fontFamily: FONTS.body, fontSize: '13px',
+              color: 'rgba(255,255,255,0.60)',
+              marginTop: 8, textAlign: 'center', lineHeight: 1.55,
+              maxWidth: 320,
+            }}>
+              {analysisDetail}
+            </div>
+
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+              marginTop: 14, flexWrap: 'wrap',
+            }}>
+              {analysisElapsed && (
+                <div style={{
+                  border: '1px solid rgba(255,255,255,0.16)',
+                  borderRadius: 999,
+                  padding: '5px 10px',
+                  fontFamily: FONTS.mono,
+                  fontSize: '11px',
+                  color: 'rgba(255,255,255,0.72)',
+                  background: 'rgba(255,255,255,0.04)',
+                }}>
+                  {analysisElapsed} elapsed
+                </div>
+              )}
+              <div style={{
+                border: '1px solid rgba(255,255,255,0.10)',
+                borderRadius: 999,
+                padding: '5px 10px',
+                fontFamily: FONTS.body,
+                fontSize: '11px',
+                color: 'rgba(255,255,255,0.58)',
+                background: 'rgba(255,255,255,0.03)',
+              }}>
+                {analysisSupportNote}
+              </div>
             </div>
 
             {/* Divider */}
