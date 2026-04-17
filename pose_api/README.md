@@ -106,12 +106,14 @@ in the Horsera frontend (`src/lib/storage.ts`).
 | `GCS_UPLOAD_BUCKET` | _(empty)_ | Bucket for signed uploads + server-side reads |
 | `GCS_UPLOAD_PREFIX` | `uploads` | Prefix inside the upload bucket |
 | `GCS_SAVED_PREFIX` | `saved-rides` | Prefix for pinned ride videos that should remain available for playback |
+| `GCS_RESULTS_PREFIX` | `job-results` | Prefix for externally stored full analysis payloads when Firestore is used |
 | `GCS_SIGNING_SERVICE_ACCOUNT_EMAIL` | _(empty)_ | Optional override for V4 signed URL signer identity (recommended on Cloud Run) |
 | `SIGNED_URL_TTL_SECONDS` | `900` | Signed upload URL TTL in seconds |
 | `READ_URL_TTL_SECONDS` | `900` | Signed playback URL TTL in seconds |
 | `JOB_STORE_BACKEND` | `memory` | `memory` or `firestore` |
 | `FIRESTORE_COLLECTION` | `pose_jobs` | Firestore collection for job state |
 | `EXECUTION_BACKEND` | `inline` | `inline` (background thread) or `cloud_run_job` |
+| `STRICT_JOB_PERSISTENCE` | auto | When `cloud_run_job` + `firestore`, failed Firestore writes raise instead of only logging warnings |
 | `PRELOAD_MODELS` | auto | `1/true` to force eager ONNX preload, `0/false` to skip (auto skips in `cloud_run_job` mode) |
 | `GPU_THRESHOLD_MB` | `120` | Route to GPU worker job when size threshold is met |
 | `CLOUD_RUN_PROJECT` | _(empty)_ | GCP project for Cloud Run Job dispatch |
