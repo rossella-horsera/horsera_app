@@ -54,8 +54,36 @@ def _env_int(name: str, default: int, minimum: int = 1) -> int:
         return default
 
 
+def _env_float(name: str, default: float, minimum: float = 0.0) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return max(minimum, float(raw))
+    except Exception:
+        logger.warning("[config] Invalid float for %s=%r; using default=%s", name, raw, default)
+        return default
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    logger.warning("[config] Invalid boolean for %s=%r; using default=%s", name, raw, default)
+    return default
+
+
 SAMPLE_FPS       = _env_int("SAMPLE_FPS", 3)         # default sampling rate for full-video analysis
 INFER_BATCH_SIZE = _env_int("INFER_BATCH_SIZE", 1)   # max sampled frames per ONNX inference call
+SAMPLE_EVERY_FRAME = _env_bool("SAMPLE_EVERY_FRAME", False)
+ADAPTIVE_SAMPLE_MAX_FPS = _env_int("ADAPTIVE_SAMPLE_MAX_FPS", 8)
+ADAPTIVE_SAMPLE_MOTION_THRESHOLD = _env_float("ADAPTIVE_SAMPLE_MOTION_THRESHOLD", 18.0)
+ADAPTIVE_SAMPLE_MOTION_WINDOW_SEC = _env_float("ADAPTIVE_SAMPLE_MOTION_WINDOW_SEC", 0.75)
+ADAPTIVE_SAMPLE_REACQUIRE_WINDOW_SEC = _env_float("ADAPTIVE_SAMPLE_REACQUIRE_WINDOW_SEC", 1.5)
 MISSING_HORSE_GRACE_FRAMES = _env_int("MISSING_HORSE_GRACE_FRAMES", 2, minimum=0)
 
 # Keypoint indices for occlusion handling
@@ -264,6 +292,39 @@ def _preprocess_batch(frames: list[np.ndarray]) -> tuple[np.ndarray, list[tuple[
         inputs.append(inp)
         metas.append((ratio, dw, dh, W, H))
     return np.concatenate(inputs, axis=0), metas
+
+
+def _motion_thumbnail(frame: np.ndarray, size: int = 64) -> np.ndarray:
+    """Cheap grayscale thumbnail used for per-frame motion heuristics."""
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    return cv2.resize(gray, (size, size), interpolation=cv2.INTER_AREA)
+
+
+def _motion_score(current_thumb: np.ndarray, previous_thumb: Optional[np.ndarray]) -> float:
+    if previous_thumb is None:
+        return 0.0
+    diff = cv2.absdiff(current_thumb, previous_thumb)
+    return float(np.mean(diff))
+
+
+def _record_batch_size(batch_stats: Optional[dict[str, list[int]]], key: str, size: int) -> None:
+    if batch_stats is None:
+        return
+    batch_stats.setdefault(key, []).append(int(size))
+
+
+def _describe_batch_sizes(label: str, sizes: list[int]) -> str:
+    if not sizes:
+        return f"{label}=none"
+    counts: dict[int, int] = {}
+    for size in sizes:
+        counts[size] = counts.get(size, 0) + 1
+    histogram = ",".join(f"{size}:{counts[size]}" for size in sorted(counts))
+    avg = sum(sizes) / max(len(sizes), 1)
+    return (
+        f"{label}=count:{len(sizes)} avg:{avg:.2f} min:{min(sizes)} max:{max(sizes)} "
+        f"sizes={histogram}"
+    )
 
 
 def _predict_rows(sess, batch_input: np.ndarray, channels: int) -> list[np.ndarray]:
@@ -672,7 +733,11 @@ def _decode_horse_boxes(pred: np.ndarray, ratio: float, dw: float, dh: float, W:
     return result
 
 
-def _horse_bboxes_batch(frames: list[np.ndarray], sess) -> list[list[np.ndarray]]:
+def _horse_bboxes_batch(
+    frames: list[np.ndarray],
+    sess,
+    batch_stats: Optional[dict[str, list[int]]] = None,
+) -> list[list[np.ndarray]]:
     """Return horse bboxes for each frame in the input list."""
     if not frames:
         return []
@@ -689,6 +754,7 @@ def _horse_bboxes_batch(frames: list[np.ndarray], sess) -> list[list[np.ndarray]
     all_boxes: list[list[np.ndarray]] = []
     for start in range(0, len(frames), target_batch):
         chunk = frames[start:start + target_batch]
+        _record_batch_size(batch_stats, "horse", len(chunk))
         inp_batch, metas = _preprocess_batch(chunk)
         preds = _predict_rows(sess, inp_batch, channels=84)
         for pred, meta in zip(preds, metas):
@@ -732,7 +798,11 @@ def _decode_pose_keypoints(pred: np.ndarray, ratio: float, dw: float, dh: float,
     return results
 
 
-def _run_pose_batch(frames: list[np.ndarray], sess) -> list[list[np.ndarray]]:
+def _run_pose_batch(
+    frames: list[np.ndarray],
+    sess,
+    batch_stats: Optional[dict[str, list[int]]] = None,
+) -> list[list[np.ndarray]]:
     """
     Run YOLOv8m-pose ONNX inference for a list of frames.
     Returns one list[(17,3)] per input frame.
@@ -752,6 +822,7 @@ def _run_pose_batch(frames: list[np.ndarray], sess) -> list[list[np.ndarray]]:
     all_results: list[list[np.ndarray]] = []
     for start in range(0, len(frames), target_batch):
         chunk = frames[start:start + target_batch]
+        _record_batch_size(batch_stats, "pose", len(chunk))
         inp_batch, metas = _preprocess_batch(chunk)
         preds = _predict_rows(sess, inp_batch, channels=56)
         for pred, meta in zip(preds, metas):
@@ -773,6 +844,7 @@ def _run_inference_batch(
     horse_sess,
     pose_sess,
     cropper: Optional[SmartCropper],
+    batch_stats: Optional[dict[str, list[int]]] = None,
 ) -> tuple[list[Optional[np.ndarray]], int, int]:
     """
     Run model inference for a sampled frame batch.
@@ -783,11 +855,11 @@ def _run_inference_batch(
     if not frames:
         return [], 0, 0
 
-    horse_boxes_batch = _horse_bboxes_batch(frames, horse_sess)
+    horse_boxes_batch = _horse_bboxes_batch(frames, horse_sess, batch_stats=batch_stats)
     horse_count = sum(1 for boxes in horse_boxes_batch if boxes)
 
     if cropper is None:
-        pose_batch = _run_pose_batch(frames, pose_sess)
+        pose_batch = _run_pose_batch(frames, pose_sess, batch_stats=batch_stats)
         selected: list[Optional[np.ndarray]] = []
         for kps_list, horse_boxes in zip(pose_batch, horse_boxes_batch):
             selected.append(_select_mounted_rider(
@@ -822,7 +894,7 @@ def _run_inference_batch(
         crop_scales.append(scale)
         crop_offsets.append(offset)
 
-    pose_batch = _run_pose_batch(pose_inputs, pose_sess) if pose_inputs else []
+    pose_batch = _run_pose_batch(pose_inputs, pose_sess, batch_stats=batch_stats) if pose_inputs else []
     selected: list[Optional[np.ndarray]] = [None] * len(frames)
     for batch_idx, frame_idx in enumerate(pose_input_indices):
         kps_list = pose_batch[batch_idx]
@@ -1291,19 +1363,48 @@ def analyze_video(
 
     native_fps, total_frames = _video_meta(video_path)
     duration_estimate_sec = total_frames / max(native_fps, 1e-6)
-    estimated_samples = max(1, int(math.ceil(duration_estimate_sec * max(float(sample_fps), 1.0))))
-    sample_interval = 1.0 / max(float(sample_fps), 1.0)
-    sample_epsilon = 0.5 / max(native_fps, float(sample_fps), 1.0)
-    approx_effective = min(float(sample_fps), native_fps)
+    sample_every_frame = SAMPLE_EVERY_FRAME or sample_fps <= 0
+    effective_sample_fps = native_fps if sample_every_frame else max(float(sample_fps), 1.0)
+    adaptive_sample_fps = min(float(ADAPTIVE_SAMPLE_MAX_FPS), native_fps)
+    adaptive_sample_enabled = (
+        not sample_every_frame
+        and adaptive_sample_fps > effective_sample_fps
+        and (ADAPTIVE_SAMPLE_MOTION_WINDOW_SEC > 0 or ADAPTIVE_SAMPLE_REACQUIRE_WINDOW_SEC > 0)
+    )
+    progress_sample_fps = adaptive_sample_fps if adaptive_sample_enabled else effective_sample_fps
+    estimated_samples = total_frames if sample_every_frame else max(
+        1,
+        int(math.ceil(duration_estimate_sec * progress_sample_fps)),
+    )
+    sample_interval = 1.0 / max(effective_sample_fps, 1.0)
+    adaptive_sample_interval = 1.0 / max(adaptive_sample_fps, 1.0)
+    sample_epsilon = 0.0 if sample_every_frame else 0.5 / max(native_fps, effective_sample_fps, 1.0)
+    approx_effective = native_fps if sample_every_frame else min(progress_sample_fps, native_fps)
+    if sample_every_frame:
+        cadence_label = "every frame"
+    elif adaptive_sample_enabled:
+        cadence_label = (
+            f"adaptive cadence ({sample_interval:.3f}s baseline, "
+            f"{adaptive_sample_interval:.3f}s burst)"
+        )
+    else:
+        cadence_label = f"{sample_interval:.3f}s cadence"
     logger.info(
         f"[analyze_video] {total_frames} frames @ {native_fps:.1f} fps — "
-        f"sampling on a {sample_interval:.3f}s cadence (~{approx_effective:.1f} fps target)"
+        f"sampling on {cadence_label} (~{approx_effective:.1f} fps target)"
     )
     logger.info(
         f"[analyze_video] smart_crop={use_smart_crop} smoothing={use_smoothing}"
     )
     logger.info(
-        f"[analyze_video] infer_batch_size={INFER_BATCH_SIZE}"
+        "[analyze_video] infer_batch_size=%s sample_every_frame=%s adaptive_sample_enabled=%s "
+        "adaptive_sample_fps=%.1f motion_threshold=%.1f reacquire_window=%.2fs",
+        INFER_BATCH_SIZE,
+        sample_every_frame,
+        adaptive_sample_enabled,
+        adaptive_sample_fps,
+        ADAPTIVE_SAMPLE_MOTION_THRESHOLD,
+        ADAPTIVE_SAMPLE_REACQUIRE_WINDOW_SEC,
     )
 
     # Initialize smart cropper for rolling/adaptive crop
@@ -1321,8 +1422,15 @@ def analyze_video(
     sampled_times: list[float] = []
     sampled_slots: list[int] = []
     timeline_entries: list[dict] = []
+    batch_stats: dict[str, list[int]] = {}
     latest_processed_time = 0.0
     last_progress_emit_at = 0.0
+    previous_motion_thumb: Optional[np.ndarray] = None
+    motion_boost_until = 0.0
+    reacquire_until = 0.0
+    motion_trigger_count = 0
+    reacquire_trigger_count = 0
+    adaptive_sample_count = 0
 
     def emit_progress(phase: str, force: bool = False) -> None:
         nonlocal last_progress_emit_at
@@ -1358,14 +1466,16 @@ def analyze_video(
 
     def _flush_sampled_batch() -> None:
         nonlocal horse_count, crop_count, latest_processed_time
+        nonlocal reacquire_until, reacquire_trigger_count, next_sample_time
         if not sampled_frames:
             return
         selected_batch, horse_hits, crop_hits = _run_inference_batch(
-            sampled_frames, horse_sess, pose_sess, cropper
+            sampled_frames, horse_sess, pose_sess, cropper, batch_stats=batch_stats
         )
         horse_count += horse_hits
         crop_count += crop_hits
 
+        saw_reacquire_miss = False
         for sample_slot, frame_idx, frame_time, kps in zip(sampled_slots, sampled_indices, sampled_times, selected_batch):
             timeline_entry = {
                 "sample_index": sample_slot,
@@ -1387,11 +1497,19 @@ def analyze_video(
                     else 0.0
                 )
                 timeline_entry["keypoints"] = kps
+            elif adaptive_sample_enabled and ADAPTIVE_SAMPLE_REACQUIRE_WINDOW_SEC > 0:
+                saw_reacquire_miss = True
+                new_reacquire_until = frame_time + ADAPTIVE_SAMPLE_REACQUIRE_WINDOW_SEC
+                if new_reacquire_until > reacquire_until + 1e-6:
+                    reacquire_trigger_count += 1
+                reacquire_until = max(reacquire_until, new_reacquire_until)
 
             timeline_entries.append(timeline_entry)
 
         if sampled_times:
             latest_processed_time = max(latest_processed_time, float(sampled_times[-1]))
+            if saw_reacquire_miss:
+                next_sample_time = min(next_sample_time, float(sampled_times[-1]))
 
         sampled_frames.clear()
         sampled_indices.clear()
@@ -1417,9 +1535,31 @@ def analyze_video(
             frame_time = _frame_timestamp_seconds(cap, idx, native_fps, last_frame_time)
             last_frame_time = frame_time
 
-            if frame_time + sample_epsilon >= next_sample_time:
+            adaptive_boost_active = False
+            if adaptive_sample_enabled:
+                current_motion_thumb = _motion_thumbnail(raw_frame)
+                motion_score = _motion_score(current_motion_thumb, previous_motion_thumb)
+                previous_motion_thumb = current_motion_thumb
+                if motion_score >= ADAPTIVE_SAMPLE_MOTION_THRESHOLD:
+                    new_motion_until = frame_time + ADAPTIVE_SAMPLE_MOTION_WINDOW_SEC
+                    if new_motion_until > motion_boost_until + 1e-6:
+                        motion_trigger_count += 1
+                    motion_boost_until = max(motion_boost_until, new_motion_until)
+                    next_sample_time = min(next_sample_time, frame_time)
+                adaptive_boost_active = frame_time < max(motion_boost_until, reacquire_until)
+
+            current_sample_interval = adaptive_sample_interval if adaptive_boost_active else sample_interval
+            current_sample_epsilon = (
+                0.0
+                if sample_every_frame
+                else 0.5 / max(native_fps, (1.0 / max(current_sample_interval, 1e-6)), 1.0)
+            )
+            should_sample = sample_every_frame or (frame_time + current_sample_epsilon >= next_sample_time)
+            if should_sample:
                 sample_slot = sampled_count
                 sampled_count += 1
+                if adaptive_boost_active:
+                    adaptive_sample_count += 1
                 frame = np.ascontiguousarray(raw_frame, dtype=np.uint8)
                 del raw_frame
                 sampled_frames.append(frame)
@@ -1428,8 +1568,10 @@ def analyze_video(
                 sampled_slots.append(sample_slot)
                 if len(sampled_frames) >= INFER_BATCH_SIZE:
                     _flush_sampled_batch()
-                while next_sample_time <= frame_time + sample_epsilon:
-                    next_sample_time += sample_interval
+                if sample_every_frame:
+                    next_sample_time = frame_time + sample_interval
+                else:
+                    next_sample_time = frame_time + current_sample_interval
             else:
                 del raw_frame
 
@@ -1447,6 +1589,18 @@ def analyze_video(
         f"[analyze_video] sampled={sampled_count} horse_frames={horse_count} "
         f"cropped_frames={crop_count} valid_poses={len(valid_kps)} "
         f"det_rate={det_rate:.1%} effective_sample_fps={effective_sample_fps:.2f}"
+    )
+    if adaptive_sample_enabled:
+        logger.info(
+            "[analyze_video] adaptive_samples=%s motion_triggers=%s reacquire_triggers=%s",
+            adaptive_sample_count,
+            motion_trigger_count,
+            reacquire_trigger_count,
+        )
+    logger.info(
+        "[analyze_video] %s %s",
+        _describe_batch_sizes("horse_batches", batch_stats.get("horse", [])),
+        _describe_batch_sizes("pose_batches", batch_stats.get("pose", [])),
     )
 
     max_cae_w = max(cae_per_frame) if cae_per_frame else 1.0
@@ -1500,7 +1654,7 @@ def analyze_video(
         framesAnalyzed = len(valid_kps),
         framesSampled  = sampled_count,
         framesTotal    = total_frames,
-        sampleFps      = round(float(sample_fps), 3),
+        sampleFps      = round(float(effective_sample_fps), 3),
         sampleIntervalSec = round(sample_interval, 6),
         insights       = _generate_insights(bio, det_rate),
         frames_data    = frames_data,

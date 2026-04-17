@@ -87,7 +87,7 @@ variable "gpu_zonal_redundancy_disabled" {
 variable "gpu_infer_batch_size" {
   type        = number
   description = "Frame batch size for GPU worker ONNX inference."
-  default     = 4
+  default     = 8
 }
 
 variable "create_firestore_database" {

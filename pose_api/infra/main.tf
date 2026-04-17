@@ -251,6 +251,14 @@ resource "google_cloud_run_v2_service" "pose_api" {
         # Hardcoded to the gcloud-created job name.
         value = "horsera-pose-worker-gpu"
       }
+      env {
+        name  = "WORKER_TIMEOUT_SECONDS"
+        value = "3600"
+      }
+      env {
+        name  = "STALE_JOB_GRACE_SECONDS"
+        value = "90"
+      }
 
       resources {
         limits = {
@@ -335,6 +343,10 @@ resource "google_cloud_run_v2_job" "pose_worker_cpu" {
           name  = "STRICT_JOB_PERSISTENCE"
           value = "1"
         }
+        env {
+          name  = "WORKER_TIMEOUT_SECONDS"
+          value = "3600"
+        }
         resources {
           limits = {
             cpu    = "2"
@@ -399,6 +411,18 @@ resource "google_cloud_run_v2_job" "pose_worker_gpu" {
         env {
           name  = "INFER_BATCH_SIZE"
           value = tostring(var.gpu_infer_batch_size)
+        }
+        env {
+          name  = "SAMPLE_EVERY_FRAME"
+          value = "0"
+        }
+        env {
+          name  = "ADAPTIVE_SAMPLE_MAX_FPS"
+          value = "8"
+        }
+        env {
+          name  = "WORKER_TIMEOUT_SECONDS"
+          value = "3600"
         }
         env {
           name  = "REQUIRE_CUDA"

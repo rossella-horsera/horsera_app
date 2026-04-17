@@ -120,7 +120,14 @@ in the Horsera frontend (`src/lib/storage.ts`).
 | `CLOUD_RUN_REGION` | _(empty)_ | Cloud Run region for Job dispatch |
 | `CLOUD_RUN_CPU_JOB` | _(empty)_ | Cloud Run Job name for CPU worker |
 | `CLOUD_RUN_GPU_JOB` | _(empty)_ | Cloud Run Job name for GPU worker |
+| `WORKER_TIMEOUT_SECONDS` | `3600` | Expected worker task timeout used for stale-job detection in the API |
+| `STALE_JOB_GRACE_SECONDS` | `90` | Extra buffer before the API converts a long-running Cloud Run job into a failed status |
 | `SAMPLE_FPS` | `3` | Frame sampling rate for video analysis |
+| `SAMPLE_EVERY_FRAME` | `false` | When `true`, analyze every decoded input frame instead of sampling on a cadence |
+| `ADAPTIVE_SAMPLE_MAX_FPS` | `8` | Burst sampling ceiling used when motion spikes or tracking is lost |
+| `ADAPTIVE_SAMPLE_MOTION_THRESHOLD` | `18` | Mean grayscale frame-difference threshold that triggers a temporary high-FPS burst |
+| `ADAPTIVE_SAMPLE_MOTION_WINDOW_SEC` | `0.75` | How long to keep burst sampling active after a motion spike |
+| `ADAPTIVE_SAMPLE_REACQUIRE_WINDOW_SEC` | `1.5` | How long to keep burst sampling active after a missed rider detection |
 | `INFER_BATCH_SIZE` | `1` | Max sampled frames per ONNX inference call (effective when model supports batch > 1) |
 | `ORT_CUDNN_CONV_ALGO_SEARCH` | `HEURISTIC` | CUDA provider convolution search mode (`HEURISTIC` or `EXHAUSTIVE`) |
 | `HORSERA_PHASE2` | `0` | Set to `1` to enable MediaPipe hybrid merging (see `pipeline.py`) |

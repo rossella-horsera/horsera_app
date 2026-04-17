@@ -28,7 +28,7 @@ const ENABLE_LEGACY_UPLOAD_FALLBACK = import.meta.env.VITE_POSE_API_LEGACY_UPLOA
 const POLL_MS   = 3000;
 const FAST_POLL_MS = 1000;
 const ACTIVE_POLL_MS = 2000;
-const MAX_POLL  = 360; // Adaptive polling, roughly 10-12 min max depending on stage
+const MAX_ANALYSIS_WAIT_MS = 75 * 60 * 1000; // Keep polling past long GPU runs, but still cap eventual browser wait.
 
 // Always compress — iPhone 4K HEVC videos are massive. Anything under this
 // tiny floor is left alone (already small enough to upload fast).
@@ -547,6 +547,7 @@ export function usePoseAPI(): {
       _bench('poll: starting — job_id=' + job_id);
       setStatus('processing');
       let attempts = 0;
+      const pollStartedAt = performance.now();
       const schedulePoll = (delayMs: number) => {
         if (isStale()) return;
         if (pollRef.current) clearTimeout(pollRef.current);
@@ -559,14 +560,15 @@ export function usePoseAPI(): {
         if (isStale()) return;
         attempts++;
 
-        if (attempts > MAX_POLL) {
+        if ((performance.now() - pollStartedAt) > MAX_ANALYSIS_WAIT_MS) {
           if (pollRef.current) clearTimeout(pollRef.current);
+          const recoveryPath = `${window.location.origin}${window.location.pathname}#/jobs/${job_id}/view`;
           setStatus('error');
-          setError('Analysis timed out — try a shorter clip (under 10 minutes)');
+          setError('Analysis timed out in the browser — the backend may still finish this ride');
           setAnalysisMeta({
             stage: 'failed',
             headline: 'Analysis timed out',
-            detail: 'Cadence took too long to finish this ride. Try a shorter clip.',
+            detail: `This ride took longer than the browser wait window. If the backend finishes later, reopen it at ${recoveryPath}.`,
             elapsedSec: null,
           });
           return;

@@ -9,6 +9,7 @@ import JourneyPage from "./pages/JourneyPage";
 import RidesPage from "./pages/RidesPage";
 import NotFound from "./pages/NotFound";
 import RideDetailPage2 from "./pages/RideDetailPage2";
+import JobOverlayViewerPage from "./pages/JobOverlayViewerPage";
 import AnalysisShell from "./pages/analysis/AnalysisShell";
 import RideTab from "./pages/analysis/RideTab";
 import ReportTab from "./pages/analysis/ReportTab";
@@ -39,6 +40,9 @@ const App = () => (
 
             {/* Ride detail — single-scroll page */}
             <Route path="/rides/:id" element={<RideDetailPage2 />} />
+
+            {/* Recovery/debug path for completed pose jobs */}
+            <Route path="/jobs/:jobId/view" element={<JobOverlayViewerPage />} />
 
             {/* Progress tab — InsightsTab content promoted to main nav */}
             <Route path="/progress" element={<InsightsTab />} />

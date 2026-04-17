@@ -24,7 +24,9 @@ GPU_TYPE="${GPU_TYPE:-nvidia-l4}"
 GPU_TASKS="${GPU_TASKS:-1}"
 GPU_PARALLELISM="${GPU_PARALLELISM:-1}"
 GPU_TIMEOUT_SECONDS="${GPU_TIMEOUT_SECONDS:-3600}"
-GPU_INFER_BATCH_SIZE="${GPU_INFER_BATCH_SIZE:-4}"
+GPU_INFER_BATCH_SIZE="${GPU_INFER_BATCH_SIZE:-8}"
+GPU_SAMPLE_EVERY_FRAME="${GPU_SAMPLE_EVERY_FRAME:-0}"
+GPU_ADAPTIVE_SAMPLE_MAX_FPS="${GPU_ADAPTIVE_SAMPLE_MAX_FPS:-8}"
 WORKER_SERVICE_ACCOUNT="${WORKER_SERVICE_ACCOUNT:-${NAME_PREFIX//-/}worker@${PROJECT_ID}.iam.gserviceaccount.com}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -115,8 +117,14 @@ spec:
                   value: ${GCS_RESULTS_PREFIX}
                 - name: STRICT_JOB_PERSISTENCE
                   value: "1"
+                - name: WORKER_TIMEOUT_SECONDS
+                  value: "${GPU_TIMEOUT_SECONDS}"
                 - name: INFER_BATCH_SIZE
                   value: "${GPU_INFER_BATCH_SIZE}"
+                - name: SAMPLE_EVERY_FRAME
+                  value: "${GPU_SAMPLE_EVERY_FRAME}"
+                - name: ADAPTIVE_SAMPLE_MAX_FPS
+                  value: "${GPU_ADAPTIVE_SAMPLE_MAX_FPS}"
                 - name: REQUIRE_CUDA
                   value: "1"
               resources:

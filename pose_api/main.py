@@ -37,6 +37,17 @@ logger = logging.getLogger(__name__)
 
 # ── App setup ────────────────────────────────────────────────────────────────
 
+
+def _env_int(name: str, default: int, minimum: int = 0) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return max(minimum, int(raw))
+    except Exception:
+        logger.warning("[config] Invalid integer for %s=%r; using default=%d", name, raw, default)
+        return default
+
 app = FastAPI(
     title="Horsera Pose API",
     description=(
@@ -64,8 +75,8 @@ GCS_UPLOAD_PREFIX = os.environ.get("GCS_UPLOAD_PREFIX", "uploads").strip("/") or
 GCS_SAVED_PREFIX = os.environ.get("GCS_SAVED_PREFIX", "saved-rides").strip("/") or "saved-rides"
 GCS_RESULTS_PREFIX = os.environ.get("GCS_RESULTS_PREFIX", "job-results").strip("/") or "job-results"
 GCS_SIGNING_SERVICE_ACCOUNT_EMAIL = os.environ.get("GCS_SIGNING_SERVICE_ACCOUNT_EMAIL", "").strip()
-SIGNED_URL_TTL_SECONDS = int(os.environ.get("SIGNED_URL_TTL_SECONDS", "900"))
-READ_URL_TTL_SECONDS = int(os.environ.get("READ_URL_TTL_SECONDS", "900"))
+SIGNED_URL_TTL_SECONDS = _env_int("SIGNED_URL_TTL_SECONDS", 900, minimum=60)
+READ_URL_TTL_SECONDS = _env_int("READ_URL_TTL_SECONDS", 900, minimum=60)
 JOB_STORE_BACKEND = os.environ.get("JOB_STORE_BACKEND", "memory").strip().lower()
 FIRESTORE_COLLECTION = os.environ.get("FIRESTORE_COLLECTION", "pose_jobs").strip() or "pose_jobs"
 EXECUTION_BACKEND = os.environ.get("EXECUTION_BACKEND", "inline").strip().lower()
@@ -76,6 +87,8 @@ CLOUD_RUN_CPU_JOB = os.environ.get("CLOUD_RUN_CPU_JOB", "").strip()
 CLOUD_RUN_GPU_JOB = os.environ.get("CLOUD_RUN_GPU_JOB", "").strip()
 PRELOAD_MODELS = os.environ.get("PRELOAD_MODELS", "").strip().lower()
 STRICT_JOB_PERSISTENCE = os.environ.get("STRICT_JOB_PERSISTENCE", "").strip().lower()
+WORKER_TIMEOUT_SECONDS = _env_int("WORKER_TIMEOUT_SECONDS", 3600, minimum=0)
+STALE_JOB_GRACE_SECONDS = _env_int("STALE_JOB_GRACE_SECONDS", 90, minimum=0)
 
 _gcs_client = None
 _firestore_client = None
@@ -131,6 +144,84 @@ def _get_job(job_id: str) -> dict:
         return job
 
     raise HTTPException(404, f"Job {job_id!r} not found")
+
+
+def _coerce_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        parsed = float(value)
+        if math.isfinite(parsed):
+            return parsed
+    except Exception:
+        return None
+    return None
+
+
+def _job_started_at(job: dict) -> float | None:
+    timings = job.get("timings")
+    if isinstance(timings, dict):
+        for key in ("worker_started_at", "analysis_started_at"):
+            parsed = _coerce_float(timings.get(key))
+            if parsed is not None and parsed > 0:
+                return parsed
+    for key in ("started_at", "created_at"):
+        parsed = _coerce_float(job.get(key))
+        if parsed is not None and parsed > 0:
+            return parsed
+    return None
+
+
+def _job_timeout_seconds(job: dict) -> int:
+    stored = job.get("worker_timeout_seconds")
+    parsed = _coerce_float(stored)
+    if parsed is None or parsed <= 0:
+        return WORKER_TIMEOUT_SECONDS
+    return max(0, int(parsed))
+
+
+def _maybe_mark_job_failed_if_stale(job_id: str, job: dict) -> dict:
+    status = job.get("status")
+    if status not in (JobStatus.PENDING, JobStatus.PROCESSING):
+        return job
+    if str(job.get("dispatch_backend") or "").strip() != "cloud_run_job":
+        return job
+
+    started_at = _job_started_at(job)
+    timeout_seconds = _job_timeout_seconds(job)
+    if started_at is None or timeout_seconds <= 0:
+        return job
+
+    now = time.time()
+    deadline = started_at + timeout_seconds + STALE_JOB_GRACE_SECONDS
+    if now <= deadline:
+        return job
+
+    timings = dict(job.get("timings") or {})
+    timings["worker_total_seconds"] = _round_seconds(now - started_at)
+    timings["stale_marked_at"] = now
+    minutes = max(1, int(round(timeout_seconds / 60.0)))
+    error = (
+        str(job.get("error") or "").strip()
+        or f"Analysis exceeded the Cloud Run worker timeout ({minutes} min) before it could finish."
+    )
+    updates = {
+        "status": JobStatus.FAILED,
+        "stage": "failed",
+        "error": error,
+        "completed_at": now,
+        "timings": timings,
+    }
+    logger.warning(
+        "[job-timeout] marking stale job %s as failed after %.1fs (timeout=%ss)",
+        job_id,
+        now - started_at,
+        timeout_seconds,
+    )
+    _update_job(job_id, **updates)
+    failed_job = dict(job)
+    failed_job.update(updates)
+    return failed_job
 
 
 def _update_job(job_id: str, **kwargs) -> None:
@@ -558,7 +649,7 @@ def _result_storage_enabled() -> bool:
     return _is_firestore_enabled() and bool(GCS_UPLOAD_BUCKET)
 
 
-def _store_result_in_gcs(job_id: str, result_dict: dict) -> str:
+def _store_result_in_gcs(job_id: str, result_dict: dict) -> tuple[str, int, int]:
     if not GCS_UPLOAD_BUCKET:
         raise RuntimeError("GCS_UPLOAD_BUCKET is required to store result payloads externally")
 
@@ -578,7 +669,15 @@ def _store_result_in_gcs(job_id: str, result_dict: dict) -> str:
     blob.content_encoding = "gzip"
     blob.cache_control = "no-store"
     blob.upload_from_string(compressed, content_type="application/json")
-    return object_path
+    logger.info(
+        "[result-store] job=%s path=%s raw_bytes=%d gzip_bytes=%d compression_ratio=%.3f",
+        job_id,
+        object_path,
+        len(payload_bytes),
+        len(compressed),
+        (len(compressed) / len(payload_bytes)) if payload_bytes else 0.0,
+    )
+    return object_path, len(payload_bytes), len(compressed)
 
 
 def _load_result_from_gcs(object_path: str) -> dict:
@@ -701,7 +800,11 @@ def _process_video(
         result_storage = "inline"
         result_for_store = result_dict
         if _result_storage_enabled():
-            result_object_path = _store_result_in_gcs(job_id, result_dict)
+            (
+                result_object_path,
+                timing_data["result_payload_bytes"],
+                timing_data["result_payload_gzip_bytes"],
+            ) = _store_result_in_gcs(job_id, result_dict)
             result_for_store = _inline_result_for_job_store(result_dict)
             result_storage = "gcs"
         persistence_done = time.time()
@@ -995,6 +1098,7 @@ def analyze_video_object_endpoint(
                 dispatch_backend="cloud_run_job",
                 worker_job_name=job_name,
                 worker_operation=op_name,
+                worker_timeout_seconds=WORKER_TIMEOUT_SECONDS,
             )
             logger.info(f"Queued Cloud Run job {job_id} via {job_name} ({op_name})")
         except Exception as exc:
@@ -1092,6 +1196,7 @@ def get_job(job_id: str) -> JSONResponse:
     }
     """
     job = _hydrate_job_result(_get_job(job_id))
+    job = _maybe_mark_job_failed_if_stale(job_id, job)
     # Don't expose the internal tmp path
     return JSONResponse({k: v for k, v in job.items() if k not in ("tmp_path",)})
 
