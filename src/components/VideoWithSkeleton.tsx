@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useMemo } from 'react';
+import { useRef, useState, useEffect, useMemo, type CSSProperties } from 'react';
 import type { TimestampedFrame } from '../hooks/useVideoAnalysis';
 import { hasPoseFrame, resolvePoseFrameAtTime } from '../lib/videoPlayback';
 
@@ -122,6 +122,40 @@ export default function VideoWithSkeleton({ videoUrl, keyframes, biometrics }: V
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [ghostOn, setGhostOn] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [stageAspectRatio, setStageAspectRatio] = useState(16 / 9);
+  const [fullscreenSupported, setFullscreenSupported] = useState(false);
+
+  useEffect(() => {
+    setStageAspectRatio(16 / 9);
+  }, [videoUrl]);
+
+  useEffect(() => {
+    const wrapper = wrapperRef.current as (HTMLDivElement & {
+      requestFullscreen?: () => Promise<void>;
+      webkitRequestFullscreen?: () => Promise<void>;
+    }) | null;
+    setFullscreenSupported(!!(wrapper?.requestFullscreen || wrapper?.webkitRequestFullscreen));
+  }, [videoUrl]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const updateAspectRatio = () => {
+      if (video.videoWidth > 0 && video.videoHeight > 0) {
+        setStageAspectRatio(video.videoWidth / video.videoHeight);
+      }
+    };
+
+    video.addEventListener('loadedmetadata', updateAspectRatio);
+    video.addEventListener('loadeddata', updateAspectRatio);
+    updateAspectRatio();
+
+    return () => {
+      video.removeEventListener('loadedmetadata', updateAspectRatio);
+      video.removeEventListener('loadeddata', updateAspectRatio);
+    };
+  }, [videoUrl]);
 
   // Fullscreen: request on the wrapper so skeleton + overlays stay visible.
   // Handles webkit-prefixed API for iOS Safari.
@@ -160,13 +194,43 @@ export default function VideoWithSkeleton({ videoUrl, keyframes, biometrics }: V
     }).frame;
   }, [keyframes]);
 
+  const inlineMaxStageHeight = 'min(78dvh, 860px)';
+  const inlineStageWidth = `min(100%, calc(${inlineMaxStageHeight} * ${stageAspectRatio}))`;
+  const overlayTop = isFullscreen ? 'calc(env(safe-area-inset-top, 0px) + 16px)' : 10;
+  const overlayBottom = isFullscreen ? 'calc(env(safe-area-inset-bottom, 0px) + 18px)' : 56;
+  const legendLeft = isFullscreen ? 'calc(env(safe-area-inset-left, 0px) + 16px)' : 12;
+  const actionRight = isFullscreen ? 'calc(env(safe-area-inset-right, 0px) + 16px)' : 12;
+  const actionButtonSize = isFullscreen ? 42 : 36;
+  const actionButtonRadius = actionButtonSize / 2;
+  const stageStyle: CSSProperties = {
+    position: 'relative',
+    width: isFullscreen ? '100%' : inlineStageWidth,
+    maxWidth: '100%',
+    margin: isFullscreen ? undefined : '0 auto',
+    aspectRatio: isFullscreen ? undefined : stageAspectRatio,
+    height: isFullscreen ? '100%' : undefined,
+    maxHeight: isFullscreen ? undefined : inlineMaxStageHeight,
+    background: '#000',
+    overflow: 'hidden',
+    borderRadius: isFullscreen ? 0 : 18,
+    boxShadow: isFullscreen ? 'none' : '0 16px 40px rgba(16, 10, 7, 0.18)',
+  };
+  const fullscreenButtonPosition: CSSProperties = isFullscreen
+    ? { top: overlayTop, right: actionRight }
+    : { bottom: overlayBottom, right: actionRight };
+  const ghostButtonPosition: CSSProperties = isFullscreen
+    ? { top: 'calc(env(safe-area-inset-top, 0px) + 64px)', right: actionRight }
+    : { bottom: overlayBottom, left: 12 };
+
   useEffect(() => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (!video || !canvas || !keyframes.length) return;
+    const wrapper = wrapperRef.current;
+    if (!video || !canvas || !wrapper || !keyframes.length) return;
 
     let rafId: number | null = null;
     let videoFrameId: number | null = null;
+    let resizeObserver: ResizeObserver | null = null;
 
     const cancelScheduledDraw = () => {
       if (rafId !== null) {
@@ -187,9 +251,11 @@ export default function VideoWithSkeleton({ videoUrl, keyframes, biometrics }: V
       if (!ctx) return;
 
       const rect = canvas.getBoundingClientRect();
-      if (canvas.width !== rect.width || canvas.height !== rect.height) {
-        canvas.width = rect.width;
-        canvas.height = rect.height;
+      const width = Math.max(1, Math.round(rect.width));
+      const height = Math.max(1, Math.round(rect.height));
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
       }
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -248,6 +314,17 @@ export default function VideoWithSkeleton({ videoUrl, keyframes, biometrics }: V
     video.addEventListener('seeked', handleSeeked);
     video.addEventListener('loadeddata', handleLoadedData);
     video.addEventListener('loadedmetadata', handleLoadedData);
+
+    const handleResize = () => draw(video.currentTime);
+    window.addEventListener('resize', handleResize);
+
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => {
+        draw(video.currentTime);
+      });
+      resizeObserver.observe(wrapper);
+    }
+
     draw(video.currentTime);
     if (!video.paused && !video.ended) {
       scheduleDraw();
@@ -260,54 +337,135 @@ export default function VideoWithSkeleton({ videoUrl, keyframes, biometrics }: V
       video.removeEventListener('seeked', handleSeeked);
       video.removeEventListener('loadeddata', handleLoadedData);
       video.removeEventListener('loadedmetadata', handleLoadedData);
+      window.removeEventListener('resize', handleResize);
+      resizeObserver?.disconnect();
     };
-  }, [keyframes, ghostOn, ghostFrame, biometrics]);
+  }, [keyframes, ghostOn, ghostFrame, biometrics, isFullscreen]);
 
   // No keyframes — plain video fallback
   if (!keyframes.length) {
     return (
-      <video
-        src={videoUrl}
-        controls
-        playsInline
-        style={{ width: '100%', aspectRatio: '16/9', background: '#000', display: 'block' }}
-      />
+      <div
+        ref={wrapperRef}
+        style={stageStyle}
+        onDoubleClick={toggleFullscreen}
+      >
+        <video
+          ref={videoRef}
+          src={videoUrl}
+          controls
+          playsInline
+          controlsList="nofullscreen nodownload"
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: 'contain',
+            display: 'block',
+            background: '#000',
+          }}
+        />
+        <div
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            inset: 0,
+            pointerEvents: 'none',
+            background: isFullscreen
+              ? 'linear-gradient(180deg, rgba(0,0,0,0.50) 0%, rgba(0,0,0,0.14) 16%, rgba(0,0,0,0) 28%, rgba(0,0,0,0) 68%, rgba(0,0,0,0.16) 84%, rgba(0,0,0,0.48) 100%)'
+              : 'linear-gradient(180deg, rgba(0,0,0,0.34) 0%, rgba(0,0,0,0.10) 16%, rgba(0,0,0,0) 28%, rgba(0,0,0,0) 72%, rgba(0,0,0,0.24) 100%)',
+          }}
+        />
+        {fullscreenSupported ? (
+          <button
+            type="button"
+            onClick={toggleFullscreen}
+            aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+            title={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+            style={{
+              position: 'absolute',
+              zIndex: 10,
+              width: actionButtonSize,
+              height: actionButtonSize,
+              borderRadius: actionButtonRadius,
+              border: '1px solid rgba(255,255,255,0.22)',
+              background: 'rgba(0,0,0,0.55)',
+              color: 'rgba(255,255,255,0.9)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              backdropFilter: 'blur(4px)',
+              ...fullscreenButtonPosition,
+            }}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              {isFullscreen ? (
+                <>
+                  <path d="M9 15H5v4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M15 15h4v4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M9 9H5V5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M15 9h4V5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                </>
+              ) : (
+                <>
+                  <path d="M9 3H5v4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M15 3h4v4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M9 21H5v-4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M15 21h4v-4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                </>
+              )}
+            </svg>
+          </button>
+        ) : null}
+      </div>
     );
   }
 
   return (
     <div
       ref={wrapperRef}
-      style={{
-        position: 'relative', width: '100%',
-        aspectRatio: isFullscreen ? undefined : '16/9',
-        height: isFullscreen ? '100%' : undefined,
-        background: '#000',
-      }}
+      style={stageStyle}
+      onDoubleClick={toggleFullscreen}
     >
       <video
         ref={videoRef}
         src={videoUrl}
         controls
         playsInline
-        controlsList="nodownload"
+        controlsList="nofullscreen nodownload"
         // @ts-ignore — webkit-specific attribute for iOS Safari inline fullscreen
         webkit-playsinline="true"
         style={{
           position: 'absolute', inset: 0, width: '100%', height: '100%',
           objectFit: 'contain',
+          zIndex: 0,
         }}
       />
       <canvas
         ref={canvasRef}
-        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 1 }}
+      />
+      <div
+        aria-hidden="true"
+        style={{
+          position: 'absolute',
+          inset: 0,
+          zIndex: 2,
+          pointerEvents: 'none',
+          background: isFullscreen
+            ? 'linear-gradient(180deg, rgba(0,0,0,0.50) 0%, rgba(0,0,0,0.14) 16%, rgba(0,0,0,0) 28%, rgba(0,0,0,0) 68%, rgba(0,0,0,0.16) 84%, rgba(0,0,0,0.48) 100%)'
+            : 'linear-gradient(180deg, rgba(0,0,0,0.34) 0%, rgba(0,0,0,0.10) 16%, rgba(0,0,0,0) 28%, rgba(0,0,0,0) 72%, rgba(0,0,0,0.24) 100%)',
+        }}
       />
 
       {/* Color legend */}
       <div style={{
-        position: 'absolute', top: 10, left: 12, zIndex: 10,
-        background: 'rgba(0,0,0,0.6)', borderRadius: 16, padding: '4px 12px',
-        display: 'flex', gap: 12, fontSize: 10, fontWeight: 500,
+        position: 'absolute', top: overlayTop, left: legendLeft, zIndex: 10,
+        background: 'rgba(0,0,0,0.6)', borderRadius: 16, padding: isFullscreen ? '8px 14px' : '4px 12px',
+        display: 'flex', gap: isFullscreen ? 14 : 12, fontSize: isFullscreen ? 11 : 10, fontWeight: 500,
+        maxWidth: isFullscreen ? 'min(calc(100% - 32px), 420px)' : 'calc(100% - 24px)',
+        flexWrap: 'wrap',
+        backdropFilter: 'blur(8px)',
       }}>
         {[
           { color: '#5B9E56', label: 'On target' },
@@ -325,14 +483,17 @@ export default function VideoWithSkeleton({ videoUrl, keyframes, biometrics }: V
       <button
         onClick={() => setGhostOn(g => !g)}
         style={{
-          position: 'absolute', bottom: 56, left: 12, zIndex: 10,
+          position: 'absolute',
+          zIndex: 10,
           display: 'flex', alignItems: 'center', gap: 7,
           background: ghostOn ? 'rgba(160,200,255,0.18)' : 'rgba(0,0,0,0.55)',
           border: `1px solid ${ghostOn ? 'rgba(160,200,255,0.6)' : 'rgba(255,255,255,0.2)'}`,
-          borderRadius: 20, padding: '5px 12px',
+          borderRadius: 20, padding: isFullscreen ? '8px 14px' : '5px 12px',
           color: ghostOn ? 'rgba(200,225,255,0.9)' : 'rgba(255,255,255,0.5)',
-          fontSize: 11, fontWeight: 500, cursor: 'pointer',
+          fontSize: isFullscreen ? 12 : 11, fontWeight: 500, cursor: 'pointer',
           fontFamily: "'DM Sans', sans-serif",
+          backdropFilter: 'blur(8px)',
+          ...ghostButtonPosition,
         }}
       >
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
@@ -341,6 +502,49 @@ export default function VideoWithSkeleton({ videoUrl, keyframes, biometrics }: V
         </svg>
         {ghostOn ? 'Ghost On ✓' : 'Ghost Rider'}
       </button>
+
+      {fullscreenSupported ? (
+        <button
+          type="button"
+          onClick={toggleFullscreen}
+          aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+          title={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+          style={{
+            position: 'absolute',
+            zIndex: 10,
+            width: actionButtonSize,
+            height: actionButtonSize,
+            borderRadius: actionButtonRadius,
+            border: '1px solid rgba(255,255,255,0.22)',
+            background: 'rgba(0,0,0,0.55)',
+            color: 'rgba(255,255,255,0.9)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            backdropFilter: 'blur(4px)',
+            ...fullscreenButtonPosition,
+          }}
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            {isFullscreen ? (
+              <>
+                <path d="M9 15H5v4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M15 15h4v4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M9 9H5V5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M15 9h4V5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+              </>
+            ) : (
+              <>
+                <path d="M9 3H5v4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M15 3h4v4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M9 21H5v-4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M15 21h4v-4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+              </>
+            )}
+          </svg>
+        </button>
+      ) : null}
     </div>
   );
 }
