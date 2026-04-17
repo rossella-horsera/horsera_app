@@ -8,21 +8,33 @@ function poseFrame(x: number) {
   ];
 }
 
-function makeFrame(time: number, x: number | null, sampleIntervalSec = 0.25): TimestampedFrame {
+function makeFrame(time: number, x: number | null, sampleIntervalSec = 0.25, sampleIndex?: number): TimestampedFrame {
   return {
     time,
     frame: x === null ? null : poseFrame(x),
     detected: x !== null,
     sampleIntervalSec,
+    sampleIndex,
   };
 }
 
 describe('videoPlayback timing helpers', () => {
-  it('interpolates across a single missing sample slot when the gap is small', () => {
+  it('does not interpolate across an explicit missing sample slot', () => {
     const frames = [
-      makeFrame(0.0, 0.2),
-      makeFrame(0.25, null),
-      makeFrame(0.5, 0.8),
+      makeFrame(0.0, 0.2, 0.25, 0),
+      makeFrame(0.25, null, 0.25, 1),
+      makeFrame(0.5, 0.8, 0.25, 2),
+    ];
+
+    const resolved = resolvePoseFrameAtTime(frames, 0.25);
+
+    expect(resolved).toBeNull();
+  });
+
+  it('interpolates across adjacent valid samples when there is no explicit missing slot', () => {
+    const frames = [
+      makeFrame(0.0, 0.2, 0.25, 0),
+      makeFrame(0.5, 0.8, 0.25, 1),
     ];
 
     const resolved = resolvePoseFrameAtTime(frames, 0.25);

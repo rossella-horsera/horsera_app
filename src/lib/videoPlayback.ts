@@ -64,6 +64,19 @@ function interpolatePoseFrame(left: PoseFrame, right: PoseFrame, ratio: number):
   });
 }
 
+function hasExplicitMissingGap(
+  previous: TimestampedFrame | null,
+  next: TimestampedFrame | null,
+): boolean {
+  if (!previous || !next) {
+    return false;
+  }
+  if (typeof previous.sampleIndex === 'number' && typeof next.sampleIndex === 'number') {
+    return (next.sampleIndex - previous.sampleIndex) > 1;
+  }
+  return false;
+}
+
 export function resolvePoseFrameAtTime(frames: TimestampedFrame[], time: number): PoseFrame | null {
   const validFrames = frames.filter(hasPoseFrame);
   if (validFrames.length === 0) {
@@ -76,6 +89,7 @@ export function resolvePoseFrameAtTime(frames: TimestampedFrame[], time: number)
   const insertIdx = findFirstIndexAtOrAfter(validFrames, time);
   const previous = insertIdx > 0 ? validFrames[insertIdx - 1] : null;
   const next = insertIdx < validFrames.length ? validFrames[insertIdx] : null;
+  const explicitMissingGap = hasExplicitMissingGap(previous, next);
 
   if (previous && Math.abs(previous.time - time) <= 1e-6) {
     return previous.frame;
@@ -86,6 +100,9 @@ export function resolvePoseFrameAtTime(frames: TimestampedFrame[], time: number)
 
   if (previous && next && previous.time < time && time < next.time) {
     const gap = next.time - previous.time;
+    if (explicitMissingGap) {
+      return null;
+    }
     if (gap <= interpolationGapThreshold) {
       const ratio = (time - previous.time) / Math.max(gap, 1e-6);
       return interpolatePoseFrame(previous.frame, next.frame, ratio);
