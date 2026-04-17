@@ -56,6 +56,7 @@ def _env_int(name: str, default: int, minimum: int = 1) -> int:
 
 SAMPLE_FPS       = _env_int("SAMPLE_FPS", 3)         # default sampling rate for full-video analysis
 INFER_BATCH_SIZE = _env_int("INFER_BATCH_SIZE", 1)   # max sampled frames per ONNX inference call
+MISSING_HORSE_GRACE_FRAMES = _env_int("MISSING_HORSE_GRACE_FRAMES", 2, minimum=0)
 
 # Keypoint indices for occlusion handling
 LEFT_BODY = [5, 7, 9, 11, 13, 15]    # left shoulder through ankle
@@ -349,6 +350,7 @@ class SmartCropper:
         jump_threshold: float = CROP_JUMP_THRESHOLD,
         output_height: int = CROP_OUTPUT_HEIGHT,
         use_smoothing: bool = True,
+        max_missing_frames: int = MISSING_HORSE_GRACE_FRAMES,
     ):
         self.padding_factor = padding_factor
         self.top_padding = top_padding
@@ -356,15 +358,26 @@ class SmartCropper:
         self.jump_threshold = jump_threshold
         self.output_height = output_height
         self.use_smoothing = use_smoothing
+        self.max_missing_frames = max(0, int(max_missing_frames))
 
         # State for EMA smoothing
         self.prev_bbox: Optional[np.ndarray] = None
         self.smoothed_bbox: Optional[np.ndarray] = None
+        self.last_horse_bbox: Optional[np.ndarray] = None
+        self.missing_horse_frames = 0
 
     def reset(self) -> None:
         """Reset smoothing state (call when starting a new video)."""
         self.prev_bbox = None
         self.smoothed_bbox = None
+        self.last_horse_bbox = None
+        self.missing_horse_frames = 0
+
+    def active_horse_bbox(self) -> Optional[Tuple[int, int, int, int]]:
+        """Return the latest horse bbox while the cropper is still within the missing-horse grace window."""
+        if self.last_horse_bbox is None or self.missing_horse_frames > self.max_missing_frames:
+            return None
+        return tuple(self.last_horse_bbox.astype(int))
 
     def _expand_bbox(
         self,
@@ -447,13 +460,21 @@ class SmartCropper:
         if horse_bbox is None:
             horse_bboxes = _horse_bboxes(frame, horse_sess)
             if not horse_bboxes:
-                # Fall back to previous bbox if available (for temporal continuity)
-                if self.smoothed_bbox is not None:
+                self.missing_horse_frames += 1
+                # Keep the last crop only briefly. After that, return no crop so we
+                # don't drift onto a trainer or other person on foot.
+                if (
+                    self.smoothed_bbox is not None
+                    and self.missing_horse_frames <= self.max_missing_frames
+                ):
                     return tuple(self.smoothed_bbox.astype(int))
                 return None
             # Use the largest horse detection
             areas = [(b[2] - b[0]) * (b[3] - b[1]) for b in horse_bboxes]
             horse_bbox = tuple(horse_bboxes[np.argmax(areas)].astype(int))
+
+        self.missing_horse_frames = 0
+        self.last_horse_bbox = np.array(horse_bbox, dtype=float)
 
         # Expand bbox with padding
         expanded = self._expand_bbox(horse_bbox, frame_h, frame_w)
@@ -681,6 +702,14 @@ def _horse_bboxes(frame: np.ndarray, sess) -> list[np.ndarray]:
     return _horse_bboxes_batch([frame], sess)[0]
 
 
+def _primary_horse_bbox(horse_boxes: list[np.ndarray]) -> Optional[Tuple[int, int, int, int]]:
+    """Pick the largest detected horse box as the crop/selection reference for a frame."""
+    if not horse_boxes:
+        return None
+    areas = [(b[2] - b[0]) * (b[3] - b[1]) for b in horse_boxes]
+    return tuple(horse_boxes[int(np.argmax(areas))].astype(int))
+
+
 # ── Pose Estimation ───────────────────────────────────────────────────────────
 
 def _decode_pose_keypoints(pred: np.ndarray, ratio: float, dw: float, dh: float, W: int, H: int) -> list[np.ndarray]:
@@ -761,55 +790,51 @@ def _run_inference_batch(
         pose_batch = _run_pose_batch(frames, pose_sess)
         selected: list[Optional[np.ndarray]] = []
         for kps_list, horse_boxes in zip(pose_batch, horse_boxes_batch):
-            kps = extract_keypoints(kps_list)
-            if kps is not None and horse_boxes and not _rider_overlaps_horse(kps, horse_boxes):
-                kps = None
-            selected.append(kps)
+            selected.append(_select_mounted_rider(
+                kps_list,
+                crop_region=None,
+                horse_bbox=_primary_horse_bbox(horse_boxes),
+            ))
         return selected, horse_count, 0
 
     crop_count = 0
     pose_inputs: list[np.ndarray] = []
+    pose_input_indices: list[int] = []
     crop_regions: list[Optional[Tuple[int, int, int, int]]] = []
+    active_horse_bboxes: list[Optional[Tuple[int, int, int, int]]] = []
     crop_scales: list[float] = []
     crop_offsets: list[Tuple[int, int]] = []
 
     # Build crop inputs sequentially so EMA smoothing remains temporally consistent.
-    for frame, horse_boxes in zip(frames, horse_boxes_batch):
-        if horse_boxes:
-            areas = [(b[2] - b[0]) * (b[3] - b[1]) for b in horse_boxes]
-            horse_bbox = tuple(horse_boxes[int(np.argmax(areas))].astype(int))
-            frame_h, frame_w = frame.shape[:2]
-            expanded = cropper._expand_bbox(horse_bbox, frame_h, frame_w)
-            crop_region = cropper._smooth_bbox(expanded, frame_h, frame_w)
-        else:
-            # No horse in this frame: keep temporal continuity if we have history,
-            # otherwise fall back to full-frame pose.
-            if cropper.smoothed_bbox is not None:
-                crop_region = tuple(cropper.smoothed_bbox.astype(int))
-            else:
-                crop_region = None
+    for frame_idx, (frame, horse_boxes) in enumerate(zip(frames, horse_boxes_batch)):
+        horse_bbox = _primary_horse_bbox(horse_boxes)
+        crop_region = cropper.get_crop_region(frame, horse_sess, horse_bbox)
         crop_regions.append(crop_region)
+        active_horse_bboxes.append(cropper.active_horse_bbox())
 
-        if crop_region is not None:
-            crop_count += 1
-            cropped_frame, scale, offset = cropper.crop_and_scale(frame, crop_region)
-            pose_inputs.append(cropped_frame)
-            crop_scales.append(scale)
-            crop_offsets.append(offset)
-        else:
-            # Fall back to full-frame pose inference.
-            pose_inputs.append(frame)
-            crop_scales.append(1.0)
-            crop_offsets.append((0, 0))
+        if crop_region is None:
+            continue
 
-    pose_batch = _run_pose_batch(pose_inputs, pose_sess)
-    selected: list[Optional[np.ndarray]] = []
-    for kps_list, crop_region, scale, offset in zip(pose_batch, crop_regions, crop_scales, crop_offsets):
-        if crop_region is not None:
-            transformed = [cropper.transform_keypoints_to_original(kps, scale, offset) for kps in kps_list]
-        else:
-            transformed = kps_list
-        selected.append(_select_mounted_rider(transformed, crop_region))
+        crop_count += 1
+        cropped_frame, scale, offset = cropper.crop_and_scale(frame, crop_region)
+        pose_inputs.append(cropped_frame)
+        pose_input_indices.append(frame_idx)
+        crop_scales.append(scale)
+        crop_offsets.append(offset)
+
+    pose_batch = _run_pose_batch(pose_inputs, pose_sess) if pose_inputs else []
+    selected: list[Optional[np.ndarray]] = [None] * len(frames)
+    for batch_idx, frame_idx in enumerate(pose_input_indices):
+        kps_list = pose_batch[batch_idx]
+        crop_region = crop_regions[frame_idx]
+        scale = crop_scales[batch_idx]
+        offset = crop_offsets[batch_idx]
+        transformed = [cropper.transform_keypoints_to_original(kps, scale, offset) for kps in kps_list]
+        selected[frame_idx] = _select_mounted_rider(
+            transformed,
+            crop_region=crop_region,
+            horse_bbox=active_horse_bboxes[frame_idx],
+        )
 
     return selected, horse_count, crop_count
 
@@ -819,7 +844,11 @@ def _run_pose_with_crop(
     pose_sess,
     horse_sess,
     cropper: SmartCropper,
-) -> Tuple[list[np.ndarray], Optional[Tuple[int, int, int, int]]]:
+) -> Tuple[
+    list[np.ndarray],
+    Optional[Tuple[int, int, int, int]],
+    Optional[Tuple[int, int, int, int]],
+]:
     """
     Run pose estimation with smart cropping for improved accuracy.
 
@@ -829,15 +858,18 @@ def _run_pose_with_crop(
     4. Transform keypoints back to original frame coordinates
 
     Returns:
-        (keypoints_list, crop_region): List of (17, 3) keypoint arrays in original
-        frame coordinates, and the crop region used (for debugging/visualization)
+        (keypoints_list, crop_region, horse_bbox): List of (17, 3) keypoint arrays
+        in original frame coordinates, the crop region used, and the horse bbox
+        used to validate that the selected person is actually mounted.
     """
     # Get crop region (uses horse detection internally)
     crop_region = cropper.get_crop_region(frame, horse_sess)
+    horse_bbox = cropper.active_horse_bbox()
 
-    if crop_region is None:
-        # No horse detected and no fallback - run on full frame
-        return _run_pose(frame, pose_sess), None
+    if crop_region is None or horse_bbox is None:
+        # Mounted analysis only: if we do not have a horse reference, do not run
+        # full-frame pose, because that often latches onto a trainer on foot.
+        return [], None, None
 
     # Crop and scale up
     cropped_frame, scale, offset = cropper.crop_and_scale(frame, crop_region)
@@ -850,76 +882,42 @@ def _run_pose_with_crop(
     for kps in kps_list:
         transformed.append(cropper.transform_keypoints_to_original(kps, scale, offset))
 
-    return transformed, crop_region
+    return transformed, crop_region, horse_bbox
 
 
 def _select_mounted_rider(
     kps_list: list[np.ndarray],
     crop_region: Optional[Tuple[int, int, int, int]],
+    horse_bbox: Optional[Tuple[int, int, int, int]] = None,
 ) -> Optional[np.ndarray]:
     """
     Select the person most likely to be the mounted rider.
 
-    Uses the "mounted rider priority" heuristic: prefer the person whose hip
-    centroid is in the upper portion of the crop region (rider on horse vs
-    person standing on ground).
-
-    Falls back to APS v4 scoring if no clear mounted rider is found.
+    Mounted analysis is stricter than generic person tracking: candidates must
+    look plausible relative to the crop region and, when available, the horse
+    bbox itself. If no candidate looks mounted, return None instead of falling
+    back to the "best person" in frame.
     """
-    if not kps_list:
+    if not kps_list or (crop_region is None and horse_bbox is None):
         return None
 
-    if len(kps_list) == 1:
-        kps = kps_list[0]
-        _, valid = aps_v4(kps)
-        return kps if valid else None
-
-    # Use crop region height as reference, or fall back to y-coordinate analysis
-    if crop_region is not None:
-        crop_y1, crop_y2 = crop_region[1], crop_region[3]
-        crop_h = crop_y2 - crop_y1
-        upper_threshold = crop_y1 + crop_h * 0.6  # Upper 60% of crop
-    else:
-        # Fall back to using the minimum hip y-coordinate as reference
-        all_hip_y = []
-        for kps in kps_list:
-            lh = kps[KP["left_hip"]]
-            rh = kps[KP["right_hip"]]
-            if lh[2] >= CONF_THRESH and rh[2] >= CONF_THRESH:
-                all_hip_y.append((lh[1] + rh[1]) / 2)
-        if all_hip_y:
-            upper_threshold = min(all_hip_y) + (max(all_hip_y) - min(all_hip_y)) * 0.6
-        else:
-            upper_threshold = float('inf')
-
-    # Find candidates in upper portion (mounted riders)
-    candidates = []
+    candidates: list[tuple[float, float, np.ndarray]] = []
     for kps in kps_list:
-        lh = kps[KP["left_hip"]]
-        rh = kps[KP["right_hip"]]
-        aps_score, valid = aps_v4(kps)
-
-        if not valid:
+        candidate_score = _mounted_candidate_score(
+            kps,
+            crop_region=crop_region,
+            horse_bbox=horse_bbox,
+        )
+        if candidate_score is None:
             continue
-
-        if lh[2] >= CONF_THRESH and rh[2] >= CONF_THRESH:
-            hip_y = (lh[1] + rh[1]) / 2
-            is_upper = hip_y < upper_threshold
-            candidates.append((kps, aps_score, hip_y, is_upper))
-        else:
-            candidates.append((kps, aps_score, float('inf'), False))
+        hip_mid = _pair_midpoint(kps, "left_hip", "right_hip")
+        hip_y = float(hip_mid[1]) if hip_mid is not None else float("inf")
+        candidates.append((candidate_score, -hip_y, kps))
 
     if not candidates:
         return None
 
-    # Prefer upper candidates (mounted riders)
-    upper_candidates = [(kps, score, hip_y) for kps, score, hip_y, is_upper in candidates if is_upper]
-    if upper_candidates:
-        # Among upper candidates, pick the one with lowest hip_y (highest on screen)
-        return min(upper_candidates, key=lambda x: x[2])[0]
-
-    # No upper candidates - fall back to best APS score
-    return max(candidates, key=lambda x: x[1])[0]
+    return max(candidates, key=lambda item: (item[0], item[1]))[2]
 
 
 # ── Horse/rider isolation ─────────────────────────────────────────────────────
@@ -937,6 +935,97 @@ def _rider_overlaps_horse(kps: np.ndarray, horse_bboxes: list[np.ndarray]) -> bo
         if x1 <= hip_x <= x2 and (y1 - pad_y) <= hip_y <= (y2 + pad_y):
             return True
     return False
+
+
+def _pair_midpoint(kps: np.ndarray, left_name: str, right_name: str) -> Optional[np.ndarray]:
+    left = kps[KP[left_name]]
+    right = kps[KP[right_name]]
+    if left[2] < CONF_THRESH or right[2] < CONF_THRESH:
+        return None
+    return np.array([
+        (left[0] + right[0]) / 2,
+        (left[1] + right[1]) / 2,
+    ], dtype=float)
+
+
+def _mounted_candidate_score(
+    kps: np.ndarray,
+    crop_region: Optional[Tuple[int, int, int, int]],
+    horse_bbox: Optional[Tuple[int, int, int, int]],
+) -> Optional[float]:
+    """
+    Score how plausibly this pose belongs to the mounted rider rather than a
+    trainer on foot. Higher is better; None means reject the candidate.
+    """
+    aps_score, valid = aps_v4(kps)
+    if not valid:
+        return None
+
+    hip_mid = _pair_midpoint(kps, "left_hip", "right_hip")
+    shoulder_mid = _pair_midpoint(kps, "left_shoulder", "right_shoulder")
+    if hip_mid is None or shoulder_mid is None:
+        return None
+
+    hip_x = float(hip_mid[0])
+    hip_y = float(hip_mid[1])
+    shoulder_y = float(shoulder_mid[1])
+    score = float(aps_score)
+
+    if crop_region is not None:
+        crop_y1, crop_y2 = crop_region[1], crop_region[3]
+        crop_h = max(float(crop_y2 - crop_y1), 1.0)
+        hip_crop_ratio = (hip_y - crop_y1) / crop_h
+        shoulder_crop_ratio = (shoulder_y - crop_y1) / crop_h
+
+        # Mounted riders sit in the upper portion of the horse crop. People on
+        # the ground tend to place their hips much lower in the crop.
+        if hip_crop_ratio > 0.68:
+            return None
+        if shoulder_crop_ratio > 0.72:
+            return None
+
+        score += max(0.0, 0.68 - hip_crop_ratio) * 0.75
+        score += max(0.0, 0.72 - shoulder_crop_ratio) * 0.25
+
+    if horse_bbox is not None:
+        x1, y1, x2, y2 = [float(v) for v in horse_bbox]
+        horse_w = max(x2 - x1, 1.0)
+        horse_h = max(y2 - y1, 1.0)
+        horse_cx = (x1 + x2) / 2.0
+
+        if not _rider_overlaps_horse(kps, [np.asarray(horse_bbox, dtype=float)]):
+            return None
+
+        hip_rel_y = (hip_y - y1) / horse_h
+        shoulder_rel_y = (shoulder_y - y1) / horse_h
+
+        if hip_x < (x1 - horse_w * 0.18) or hip_x > (x2 + horse_w * 0.18):
+            return None
+        if hip_rel_y < -0.10 or hip_rel_y > 0.68:
+            return None
+        if shoulder_rel_y > 0.75:
+            return None
+
+        horizontal_score = max(0.0, 1.0 - abs(hip_x - horse_cx) / max(horse_w * 0.65, 1.0))
+        vertical_score = max(0.0, 1.0 - abs(hip_rel_y - 0.38) / 0.38)
+        shoulder_score = max(0.0, 1.0 - max(shoulder_rel_y, 0.0) / 0.75)
+        score += horizontal_score * 0.45
+        score += vertical_score * 0.55
+        score += shoulder_score * 0.20
+
+        ankle_y_values = [
+            float(kps[KP[name]][1])
+            for name in ("left_ankle", "right_ankle")
+            if kps[KP[name]][2] >= CONF_THRESH
+        ]
+        if ankle_y_values:
+            ankle_rel_y = (float(np.mean(ankle_y_values)) - y1) / horse_h
+            # Standing people keep both their hips and ankles low in the horse
+            # box. Mounted riders generally do not.
+            if hip_rel_y > 0.55 and ankle_rel_y > 0.95:
+                return None
+
+    return score
 
 
 # ── CAE — Camera-Aware Expectation ────────────────────────────────────────────
@@ -1431,11 +1520,11 @@ def analyze_frame(frame_bgr: np.ndarray, use_smart_crop: bool = True) -> dict:
     if use_smart_crop:
         # Use stateless smart cropping (no EMA smoothing for single frame)
         cropper = SmartCropper(use_smoothing=False)
-        kps_list, crop_region = _run_pose_with_crop(
+        kps_list, crop_region, horse_bbox = _run_pose_with_crop(
             frame_bgr, pose_sess, horse_sess, cropper
         )
         # Use mounted rider selection
-        kps = _select_mounted_rider(kps_list, crop_region)
+        kps = _select_mounted_rider(kps_list, crop_region, horse_bbox)
 
         if kps is None:
             return {"detected": False, "keypoints": None, "apsScore": 0.0}
@@ -1455,15 +1544,15 @@ def analyze_frame(frame_bgr: np.ndarray, use_smart_crop: bool = True) -> dict:
     else:
         # Legacy path: no smart cropping
         horse_boxes = _horse_bboxes(frame_bgr, horse_sess)
-        kps_list    = _run_pose(frame_bgr, pose_sess)
-        kps         = extract_keypoints(kps_list)
+        kps_list = _run_pose(frame_bgr, pose_sess)
+        kps = _select_mounted_rider(
+            kps_list,
+            crop_region=None,
+            horse_bbox=_primary_horse_bbox(horse_boxes),
+        )
 
         if kps is None:
             return {"detected": False, "keypoints": None, "apsScore": 0.0}
-
-        if horse_boxes and not _rider_overlaps_horse(kps, horse_boxes):
-            return {"detected": False, "keypoints": None, "apsScore": 0.0,
-                    "reason": "skeleton_not_on_horse"}
 
         # Apply occlusion detection
         kps, camera_side = process_keypoints_with_occlusion(kps)
