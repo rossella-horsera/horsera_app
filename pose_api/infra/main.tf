@@ -126,11 +126,27 @@ resource "google_storage_bucket_iam_member" "api_upload_creator" {
   member = "serviceAccount:${google_service_account.api.email}"
 }
 
+resource "google_storage_bucket_iam_member" "api_upload_viewer" {
+  count = var.manage_iam_bindings ? 1 : 0
+
+  bucket = google_storage_bucket.uploads.name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.api.email}"
+}
+
 resource "google_storage_bucket_iam_member" "worker_upload_viewer" {
   count = var.manage_iam_bindings ? 1 : 0
 
   bucket = google_storage_bucket.uploads.name
   role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.worker.email}"
+}
+
+resource "google_storage_bucket_iam_member" "worker_upload_creator" {
+  count = var.manage_iam_bindings ? 1 : 0
+
+  bucket = google_storage_bucket.uploads.name
+  role   = "roles/storage.objectCreator"
   member = "serviceAccount:${google_service_account.worker.email}"
 }
 
@@ -194,6 +210,10 @@ resource "google_cloud_run_v2_service" "pose_api" {
         value = "900"
       }
       env {
+        name  = "GCS_RESULTS_PREFIX"
+        value = "job-results"
+      }
+      env {
         name  = "JOB_STORE_BACKEND"
         value = "firestore"
       }
@@ -253,6 +273,7 @@ resource "google_cloud_run_v2_service" "pose_api" {
     google_service_account_iam_member.api_act_as_worker,
     google_service_account_iam_member.api_sign_blob,
     google_storage_bucket_iam_member.api_upload_creator,
+    google_storage_bucket_iam_member.api_upload_viewer,
   ]
 }
 
@@ -302,6 +323,18 @@ resource "google_cloud_run_v2_job" "pose_worker_cpu" {
           name  = "FIRESTORE_COLLECTION"
           value = var.firestore_collection
         }
+        env {
+          name  = "GCS_UPLOAD_BUCKET"
+          value = google_storage_bucket.uploads.name
+        }
+        env {
+          name  = "GCS_RESULTS_PREFIX"
+          value = "job-results"
+        }
+        env {
+          name  = "STRICT_JOB_PERSISTENCE"
+          value = "1"
+        }
         resources {
           limits = {
             cpu    = "2"
@@ -315,6 +348,7 @@ resource "google_cloud_run_v2_job" "pose_worker_cpu" {
   depends_on = [
     google_project_service.required,
     google_storage_bucket_iam_member.worker_upload_viewer,
+    google_storage_bucket_iam_member.worker_upload_creator,
     google_project_iam_member.worker_firestore,
     google_project_iam_member.worker_logs,
   ]
@@ -351,6 +385,18 @@ resource "google_cloud_run_v2_job" "pose_worker_gpu" {
           value = var.firestore_collection
         }
         env {
+          name  = "GCS_UPLOAD_BUCKET"
+          value = google_storage_bucket.uploads.name
+        }
+        env {
+          name  = "GCS_RESULTS_PREFIX"
+          value = "job-results"
+        }
+        env {
+          name  = "STRICT_JOB_PERSISTENCE"
+          value = "1"
+        }
+        env {
           name  = "INFER_BATCH_SIZE"
           value = tostring(var.gpu_infer_batch_size)
         }
@@ -376,6 +422,7 @@ resource "google_cloud_run_v2_job" "pose_worker_gpu" {
   depends_on = [
     google_project_service.required,
     google_storage_bucket_iam_member.worker_upload_viewer,
+    google_storage_bucket_iam_member.worker_upload_creator,
     google_project_iam_member.worker_firestore,
     google_project_iam_member.worker_logs,
   ]

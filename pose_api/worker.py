@@ -26,6 +26,10 @@ def main() -> int:
     # are missing.
     os.environ.setdefault("JOB_STORE_BACKEND", "firestore")
     os.environ.setdefault("FIRESTORE_COLLECTION", "pose_jobs")
+    # A worker run is only useful if its final status reaches the shared job
+    # store. Treat persistence failures as hard failures so the browser doesn't
+    # poll forever on a stale "persisting" document.
+    os.environ.setdefault("STRICT_JOB_PERSISTENCE", "1")
 
     import main as api_main
 
