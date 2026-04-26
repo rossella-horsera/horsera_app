@@ -1,63 +1,31 @@
-# Horsera — Technical Context
+# Horsera - Technical Context
 
-_Last updated: 2026-03-13_
+_Last updated: 2026-04-26_
 
-## Stack
+This file is intentionally short to avoid duplicating the architecture docs.
 
-| Layer | Technology |
-|-------|-----------|
-| Frontend | React + TypeScript, Vite, Tailwind CSS, shadcn/ui |
-| AI/Pose | MoveNet Thunder (TensorFlow.js) |
-| AI Advisor | OpenAI API (Cadence / Rides) |
-| Backend/DB | Firebase Auth + Firestore + GCS |
-| Deployment | PWA at horsera.app |
-| Mobile | Capacitor configured for iOS (future App Store) |
-| Build tool | Lovable |
+## Source Of Truth
 
-## Repo
+- Current implemented architecture: [../docs/current-app-architecture.md](../docs/current-app-architecture.md)
+- Pose API runbook: [../pose_api/README.md](../pose_api/README.md)
+- Vercel proxy setup: [../docs/vercel-pose-proxy.md](../docs/vercel-pose-proxy.md)
+- GCP rollout: [../pose_api/infra/README.md](../pose_api/infra/README.md)
 
-[https://github.com/rossella-horsera/horsera-x-computer](https://github.com/rossella-horsera/horsera-x-computer)
+## Compact Summary
 
-## Key Files
+Horsera is a React/Vite SPA with Firebase-backed ride persistence, GCS-backed video storage, a FastAPI pose-analysis service, optional Vercel proxying to authenticated Cloud Run, and a browser-side Cadence assistant integration.
 
-- `src/utils/poseAnalysis.ts` — Biomechanics metric computation (20+ metrics, formulas, ideal values, feedback ranges)
-- MoveNet Thunder — pose estimation engine for equestrian biomechanics
+The main operational flow is:
 
-## Biomechanics Metrics (from poseAnalysis.ts)
+```txt
+browser video -> signed GCS upload -> pose job -> polling -> pinned saved video -> Firestore ride + keyframe chunks
+```
 
-20+ metrics including:
-- Lower leg stability
-- Rein symmetry / hand movement
-- Core stability
-- Upper body alignment
-- Rhythm, Balance (derived RidingQuality scores)
+## Current Architecture Notes
 
-Metrics have defined ideal values and feedback ranges. RidingQuality scores are aggregates derived from raw biomechanics — best surfaced at ride summary level, not frame-by-frame.
-
-## Architecture Decisions
-
-- **PWA over native app for MVP** — No App Store review friction, instant updates, testers just need a link. Capacitor deferred until native features (push notifications, background processing) are needed.
-- **MoveNet Thunder** — Chosen for real-time performance in browser; handles pose estimation without server round-trips
-- **Firebase + Firestore** — Anonymous auth provides the durable rider UID, Firestore stores ride history, and GCS stores video objects for playback
-- **OpenAI API** — Powers Cadence; needs rider context injected for longitudinal intelligence
-
-## Current Status (as of 2026-03-13)
-
-Active work in progress (tracked in other task window):
-- Real-time biomechanics score overlay on video playback
-- Cadence wired to real LLM with rider context
-- Navigation simplification (video-first flow)
-- Firestore persistence
-- Cadence icon/UX redesign (warm, intelligent, alive — not a vinyl disc)
-
-## Team
-
-- Rossella (founder) — product + technical direction
-- 2 engineer friends helping
-- AI agents (this system) handling development tasks
-
-## Deployment Notes
-
-- Target: barn user testing before 2026-03-30
-- PWA is sufficient for initial testing cohort
-- App Store submission deferred post-MVP validation
+- `usePoseAPI` is the active ride-analysis path.
+- `useVideoAnalysis` is older/local TF.js fallback/demo code.
+- Firestore ride records omit full keyframes; keyframes are chunked and hydrated lazily.
+- Signed playback URLs expire and are refreshed through the pose API.
+- Cadence is not yet behind a server-owned backend boundary.
+- Mock/demo data still exists in some product surfaces and should not be treated as canonical rider state.
