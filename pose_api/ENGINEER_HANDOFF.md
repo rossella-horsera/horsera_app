@@ -20,6 +20,7 @@ Railway and Render files remain in the repo as legacy deployment surfaces. Older
 ## Risks To Keep In Mind
 
 - Pose jobs are the core activation loop; failures after upload are especially damaging.
+- Large-video jobs may feel too slow even when they finish successfully; V1 hardening should investigate both runtime reductions and product flows that hide latency.
 - The service still supports multiple mode combinations, which increases configuration and test complexity.
 - Large result payloads may need GCS offload rather than inline job storage.
 - Firestore-backed job state is preferred for worker-based production execution so browser polling does not depend on API process memory.

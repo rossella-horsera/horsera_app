@@ -427,6 +427,28 @@ This is the core activation loop of the app. If upload succeeds but polling late
 - browser polling can degrade into confusing retry behavior
 - debugging becomes harder because failures may be infrastructure- or memory-driven rather than clean application exceptions
 
+#### Large-video analysis latency is a product risk
+
+**What it is**
+
+Even when the backend completes successfully, larger ride videos can take long enough that the first-time analysis experience feels slow.
+
+**Why it matters**
+
+This is the same activation loop as reliability: the rider has already invested by uploading a video and is waiting for the product's core value. Long waits can feel like failure unless the system either finishes faster or gives the rider a useful way to leave, return, and still trust the outcome.
+
+**Current evidence**
+
+- [src/hooks/usePoseAPI.ts](../src/hooks/usePoseAPI.ts) keeps the browser polling for long-running jobs and includes timeout/recovery handling.
+- [src/pages/JobOverlayViewerPage.tsx](../src/pages/JobOverlayViewerPage.tsx) exists as a recovery/debug path for completed jobs.
+- [pose_api/pipeline.py](../pose_api/pipeline.py) samples and analyzes video frames server-side; larger files and longer durations naturally expand work.
+
+**Operational or product impact**
+
+- users may abandon the analysis screen before completion
+- support/debug flows need to handle jobs that finish after the browser stops waiting
+- V1 hardening should consider both actual runtime reductions and UX strategies that hide latency
+
 #### Execution backend complexity has grown
 
 **What it is**
