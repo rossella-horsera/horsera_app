@@ -158,7 +158,7 @@ There are two analysis-oriented client hooks in the repo:
 Today, `usePoseAPI` is the operational path for the ride-analysis loop. It:
 
 1. creates a local blob URL for immediate playback UX
-2. optionally compresses the selected video in-browser
+2. keeps the original selected video as the upload payload; an older client-compression helper remains in code but is not the active path
 3. requests a signed upload URL
 4. uploads directly to cloud storage
 5. submits a job from the uploaded object path
@@ -279,7 +279,7 @@ sequenceDiagram
   Rider->>Pose: POST /uploads/video-url
   Pose-->>Rider: signed upload URL + object_path
   Rider->>GCS: PUT video bytes directly to signed URL
-  Note over Rider: usePoseAPI may compress in browser first
+  Note over Rider: usePoseAPI currently uploads the original file; Cloud Run handles decode/analysis
 
   Rider->>Pose: POST /analyze/video/object (object_path, filename, size_mb)
   Pose->>Jobs: create pending job
@@ -418,7 +418,7 @@ This is the core activation loop of the app. If upload succeeds but polling late
 
 **Current evidence**
 
-- [pose_api/ENGINEER_HANDOFF.md](../pose_api/ENGINEER_HANDOFF.md) explicitly documents production crashes, Railway 502 behavior, and suspected OOM causes.
+- [pose_api/ENGINEER_HANDOFF.md](../pose_api/ENGINEER_HANDOFF.md) summarizes the current Cloud Run-oriented handoff and the historical Railway/OOM lessons that shaped it.
 - [pose_api/main.py](../pose_api/main.py) contains explicit stale-job handling, eager model preload logic, and multiple fallback code paths shaped by this risk.
 
 **Operational impact**
@@ -450,7 +450,7 @@ Each additional mode increases branching behavior, deployment surface area, and 
 
 - harder test matrix
 - more environment variables to keep aligned
-- easier to create configuration drift between local, Railway, Vercel proxy, and Cloud Run deployments
+- easier to create configuration drift between local, legacy Railway/Render files, Vercel proxy, and Cloud Run deployments
 
 ### 2. Security And Architecture Boundaries
 
@@ -643,7 +643,7 @@ In short: the app already has a real analysis and persistence stack, but the ric
 
 ### Where does a ride video go from browser to analysis to playback?
 
-Browser selects file -> `usePoseAPI` optionally compresses -> requests signed upload URL -> uploads to GCS -> submits object path for analysis -> polls job status -> maps returned keypoints into ride result -> on save, pins the object to the durable saved-rides prefix -> later resolves signed playback URL again when needed.
+Browser selects file -> `usePoseAPI` requests signed upload URL -> uploads the original file to GCS -> submits object path for analysis -> polls job status -> maps returned keypoints into ride result -> on save, pins the object to the durable saved-rides prefix -> later resolves signed playback URL again when needed.
 
 ### Where are ride records, keyframes, and video objects stored?
 
