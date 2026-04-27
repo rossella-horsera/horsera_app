@@ -27,8 +27,15 @@ The service can run jobs inline in the API process or dispatch Cloud Run Job wor
 | `POST` | `/videos/read-url` | Mint a signed playback URL for a saved GCS object |
 | `POST` | `/analyze/video/object` | Start analysis from an uploaded GCS object path |
 | `POST` | `/analyze/video` | Legacy multipart upload path |
-| `GET` | `/jobs/{job_id}` | Poll job status and final result |
+| `GET` | `/jobs/{job_id}` | Poll job status, preview output, and final result |
 | `POST` | `/analyze/frame` | Analyze one base64 frame synchronously |
+
+`GET /jobs/{job_id}` exposes two result surfaces:
+
+- `preview`: provisional first-segment analysis, usually produced before the full ride completes
+- `result`: canonical full-ride analysis, unchanged from the previous final-result flow
+
+The preview uses the same score, insight, and `framesData` shape as the final result so the frontend can render the same report components while clearly labeling it provisional.
 
 ## Local Run
 
@@ -91,10 +98,12 @@ Railway and Render files remain in the repo as older deployment surfaces, but th
 3. Browser calls `POST /analyze/video/object` with the GCS object path.
 4. API creates a job record.
 5. API runs analysis inline or dispatches a Cloud Run Job worker.
-6. Worker updates job status and final results in the job store.
+6. Worker runs an optional preview pass, then updates progress and final results in the job store.
 7. Browser polls `GET /jobs/{job_id}` until status is `complete` or `failed`.
 
 When result payloads are too large for inline job storage, the API can store full results in GCS and hydrate them back into polling responses.
+
+Preview payloads stay on the job record under `preview.result`. They are provisional and should not be saved as canonical ride metrics.
 
 ## Result Shape
 
@@ -169,6 +178,8 @@ Scores are in `[0, 1]`. `framesData` keypoints are normalized to `[0, 1]` coordi
 | `CLOUD_RUN_GPU_JOB` | empty | Cloud Run GPU Job name |
 | `WORKER_TIMEOUT_SECONDS` | `3600` | Expected worker timeout for stale-job detection |
 | `STALE_JOB_GRACE_SECONDS` | `90` | Extra buffer before marking a Cloud Run job stale |
+| `PREVIEW_DURATION_SECONDS` | `60` | First-segment window used for provisional preview analysis before the full ride pass |
+| `PREVIEW_SAMPLE_FPS` | `2` | Preview sampling rate; lower than full analysis to make the first report arrive sooner |
 | `SAMPLE_FPS` | `3` | Default video sampling rate |
 | `SAMPLE_EVERY_FRAME` | `false` | Analyze every decoded input frame instead of sampling |
 | `ADAPTIVE_SAMPLE_MAX_FPS` | `8` | Burst sampling ceiling for motion/tracking changes |

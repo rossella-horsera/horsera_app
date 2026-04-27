@@ -48,6 +48,17 @@ def _env_int(name: str, default: int, minimum: int = 0) -> int:
         logger.warning("[config] Invalid integer for %s=%r; using default=%d", name, raw, default)
         return default
 
+
+def _env_float(name: str, default: float, minimum: float = 0.0) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return max(minimum, float(raw))
+    except Exception:
+        logger.warning("[config] Invalid float for %s=%r; using default=%s", name, raw, default)
+        return default
+
 app = FastAPI(
     title="Horsera Pose API",
     description=(
@@ -89,6 +100,8 @@ PRELOAD_MODELS = os.environ.get("PRELOAD_MODELS", "").strip().lower()
 STRICT_JOB_PERSISTENCE = os.environ.get("STRICT_JOB_PERSISTENCE", "").strip().lower()
 WORKER_TIMEOUT_SECONDS = _env_int("WORKER_TIMEOUT_SECONDS", 3600, minimum=0)
 STALE_JOB_GRACE_SECONDS = _env_int("STALE_JOB_GRACE_SECONDS", 90, minimum=0)
+PREVIEW_DURATION_SECONDS = _env_float("PREVIEW_DURATION_SECONDS", 60.0, minimum=0.0)
+PREVIEW_SAMPLE_FPS = _env_int("PREVIEW_SAMPLE_FPS", 2, minimum=1)
 
 _gcs_client = None
 _firestore_client = None
@@ -502,6 +515,11 @@ def _firestore_upsert_job(job_id: str, payload: dict) -> None:
             result = payload_out.get("result")
             if isinstance(result, dict):
                 payload_out["result"] = _encode_result_for_firestore(result)
+            preview = payload_out.get("preview")
+            if isinstance(preview, dict) and isinstance(preview.get("result"), dict):
+                preview_out = dict(preview)
+                preview_out["result"] = _encode_result_for_firestore(preview_out["result"])
+                payload_out["preview"] = preview_out
         doc_ref.set(payload_out, merge=True)
     except Exception as exc:
         logger.warning(f"[firestore] upsert [{job_id}] failed: {exc}")
@@ -521,6 +539,11 @@ def _firestore_get_job(job_id: str) -> dict | None:
         result = payload.get("result")
         if isinstance(result, dict):
             payload["result"] = _decode_result_from_firestore(result)
+        preview = payload.get("preview")
+        if isinstance(preview, dict) and isinstance(preview.get("result"), dict):
+            preview_out = dict(preview)
+            preview_out["result"] = _decode_result_from_firestore(preview_out["result"])
+            payload["preview"] = preview_out
         status_raw = str(payload.get("status") or JobStatus.FAILED.value)
         try:
             payload["status"] = JobStatus(status_raw)
@@ -757,8 +780,16 @@ def _process_video(
     _update_job(
         job_id,
         status=JobStatus.PROCESSING,
-        stage="analyzing",
+        stage="previewing" if PREVIEW_DURATION_SECONDS > 0 else "analyzing",
         started_at=timing_data["worker_started_at"],
+        preview={
+            "status": "pending",
+            "scope": {
+                "kind": "first_segment",
+                "duration_seconds": PREVIEW_DURATION_SECONDS,
+                "sample_fps": PREVIEW_SAMPLE_FPS,
+            },
+        } if PREVIEW_DURATION_SECONDS > 0 else None,
         analysis_progress={
             "phase": "starting",
             "sampled_count": 0,
@@ -775,6 +806,102 @@ def _process_video(
     )
 
     try:
+        if PREVIEW_DURATION_SECONDS > 0:
+            preview_start = time.time()
+            _update_job(
+                job_id,
+                stage="previewing",
+                preview={
+                    "status": "processing",
+                    "scope": {
+                        "kind": "first_segment",
+                        "duration_seconds": PREVIEW_DURATION_SECONDS,
+                        "sample_fps": PREVIEW_SAMPLE_FPS,
+                    },
+                },
+                timings=timing_data,
+            )
+
+            def _handle_preview_progress(update: dict[str, Any]) -> None:
+                preview_payload = {
+                    "status": "processing",
+                    "scope": {
+                        "kind": "first_segment",
+                        "duration_seconds": PREVIEW_DURATION_SECONDS,
+                        "sample_fps": PREVIEW_SAMPLE_FPS,
+                    },
+                    "analysis_progress": _jsonable(update),
+                }
+                _update_job(
+                    job_id,
+                    stage="previewing",
+                    preview=preview_payload,
+                    analysis_progress=_jsonable(update),
+                    timings=timing_data,
+                )
+
+            try:
+                preview_result = _pipeline.analyze_video(
+                    tmp_path,
+                    sample_fps=PREVIEW_SAMPLE_FPS,
+                    progress_callback=_handle_preview_progress,
+                    max_duration_sec=PREVIEW_DURATION_SECONDS,
+                    result_scope="preview",
+                )
+                preview_done = time.time()
+                timing_data["preview_seconds"] = _round_seconds(preview_done - preview_start)
+                preview_result_dict = preview_result.to_dict()
+                preview_scope = preview_result_dict.get("scope") or {
+                    "kind": "first_segment",
+                    "duration_seconds": PREVIEW_DURATION_SECONDS,
+                    "sample_fps": PREVIEW_SAMPLE_FPS,
+                }
+                _update_job(
+                    job_id,
+                    stage="analyzing",
+                    preview={
+                        "status": "complete",
+                        "result": preview_result_dict,
+                        "completed_at": preview_done,
+                        "scope": preview_scope,
+                    },
+                    timings=timing_data,
+                )
+            except Exception as preview_exc:
+                logger.exception(f"Job {job_id} preview failed; continuing with full analysis")
+                timing_data["preview_seconds"] = _round_seconds(time.time() - preview_start)
+                _update_job(
+                    job_id,
+                    stage="analyzing",
+                    preview={
+                        "status": "failed",
+                        "error": str(preview_exc),
+                        "scope": {
+                            "kind": "first_segment",
+                            "duration_seconds": PREVIEW_DURATION_SECONDS,
+                            "sample_fps": PREVIEW_SAMPLE_FPS,
+                        },
+                    },
+                    timings=timing_data,
+                )
+
+        _update_job(
+            job_id,
+            stage="analyzing",
+            analysis_progress={
+                "phase": "starting",
+                "sampled_count": 0,
+                "estimated_samples": 0,
+                "valid_poses": 0,
+                "horse_frames": 0,
+                "cropped_frames": 0,
+                "detection_rate": 0.0,
+                "processed_seconds": 0.0,
+                "duration_seconds_estimate": 0.0,
+                "progress_pct": 0.0,
+            },
+            timings=timing_data,
+        )
         analysis_start = time.time()
         def _handle_pipeline_progress(update: dict[str, Any]) -> None:
             _update_job(

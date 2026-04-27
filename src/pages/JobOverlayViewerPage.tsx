@@ -18,6 +18,11 @@ interface PoseJobResult {
   biometrics?: Biometrics;
   sampleIntervalSec?: number;
   framesData?: PoseJobFrameData[];
+  scope?: {
+    kind?: string;
+    duration_seconds?: number;
+    sample_fps?: number;
+  };
 }
 
 interface PoseJobResponse {
@@ -27,6 +32,17 @@ interface PoseJobResponse {
   object_path?: string | null;
   completed_at?: number;
   result?: PoseJobResult | null;
+  preview?: {
+    status?: 'pending' | 'processing' | 'complete' | 'failed';
+    result?: PoseJobResult | null;
+    completed_at?: number;
+    scope?: {
+      kind?: string;
+      duration_seconds?: number;
+      sample_fps?: number;
+    };
+    error?: string;
+  } | null;
 }
 
 const POLL_MS = 3000;
@@ -65,9 +81,21 @@ function statusHeadline(job?: PoseJobResponse | null): string {
   if (!job) return 'Loading job';
   if (job.status === 'complete') return 'Overlay ready';
   if (job.status === 'failed') return 'Analysis failed';
+  if (job.preview?.status === 'complete') return 'Preview ready';
   if (job.status === 'processing') return 'Analysis still running';
   if (job.status === 'pending') return 'Queued for analysis';
   return 'Loading job';
+}
+
+function getDisplayResult(job?: PoseJobResponse | null): PoseJobResult | null {
+  if (job?.status === 'complete' && job.result) return job.result;
+  if (job?.preview?.status === 'complete' && job.preview.result) return job.preview.result;
+  return job?.result ?? null;
+}
+
+function getPreviewDurationSeconds(job?: PoseJobResponse | null): number {
+  const duration = job?.preview?.scope?.duration_seconds ?? job?.preview?.result?.scope?.duration_seconds;
+  return typeof duration === 'number' && Number.isFinite(duration) && duration > 0 ? Math.round(duration) : 60;
 }
 
 export default function JobOverlayViewerPage() {
@@ -78,8 +106,10 @@ export default function JobOverlayViewerPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
 
-  const keyframes = useMemo(() => mapFrames(job?.result), [job]);
-  const biometrics = job?.result?.biometrics ?? EMPTY_BIOMETRICS;
+  const displayResult = useMemo(() => getDisplayResult(job), [job]);
+  const isPreview = job?.status !== 'complete' && job?.preview?.status === 'complete' && !!displayResult;
+  const keyframes = useMemo(() => mapFrames(displayResult), [displayResult]);
+  const biometrics = displayResult?.biometrics ?? EMPTY_BIOMETRICS;
   const completedAtLabel = formatCompletedAt(job?.completed_at);
   const viewerUrl = typeof window === 'undefined'
     ? `#/jobs/${jobId}/view`
@@ -115,17 +145,22 @@ export default function JobOverlayViewerPage() {
         setJob(nextJob);
         setError(null);
 
-        if (nextJob.status === 'complete') {
+        const hasViewableResult = (nextJob.status === 'complete' && nextJob.result)
+          || (nextJob.preview?.status === 'complete' && nextJob.preview.result);
+
+        if (hasViewableResult) {
           if (!nextJob.object_path) {
-            throw new Error('Completed job is missing object_path, so the video cannot be reopened.');
+            throw new Error('Job is missing object_path, so the video cannot be reopened.');
           }
           const { readUrl } = await createVideoReadUrl(nextJob.object_path);
           if (cancelled) return;
           setVideoUrl(readUrl);
-          return;
+          if (nextJob.status === 'complete') {
+            return;
+          }
+        } else {
+          setVideoUrl(null);
         }
-
-        setVideoUrl(null);
 
         if (nextJob.status === 'failed') {
           setError(nextJob.error || 'Analysis failed before a viewable result was produced.');
@@ -264,9 +299,21 @@ export default function JobOverlayViewerPage() {
               background: 'rgba(61,43,33,0.06)',
               color: '#5d4b3d',
               fontSize: 13,
-            }}>
-              Pose samples: {keyframes.length}
+              }}>
+                Pose samples: {keyframes.length}
             </div>
+            {isPreview ? (
+              <div style={{
+                padding: '8px 12px',
+                borderRadius: 999,
+                background: 'rgba(125,155,118,0.16)',
+                color: '#536f4f',
+                fontSize: 13,
+                fontWeight: 600,
+              }}>
+                Preview: first {getPreviewDurationSeconds(job)} seconds
+              </div>
+            ) : null}
             <div style={{
               padding: '8px 12px',
               borderRadius: 999,
@@ -304,6 +351,20 @@ export default function JobOverlayViewerPage() {
           padding: 18,
           boxShadow: '0 24px 50px rgba(26,18,12,0.16)',
         }}>
+          {isPreview ? (
+            <div style={{
+              marginBottom: 14,
+              borderRadius: 18,
+              padding: '14px 16px',
+              background: 'rgba(255,255,255,0.92)',
+              color: '#4b3b2f',
+              border: '1px solid rgba(125,155,118,0.32)',
+              fontSize: 14,
+              lineHeight: 1.5,
+            }}>
+              <strong>Preview ready.</strong> These provisional overlays use the first {getPreviewDurationSeconds(job)} seconds. This page will keep polling and replace them when the full ride report is ready.
+            </div>
+          ) : null}
           {videoUrl ? (
             <VideoWithSkeleton videoUrl={videoUrl} keyframes={keyframes} biometrics={biometrics} />
           ) : (

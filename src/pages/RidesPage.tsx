@@ -9,6 +9,13 @@ import { saveRide, getRides, deleteRide, useStoredRides } from '../lib/storage';
 import type { StoredRide } from '../lib/storage';
 import { getUserProfile } from '../lib/userProfile';
 import { createVideoReadUrl, pinVideoObject } from '../lib/poseApi';
+import {
+  markPendingAnalysisComplete,
+  updatePendingAnalysisSession,
+  upsertPendingAnalysisSession,
+  usePendingAnalysisSessions,
+  type PendingAnalysisSession,
+} from '../lib/pendingAnalysis';
 
 // ─────────────────────────────────────────────────────────
 // DESIGN TOKENS
@@ -844,7 +851,20 @@ export default function RidesPage() {
   // Video analysis
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [videoFile, setVideoFile] = useState<File | null>(null);
-  const { status, progress, result, error, analysisJobId, uploadedObjectPath, analysisMeta, analyzeVideo, reset } = usePoseAPI();
+  const {
+    status,
+    progress,
+    result,
+    previewResult,
+    previewMeta,
+    finalResultPending,
+    error,
+    analysisJobId,
+    uploadedObjectPath,
+    analysisMeta,
+    analyzeVideo,
+    reset,
+  } = usePoseAPI();
 
   // Saved ride state
   const [sessionSaved, setSessionSaved] = useState(false);
@@ -867,6 +887,7 @@ export default function RidesPage() {
 
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'score'>('newest');
   const storedRides = useStoredRides();
+  const pendingAnalysisSessions = usePendingAnalysisSessions();
   const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(new Set());
   const toggleMonth = (key: string) => {
     setCollapsedMonths(prev => {
@@ -878,6 +899,9 @@ export default function RidesPage() {
 
   const isDone = status === 'done' && result !== null;
   const isAnalyzing = status === 'loading-model' || status === 'compressing' || status === 'extracting' || status === 'processing';
+  const displayResult = result ?? previewResult;
+  const isPreviewReady = !result && !!previewResult;
+  const activeAnalysisVisible = isAnalyzing || isDone || isPreviewReady || status === 'error';
 
   // Horse fun facts — build a long shuffled queue and advance through it.
   // Avoids repeats within an analysis AND across analyses in the same session.
@@ -935,6 +959,32 @@ export default function RidesPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDone]);
+
+  useEffect(() => {
+    if (!analysisJobId || !uploadedObjectPath || !videoFile) return;
+    upsertPendingAnalysisSession({
+      id: analysisJobId,
+      status: previewResult ? 'preview-ready' : 'processing',
+      videoFileName: videoFile.name,
+      videoObjectPath: uploadedObjectPath,
+      poseJobId: analysisJobId,
+      createdAt: Date.now(),
+      previewUpdatedAt: previewResult ? Date.now() : undefined,
+    });
+  }, [analysisJobId, uploadedObjectPath, videoFile, previewResult]);
+
+  useEffect(() => {
+    if (!analysisJobId || !previewResult) return;
+    updatePendingAnalysisSession(analysisJobId, {
+      status: 'preview-ready',
+      previewUpdatedAt: Date.now(),
+    });
+  }, [analysisJobId, previewResult]);
+
+  useEffect(() => {
+    if (!analysisJobId || status !== 'error') return;
+    updatePendingAnalysisSession(analysisJobId, { status: 'failed' });
+  }, [analysisJobId, status]);
 
   const handleLogSubmit = () => {
     setLogSubmitted(true);
@@ -1036,6 +1086,9 @@ export default function RidesPage() {
     }
 
     await saveRide(ride);
+    if (analysisJobId) {
+      markPendingAnalysisComplete(analysisJobId, ride.id);
+    }
     navigate(`/rides/${ride.id}`);
 
     setSessionSaved(true);
@@ -1149,9 +1202,12 @@ export default function RidesPage() {
       : 'Sending your video to Cadence.'
   );
   const analysisElapsed = formatElapsedTime(analysisMeta?.elapsedSec);
-  const analysisSupportNote = progress >= 20 && analysisMeta?.stage !== 'complete'
+  const analysisSupportNote = isPreviewReady
+    ? 'Preview ready. You can leave this screen and reopen the final report from the ride list.'
+    : progress >= 20 && analysisMeta?.stage !== 'complete'
     ? 'Uploaded safely. Keep this screen open for automatic save when the report is ready.'
     : 'Longer rides can take a few minutes.';
+  const visiblePendingSessions = pendingAnalysisSessions.filter((session) => session.status !== 'complete');
 
   return (
     <div style={{ background: COLORS.parchment, minHeight: '100%' }}>
@@ -1391,7 +1447,7 @@ export default function RidesPage() {
       )}
 
             {/* ── VIDEO ANALYSIS SECTION ─────────────────────────── */}
-      {(isAnalyzing || isDone || status === 'error') && (
+      {activeAnalysisVisible && (
         <div style={{ padding: '0 20px', marginBottom: '16px' }}>
           <div style={{
             background: COLORS.cardBg,
@@ -1405,10 +1461,10 @@ export default function RidesPage() {
             <div style={{ position: 'relative', width: '100%', aspectRatio: '16/9', background: '#1A140E' }}>
 
               {/* Video element (visible during analysis and after done) */}
-              {result?.videoPlaybackUrl && (
+              {displayResult?.videoPlaybackUrl && (
                 <video
-                  src={result.videoPlaybackUrl}
-                  controls={isDone}
+                  src={displayResult.videoPlaybackUrl}
+                  controls={isDone || isPreviewReady}
                   muted
                   playsInline
                   style={{ width: '100%', height: '100%', objectFit: 'cover' }}
@@ -1416,7 +1472,7 @@ export default function RidesPage() {
               )}
 
               {/* ── Premium Progress Overlay (inline placeholder — real overlay is fixed below) ── */}
-              {isAnalyzing && (
+              {isAnalyzing && !isPreviewReady && (
                 <div style={{ position: 'absolute', inset: 0, background: 'rgba(26,20,14,0.85)' }} />
               )}
             </div>
@@ -1444,16 +1500,31 @@ export default function RidesPage() {
             )}
 
             {/* ── Results Panel ─────────────────────────────── */}
-            {isDone && (
+            {(isDone || isPreviewReady) && displayResult && (
               <div style={{
                 padding: '20px',
                 animation: 'slideUp 0.5s ease',
               }}>
+                {isPreviewReady && (
+                  <div style={{
+                    marginBottom: '16px',
+                    borderRadius: '14px',
+                    border: '1px solid rgba(107,127,163,0.24)',
+                    background: 'rgba(107,127,163,0.10)',
+                    padding: '12px 14px',
+                    fontFamily: FONTS.body,
+                    color: '#40506E',
+                    fontSize: '12.5px',
+                    lineHeight: 1.45,
+                  }}>
+                    <strong>Preview ready.</strong> These provisional scores use the first {Math.round(previewMeta?.durationSeconds ?? 60)} seconds of your ride. Cadence is still finishing the full report.
+                  </div>
+                )}
                 <div style={{
                   fontFamily: FONTS.mono, fontSize: '10px', color: COLORS.muted,
                   marginBottom: '16px',
                 }}>
-                  {result.frameCount} frames analyzed
+                  {displayResult.frameCount} frames analyzed{isPreviewReady && finalResultPending ? ' · final report still running' : ''}
                 </div>
 
                 {/* ── Layer 1: Your Position ─────────────────── */}
@@ -1472,7 +1543,7 @@ export default function RidesPage() {
                     ['upperBodyAlignment', 'Upper Body'],
                     ['pelvisStability',    'Pelvis'],
                   ] as [keyof BiometricsSnapshot, string][]).map(([key, label]) => {
-                    const val = result.biometrics[key];
+                    const val = displayResult.biometrics[key];
                     return (
                       <RadialGauge key={key} value={val} label={label} />
                     );
@@ -1488,7 +1559,7 @@ export default function RidesPage() {
                     gap: '12px',
                   }}>
                     {(() => {
-                      const qualities = computeRidingQualities(result.biometrics);
+                      const qualities = computeRidingQualities(displayResult.biometrics);
                       const qualityColors = ['#C9A96E', '#7D9B76', '#8C5A3C', '#C4714A', '#6B7FA3', '#B5A898'];
                       return qualities.map((q, i) => (
                         <RadialGauge key={q.name} value={q.score} label={q.name} color={qualityColors[i]} />
@@ -1498,10 +1569,10 @@ export default function RidesPage() {
                 </div>
 
                 {/* ── Insights Summary Card ──────────────────── */}
-                <InsightsCard insights={result.insights} />
+                <InsightsCard insights={displayResult.insights} />
 
                 {/* ── Ride date + optional name/notes + conflict handling ───────── */}
-                {!sessionSaved && (() => {
+                {isDone && !sessionSaved && (() => {
                   const horse = getUserProfile().horseName || 'Your Horse';
                   const existing = storedRides.find(r => r.date === logDate && r.horse === horse && r.type === logType);
                   return (
@@ -1795,8 +1866,20 @@ export default function RidesPage() {
           </div>
         )}
 
+        {visiblePendingSessions.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' }}>
+            {visiblePendingSessions.map((session) => (
+              <PendingAnalysisRow
+                key={session.id}
+                session={session}
+                onNavigate={() => navigate(`/jobs/${session.poseJobId}/view`)}
+              />
+            ))}
+          </div>
+        )}
+
         {/* ── Full-screen fixed loading overlay ── */}
-        {isAnalyzing && (
+        {isAnalyzing && !isPreviewReady && (
           <div style={{
             position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 999,
             background: 'rgba(20, 16, 12, 0.96)',
@@ -2049,10 +2132,9 @@ export default function RidesPage() {
             {!isCollapsed && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' }}>
               {rides.map((ride, i) => {
-                const isStored = ride.id.startsWith('stored-');
-                const stored = isStored ? storedRides.find(s => s.id === ride.id) : null;
+                const stored = storedRides.find(s => s.id === ride.id) ?? null;
                 const prevRide = i > 0 ? rides[i - 1] : null;
-                const prevStored = prevRide?.id.startsWith('stored-') ? storedRides.find(s => s.id === prevRide.id) : null;
+                const prevStored = prevRide ? (storedRides.find(s => s.id === prevRide.id) ?? null) : null;
                 const trendDelta = stored && prevStored
                   ? Math.round(stored.overallScore * 100) - Math.round(prevStored.overallScore * 100)
                   : null;
@@ -2246,6 +2328,92 @@ const BIO_LABELS: Record<string, string> = {
 };
 
 const RC = { pa: '#F5EFE6', nk: '#1C1C1E', cg: '#C17F4A', ch: '#D4AF76', ideal: '#5B9E56', good: '#E8A857', focus: '#C14A2A' };
+
+function PendingAnalysisRow({ session, onNavigate }: {
+  session: PendingAnalysisSession;
+  onNavigate: () => void;
+}) {
+  const createdAt = new Date(session.createdAt);
+  const dateLabel = Number.isFinite(createdAt.getTime())
+    ? createdAt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+    : 'Today';
+  const statusConfig = session.status === 'preview-ready'
+    ? { label: 'Preview ready', color: '#6B7FA3', detail: 'Final report still running' }
+    : session.status === 'failed'
+      ? { label: 'Needs attention', color: RC.focus, detail: 'Open recovery viewer' }
+      : { label: 'Analyzing', color: RC.cg, detail: 'You can come back later' };
+
+  return (
+    <button
+      type="button"
+      onClick={onNavigate}
+      style={{
+        width: '100%',
+        border: `1px solid ${COLORS.border}`,
+        background: '#fff',
+        borderRadius: 16,
+        padding: '14px 16px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        cursor: 'pointer',
+        textAlign: 'left',
+        boxShadow: '0 2px 12px rgba(0,0,0,0.05)',
+      }}
+    >
+      <div style={{
+        width: 42,
+        height: 42,
+        borderRadius: '50%',
+        background: `${statusConfig.color}1A`,
+        color: statusConfig.color,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontFamily: FONTS.mono,
+        fontSize: 16,
+        flexShrink: 0,
+      }}>
+        {session.status === 'preview-ready' ? '◎' : session.status === 'failed' ? '!' : '…'}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontFamily: FONTS.body,
+          fontSize: 14,
+          fontWeight: 600,
+          color: RC.nk,
+          overflow: 'hidden',
+          whiteSpace: 'nowrap',
+          textOverflow: 'ellipsis',
+        }}>
+          {session.videoFileName}
+        </div>
+        <div style={{
+          marginTop: 3,
+          fontFamily: FONTS.body,
+          fontSize: 11.5,
+          color: '#7A6B5D',
+        }}>
+          {statusConfig.detail} · {dateLabel}
+        </div>
+      </div>
+      <div style={{
+        borderRadius: 999,
+        padding: '5px 9px',
+        background: `${statusConfig.color}14`,
+        color: statusConfig.color,
+        fontFamily: FONTS.body,
+        fontSize: 10,
+        fontWeight: 700,
+        letterSpacing: '0.04em',
+        textTransform: 'uppercase',
+        flexShrink: 0,
+      }}>
+        {statusConfig.label}
+      </div>
+    </button>
+  );
+}
 
 function SwipeRideRow({ ride, storedRide, trendDelta, onNavigate, onDelete }: {
   ride: Ride; storedRide?: StoredRide; trendDelta: number | null;

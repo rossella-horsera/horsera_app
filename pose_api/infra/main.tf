@@ -230,6 +230,14 @@ resource "google_cloud_run_v2_service" "pose_api" {
         value = "0"
       }
       env {
+        name  = "PREVIEW_DURATION_SECONDS"
+        value = "60"
+      }
+      env {
+        name  = "PREVIEW_SAMPLE_FPS"
+        value = "2"
+      }
+      env {
         name  = "GPU_THRESHOLD_MB"
         value = tostring(var.gpu_threshold_mb)
       }
@@ -347,6 +355,14 @@ resource "google_cloud_run_v2_job" "pose_worker_cpu" {
           name  = "WORKER_TIMEOUT_SECONDS"
           value = "3600"
         }
+        env {
+          name  = "PREVIEW_DURATION_SECONDS"
+          value = "60"
+        }
+        env {
+          name  = "PREVIEW_SAMPLE_FPS"
+          value = "2"
+        }
         resources {
           limits = {
             cpu    = "2"
@@ -423,6 +439,14 @@ resource "google_cloud_run_v2_job" "pose_worker_gpu" {
         env {
           name  = "WORKER_TIMEOUT_SECONDS"
           value = "3600"
+        }
+        env {
+          name  = "PREVIEW_DURATION_SECONDS"
+          value = "60"
+        }
+        env {
+          name  = "PREVIEW_SAMPLE_FPS"
+          value = "2"
         }
         env {
           name  = "REQUIRE_CUDA"

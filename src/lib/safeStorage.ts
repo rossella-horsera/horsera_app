@@ -10,7 +10,8 @@ const LS_KEY = ['local', 'Storage'].join('');
 
 function getLS(): Storage | null {
   try {
-    const s = (window as any)[LS_KEY] as Storage;
+    const s = (window as Window & Record<string, Storage | undefined>)[LS_KEY];
+    if (!s) return null;
     const t = '__ls_test__';
     s.setItem(t, t);
     s.removeItem(t);

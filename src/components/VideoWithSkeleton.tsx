@@ -160,8 +160,16 @@ export default function VideoWithSkeleton({ videoUrl, keyframes, biometrics }: V
   // Fullscreen: request on the wrapper so skeleton + overlays stay visible.
   // Handles webkit-prefixed API for iOS Safari.
   const toggleFullscreen = () => {
-    const el = wrapperRef.current as any;
-    const doc = document as any;
+    const el = wrapperRef.current as (HTMLDivElement & {
+      webkitRequestFullscreen?: () => Promise<void> | void;
+      webkitEnterFullscreen?: () => Promise<void> | void;
+    }) | null;
+    const doc = document as Document & {
+      webkitFullscreenElement?: Element | null;
+      webkitCurrentFullScreenElement?: Element | null;
+      webkitExitFullscreen?: () => Promise<void> | void;
+      webkitCancelFullScreen?: () => Promise<void> | void;
+    };
     if (!el) return;
     const isFs = doc.fullscreenElement || doc.webkitFullscreenElement || doc.webkitCurrentFullScreenElement;
     if (isFs) {
@@ -173,7 +181,10 @@ export default function VideoWithSkeleton({ videoUrl, keyframes, biometrics }: V
 
   useEffect(() => {
     const handler = () => {
-      const doc = document as any;
+      const doc = document as Document & {
+        webkitFullscreenElement?: Element | null;
+        webkitCurrentFullScreenElement?: Element | null;
+      };
       setIsFullscreen(!!(doc.fullscreenElement || doc.webkitFullscreenElement || doc.webkitCurrentFullScreenElement));
     };
     document.addEventListener('fullscreenchange', handler);
@@ -433,7 +444,7 @@ export default function VideoWithSkeleton({ videoUrl, keyframes, biometrics }: V
         controls
         playsInline
         controlsList="nofullscreen nodownload"
-        // @ts-ignore — webkit-specific attribute for iOS Safari inline fullscreen
+        // @ts-expect-error - webkit-specific attribute for iOS Safari inline fullscreen
         webkit-playsinline="true"
         style={{
           position: 'absolute', inset: 0, width: '100%', height: '100%',
