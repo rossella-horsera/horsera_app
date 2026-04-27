@@ -123,18 +123,14 @@ export default function VideoWithSkeleton({ videoUrl, keyframes, biometrics }: V
   const [ghostOn, setGhostOn] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [stageAspectRatio, setStageAspectRatio] = useState(16 / 9);
-  const [fullscreenSupported, setFullscreenSupported] = useState(false);
+  const [fullscreenSupported, setFullscreenSupported] = useState(true);
 
   useEffect(() => {
     setStageAspectRatio(16 / 9);
   }, [videoUrl]);
 
   useEffect(() => {
-    const wrapper = wrapperRef.current as (HTMLDivElement & {
-      requestFullscreen?: () => Promise<void>;
-      webkitRequestFullscreen?: () => Promise<void>;
-    }) | null;
-    setFullscreenSupported(!!(wrapper?.requestFullscreen || wrapper?.webkitRequestFullscreen));
+    setFullscreenSupported(typeof document !== 'undefined');
   }, [videoUrl]);
 
   useEffect(() => {
@@ -172,10 +168,19 @@ export default function VideoWithSkeleton({ videoUrl, keyframes, biometrics }: V
     };
     if (!el) return;
     const isFs = doc.fullscreenElement || doc.webkitFullscreenElement || doc.webkitCurrentFullScreenElement;
+    if (!isFs && isFullscreen) {
+      setIsFullscreen(false);
+      return;
+    }
     if (isFs) {
       (doc.exitFullscreen || doc.webkitExitFullscreen || doc.webkitCancelFullScreen)?.call(doc);
     } else {
-      (el.requestFullscreen || el.webkitRequestFullscreen || el.webkitEnterFullscreen)?.call(el);
+      const requestFullscreen = el.requestFullscreen || el.webkitRequestFullscreen;
+      if (requestFullscreen) {
+        Promise.resolve(requestFullscreen.call(el)).catch(() => setIsFullscreen(true));
+      } else {
+        setIsFullscreen(true);
+      }
     }
   };
 
@@ -187,11 +192,18 @@ export default function VideoWithSkeleton({ videoUrl, keyframes, biometrics }: V
       };
       setIsFullscreen(!!(doc.fullscreenElement || doc.webkitFullscreenElement || doc.webkitCurrentFullScreenElement));
     };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsFullscreen(false);
+      }
+    };
     document.addEventListener('fullscreenchange', handler);
     document.addEventListener('webkitfullscreenchange', handler);
+    document.addEventListener('keydown', handleKeyDown);
     return () => {
       document.removeEventListener('fullscreenchange', handler);
       document.removeEventListener('webkitfullscreenchange', handler);
+      document.removeEventListener('keydown', handleKeyDown);
     };
   }, []);
 
@@ -214,12 +226,14 @@ export default function VideoWithSkeleton({ videoUrl, keyframes, biometrics }: V
   const actionButtonSize = isFullscreen ? 42 : 36;
   const actionButtonRadius = actionButtonSize / 2;
   const stageStyle: CSSProperties = {
-    position: 'relative',
-    width: isFullscreen ? '100%' : inlineStageWidth,
+    position: isFullscreen ? 'fixed' : 'relative',
+    inset: isFullscreen ? 0 : undefined,
+    zIndex: isFullscreen ? 9999 : undefined,
+    width: isFullscreen ? '100vw' : inlineStageWidth,
     maxWidth: '100%',
     margin: isFullscreen ? undefined : '0 auto',
     aspectRatio: isFullscreen ? undefined : stageAspectRatio,
-    height: isFullscreen ? '100%' : undefined,
+    height: isFullscreen ? '100dvh' : undefined,
     maxHeight: isFullscreen ? undefined : inlineMaxStageHeight,
     background: '#000',
     overflow: 'hidden',

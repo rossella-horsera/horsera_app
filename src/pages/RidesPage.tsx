@@ -9,6 +9,7 @@ import { saveRide, getRides, deleteRide, useStoredRides } from '../lib/storage';
 import type { StoredRide } from '../lib/storage';
 import { getUserProfile } from '../lib/userProfile';
 import { createVideoReadUrl, pinVideoObject } from '../lib/poseApi';
+import VideoWithSkeleton from '../components/VideoWithSkeleton';
 import {
   markPendingAnalysisComplete,
   updatePendingAnalysisSession,
@@ -1458,16 +1459,21 @@ export default function RidesPage() {
           }}>
 
             {/* ── Video Area with Progress Overlay ──────────── */}
-            <div style={{ position: 'relative', width: '100%', aspectRatio: '16/9', background: '#1A140E' }}>
+            <div style={{
+              position: 'relative',
+              width: '100%',
+              aspectRatio: '16/9',
+              background: '#1A140E',
+              display: 'grid',
+              placeItems: 'center',
+            }}>
 
-              {/* Video element (visible during analysis and after done) */}
+              {/* Overlay player (visible during preview and after done) */}
               {displayResult?.videoPlaybackUrl && (
-                <video
-                  src={displayResult.videoPlaybackUrl}
-                  controls={isDone || isPreviewReady}
-                  muted
-                  playsInline
-                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                <VideoWithSkeleton
+                  videoUrl={displayResult.videoPlaybackUrl}
+                  keyframes={displayResult.allFrames ?? []}
+                  biometrics={displayResult.biometrics}
                 />
               )}
 
