@@ -37,6 +37,7 @@ KP = {
     "left_ankle": 15, "right_ankle": 16,
 }
 
+PERSON_CLASS_ID = 0      # COCO class 0 = person
 HORSE_CLASS_ID = 17      # COCO class 17 = horse
 CONF_THRESH    = 0.35    # minimum keypoint confidence accepted
 DET_CONF       = 0.30    # minimum horse detection confidence (lowered for better recall)
@@ -175,6 +176,71 @@ class PipelineResult:
             "resultScope":    self.resultScope,
             "scope":          self.scope,
         }
+
+
+@dataclass
+class DetectedObjects:
+    horses: list[np.ndarray]
+    people: list[np.ndarray]
+
+
+@dataclass
+class RiderCandidate:
+    score: float
+    mounted_score: float
+    center: np.ndarray
+    torso_size: float
+    pose_bbox: Tuple[float, float, float, float]
+    person_bbox: Optional[Tuple[float, float, float, float]]
+    kps: np.ndarray
+
+
+@dataclass
+class RiderTrackState:
+    center: Optional[np.ndarray] = None
+    torso_size: float = 0.0
+    pose_bbox: Optional[Tuple[float, float, float, float]] = None
+    confidence: float = 0.0
+    missed_frames: int = 0
+
+    def score_candidate(self, candidate: RiderCandidate) -> tuple[float, bool]:
+        if self.center is None:
+            return candidate.mounted_score, False
+
+        scale = max(self.torso_size, candidate.torso_size, 30.0)
+        distance = float(np.linalg.norm(candidate.center - self.center)) / scale
+        continuity_bonus = max(0.0, 1.0 - distance) * 0.70
+        jump_penalty = max(0.0, distance - 1.25) * 0.75
+        adjusted = candidate.mounted_score + continuity_bonus - jump_penalty
+
+        # Once we have a plausible rider track, avoid snapping to a different
+        # standing person unless the geometry is clearly stronger.
+        rejected = (
+            self.missed_frames <= 4
+            and distance > 2.25
+            and candidate.mounted_score < self.confidence + 0.55
+        )
+        return adjusted, rejected
+
+    def update(self, candidate: Optional[RiderCandidate]) -> None:
+        if candidate is None:
+            self.missed_frames += 1
+            self.confidence *= 0.88
+            return
+
+        if self.center is None or self.missed_frames > 4:
+            blend = 1.0
+        else:
+            blend = 0.35
+        self.center = candidate.center if self.center is None else ((1.0 - blend) * self.center + blend * candidate.center)
+        self.torso_size = (
+            candidate.torso_size
+            if self.torso_size <= 0
+            else ((1.0 - blend) * self.torso_size + blend * candidate.torso_size)
+        )
+        self.pose_bbox = candidate.pose_bbox
+        self.confidence = max(candidate.mounted_score, self.confidence * 0.70)
+        self.missed_frames = 0
 
 
 # ── ONNX Session Loading ──────────────────────────────────────────────────────
@@ -717,15 +783,23 @@ def draw_skeleton(
 
 # ── Horse Detection ───────────────────────────────────────────────────────────
 
-def _decode_horse_boxes(pred: np.ndarray, ratio: float, dw: float, dh: float, W: int, H: int) -> list[np.ndarray]:
-    """Decode [N,84] horse predictions into [x1,y1,x2,y2] original pixel coords."""
-    horse_scores = pred[:, 4 + HORSE_CLASS_ID]
-    mask = horse_scores > DET_CONF
+def _decode_class_boxes(
+    pred: np.ndarray,
+    class_id: int,
+    ratio: float,
+    dw: float,
+    dh: float,
+    W: int,
+    H: int,
+) -> list[np.ndarray]:
+    """Decode [N,84] detections for one COCO class into original pixel coords."""
+    scores = pred[:, 4 + class_id]
+    mask = scores > DET_CONF
     if not mask.any():
         return []
 
     pred_f = pred[mask]
-    scores_f = horse_scores[mask]
+    scores_f = scores[mask]
     boxes_xyxy = _xywh2xyxy(pred_f[:, :4])
     keep = _nms(boxes_xyxy, scores_f)
 
@@ -737,12 +811,17 @@ def _decode_horse_boxes(pred: np.ndarray, ratio: float, dw: float, dh: float, W:
     return result
 
 
-def _horse_bboxes_batch(
+def _decode_horse_boxes(pred: np.ndarray, ratio: float, dw: float, dh: float, W: int, H: int) -> list[np.ndarray]:
+    """Decode horse predictions into [x1,y1,x2,y2] original pixel coords."""
+    return _decode_class_boxes(pred, HORSE_CLASS_ID, ratio, dw, dh, W, H)
+
+
+def _object_bboxes_batch(
     frames: list[np.ndarray],
     sess,
     batch_stats: Optional[dict[str, list[int]]] = None,
-) -> list[list[np.ndarray]]:
-    """Return horse bboxes for each frame in the input list."""
+) -> list[DetectedObjects]:
+    """Return horse and person bboxes for each frame from the existing detector pass."""
     if not frames:
         return []
 
@@ -753,18 +832,30 @@ def _horse_bboxes_batch(
     target_batch = max(1, target_batch)
 
     if len(frames) > 1 and target_batch == 1:
-        logger.debug("[batch] horse model currently fixed at batch=1; using sequential inference")
+        logger.debug("[batch] detector model currently fixed at batch=1; using sequential inference")
 
-    all_boxes: list[list[np.ndarray]] = []
+    all_objects: list[DetectedObjects] = []
     for start in range(0, len(frames), target_batch):
         chunk = frames[start:start + target_batch]
-        _record_batch_size(batch_stats, "horse", len(chunk))
+        _record_batch_size(batch_stats, "detector", len(chunk))
         inp_batch, metas = _preprocess_batch(chunk)
         preds = _predict_rows(sess, inp_batch, channels=84)
         for pred, meta in zip(preds, metas):
             ratio, dw, dh, W, H = meta
-            all_boxes.append(_decode_horse_boxes(pred, ratio, dw, dh, W, H))
-    return all_boxes
+            all_objects.append(DetectedObjects(
+                horses=_decode_class_boxes(pred, HORSE_CLASS_ID, ratio, dw, dh, W, H),
+                people=_decode_class_boxes(pred, PERSON_CLASS_ID, ratio, dw, dh, W, H),
+            ))
+    return all_objects
+
+
+def _horse_bboxes_batch(
+    frames: list[np.ndarray],
+    sess,
+    batch_stats: Optional[dict[str, list[int]]] = None,
+) -> list[list[np.ndarray]]:
+    """Return horse bboxes for each frame in the input list."""
+    return [objects.horses for objects in _object_bboxes_batch(frames, sess, batch_stats=batch_stats)]
 
 
 def _horse_bboxes(frame: np.ndarray, sess) -> list[np.ndarray]:
@@ -849,6 +940,8 @@ def _run_inference_batch(
     pose_sess,
     cropper: Optional[SmartCropper],
     batch_stats: Optional[dict[str, list[int]]] = None,
+    tracker: Optional[RiderTrackState] = None,
+    selection_stats: Optional[dict[str, int]] = None,
 ) -> tuple[list[Optional[np.ndarray]], int, int]:
     """
     Run model inference for a sampled frame batch.
@@ -859,17 +952,21 @@ def _run_inference_batch(
     if not frames:
         return [], 0, 0
 
-    horse_boxes_batch = _horse_bboxes_batch(frames, horse_sess, batch_stats=batch_stats)
+    objects_batch = _object_bboxes_batch(frames, horse_sess, batch_stats=batch_stats)
+    horse_boxes_batch = [objects.horses for objects in objects_batch]
     horse_count = sum(1 for boxes in horse_boxes_batch if boxes)
 
     if cropper is None:
         pose_batch = _run_pose_batch(frames, pose_sess, batch_stats=batch_stats)
         selected: list[Optional[np.ndarray]] = []
-        for kps_list, horse_boxes in zip(pose_batch, horse_boxes_batch):
+        for kps_list, objects in zip(pose_batch, objects_batch):
             selected.append(_select_mounted_rider(
                 kps_list,
                 crop_region=None,
-                horse_bbox=_primary_horse_bbox(horse_boxes),
+                horse_bbox=_primary_horse_bbox(objects.horses),
+                person_bboxes=objects.people,
+                tracker=tracker,
+                selection_stats=selection_stats,
             ))
         return selected, horse_count, 0
 
@@ -899,17 +996,26 @@ def _run_inference_batch(
         crop_offsets.append(offset)
 
     pose_batch = _run_pose_batch(pose_inputs, pose_sess, batch_stats=batch_stats) if pose_inputs else []
+    transformed_by_frame: dict[int, list[np.ndarray]] = {}
     selected: list[Optional[np.ndarray]] = [None] * len(frames)
     for batch_idx, frame_idx in enumerate(pose_input_indices):
         kps_list = pose_batch[batch_idx]
-        crop_region = crop_regions[frame_idx]
         scale = crop_scales[batch_idx]
         offset = crop_offsets[batch_idx]
-        transformed = [cropper.transform_keypoints_to_original(kps, scale, offset) for kps in kps_list]
+        transformed_by_frame[frame_idx] = [
+            cropper.transform_keypoints_to_original(kps, scale, offset)
+            for kps in kps_list
+        ]
+
+    for frame_idx in range(len(frames)):
+        transformed = transformed_by_frame.get(frame_idx, [])
         selected[frame_idx] = _select_mounted_rider(
             transformed,
-            crop_region=crop_region,
+            crop_region=crop_regions[frame_idx],
             horse_bbox=active_horse_bboxes[frame_idx],
+            person_bboxes=objects_batch[frame_idx].people,
+            tracker=tracker,
+            selection_stats=selection_stats,
         )
 
     return selected, horse_count, crop_count
@@ -965,6 +1071,9 @@ def _select_mounted_rider(
     kps_list: list[np.ndarray],
     crop_region: Optional[Tuple[int, int, int, int]],
     horse_bbox: Optional[Tuple[int, int, int, int]] = None,
+    person_bboxes: Optional[list[np.ndarray]] = None,
+    tracker: Optional[RiderTrackState] = None,
+    selection_stats: Optional[dict[str, int]] = None,
 ) -> Optional[np.ndarray]:
     """
     Select the person most likely to be the mounted rider.
@@ -975,28 +1084,109 @@ def _select_mounted_rider(
     back to the "best person" in frame.
     """
     if not kps_list or (crop_region is None and horse_bbox is None):
+        if tracker is not None:
+            tracker.update(None)
         return None
 
-    candidates: list[tuple[float, float, np.ndarray]] = []
+    if len(kps_list) > 1:
+        _inc_selection_stat(selection_stats, "multi_candidate_frames")
+
+    candidates: list[RiderCandidate] = []
     for kps in kps_list:
-        candidate_score = _mounted_candidate_score(
+        candidate = _mounted_candidate_score(
             kps,
             crop_region=crop_region,
             horse_bbox=horse_bbox,
+            person_bboxes=person_bboxes,
+            selection_stats=selection_stats,
         )
-        if candidate_score is None:
+        if candidate is None:
             continue
-        hip_mid = _pair_midpoint(kps, "left_hip", "right_hip")
-        hip_y = float(hip_mid[1]) if hip_mid is not None else float("inf")
-        candidates.append((candidate_score, -hip_y, kps))
+        if tracker is not None:
+            adjusted_score, continuity_rejected = tracker.score_candidate(candidate)
+            if continuity_rejected:
+                _inc_selection_stat(selection_stats, "continuity_rejections")
+                continue
+            candidate.score = adjusted_score
+        else:
+            candidate.score = candidate.mounted_score
+        candidates.append(candidate)
 
     if not candidates:
+        if tracker is not None:
+            tracker.update(None)
         return None
 
-    return max(candidates, key=lambda item: (item[0], item[1]))[2]
+    best = max(candidates, key=lambda item: (item.score, item.mounted_score))
+    if tracker is not None:
+        tracker.update(best)
+    _inc_selection_stat(selection_stats, "selected_valid_rider_frames")
+    return best.kps
 
 
 # ── Horse/rider isolation ─────────────────────────────────────────────────────
+
+def _inc_selection_stat(selection_stats: Optional[dict[str, int]], key: str) -> None:
+    if selection_stats is not None:
+        selection_stats[key] = selection_stats.get(key, 0) + 1
+
+
+def _as_box_tuple(box: Tuple[float, float, float, float] | np.ndarray) -> Tuple[float, float, float, float]:
+    x1, y1, x2, y2 = [float(v) for v in box]
+    return (x1, y1, x2, y2)
+
+
+def _bbox_area(box: Tuple[float, float, float, float]) -> float:
+    return max(0.0, box[2] - box[0]) * max(0.0, box[3] - box[1])
+
+
+def _bbox_intersection(a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]) -> float:
+    x1 = max(a[0], b[0])
+    y1 = max(a[1], b[1])
+    x2 = min(a[2], b[2])
+    y2 = min(a[3], b[3])
+    return max(0.0, x2 - x1) * max(0.0, y2 - y1)
+
+
+def _bbox_iou(a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]) -> float:
+    inter = _bbox_intersection(a, b)
+    union = _bbox_area(a) + _bbox_area(b) - inter
+    return inter / max(union, 1e-7)
+
+
+def _pose_bbox(kps: np.ndarray, min_conf: float = CONF_THRESH) -> Optional[Tuple[float, float, float, float]]:
+    visible = kps[kps[:, 2] >= min_conf]
+    if visible.size == 0:
+        return None
+    return (
+        float(np.min(visible[:, 0])),
+        float(np.min(visible[:, 1])),
+        float(np.max(visible[:, 0])),
+        float(np.max(visible[:, 1])),
+    )
+
+
+def _match_person_bbox(
+    pose_bbox: Tuple[float, float, float, float],
+    person_bboxes: Optional[list[np.ndarray]],
+) -> Optional[Tuple[float, float, float, float]]:
+    if not person_bboxes:
+        return None
+
+    pose_cx = (pose_bbox[0] + pose_bbox[2]) / 2.0
+    pose_cy = (pose_bbox[1] + pose_bbox[3]) / 2.0
+    best: Optional[Tuple[float, Tuple[float, float, float, float]]] = None
+    for raw_box in person_bboxes:
+        box = _as_box_tuple(raw_box)
+        iou = _bbox_iou(pose_bbox, box)
+        contains_center = box[0] <= pose_cx <= box[2] and box[1] <= pose_cy <= box[3]
+        score = iou + (0.20 if contains_center else 0.0)
+        if best is None or score > best[0]:
+            best = (score, box)
+
+    if best is None or best[0] <= 0.02:
+        return None
+    return best[1]
 
 def _rider_overlaps_horse(kps: np.ndarray, horse_bboxes: list[np.ndarray]) -> bool:
     lh = kps[KP["left_hip"]]
@@ -1028,7 +1218,9 @@ def _mounted_candidate_score(
     kps: np.ndarray,
     crop_region: Optional[Tuple[int, int, int, int]],
     horse_bbox: Optional[Tuple[int, int, int, int]],
-) -> Optional[float]:
+    person_bboxes: Optional[list[np.ndarray]] = None,
+    selection_stats: Optional[dict[str, int]] = None,
+) -> Optional[RiderCandidate]:
     """
     Score how plausibly this pose belongs to the mounted rider rather than a
     trainer on foot. Higher is better; None means reject the candidate.
@@ -1042,9 +1234,16 @@ def _mounted_candidate_score(
     if hip_mid is None or shoulder_mid is None:
         return None
 
+    pose_bbox = _pose_bbox(kps)
+    if pose_bbox is None:
+        return None
+    person_bbox = _match_person_bbox(pose_bbox, person_bboxes)
+
     hip_x = float(hip_mid[0])
     hip_y = float(hip_mid[1])
+    shoulder_x = float(shoulder_mid[0])
     shoulder_y = float(shoulder_mid[1])
+    torso_size = max(float(np.linalg.norm(hip_mid - shoulder_mid)), 20.0)
     score = float(aps_score)
 
     if crop_region is not None:
@@ -1082,12 +1281,25 @@ def _mounted_candidate_score(
         if shoulder_rel_y > 0.75:
             return None
 
+        torso_x = (hip_x + shoulder_x) / 2.0
+        torso_rel_x = (torso_x - x1) / horse_w
+        torso_rel_y = ((hip_y + shoulder_y) / 2.0 - y1) / horse_h
+        saddle_band = (x1 + horse_w * 0.12, x2 - horse_w * 0.12)
+        if torso_x < (x1 - horse_w * 0.08) or torso_x > (x2 + horse_w * 0.08):
+            _inc_selection_stat(selection_stats, "likely_trainer_rejections")
+            return None
+        if torso_rel_y > 0.58:
+            _inc_selection_stat(selection_stats, "likely_trainer_rejections")
+            return None
+
         horizontal_score = max(0.0, 1.0 - abs(hip_x - horse_cx) / max(horse_w * 0.65, 1.0))
         vertical_score = max(0.0, 1.0 - abs(hip_rel_y - 0.38) / 0.38)
         shoulder_score = max(0.0, 1.0 - max(shoulder_rel_y, 0.0) / 0.75)
+        saddle_score = 1.0 if saddle_band[0] <= torso_x <= saddle_band[1] else 0.55
         score += horizontal_score * 0.45
         score += vertical_score * 0.55
         score += shoulder_score * 0.20
+        score += saddle_score * 0.25
 
         ankle_y_values = [
             float(kps[KP[name]][1])
@@ -1099,9 +1311,60 @@ def _mounted_candidate_score(
             # Standing people keep both their hips and ankles low in the horse
             # box. Mounted riders generally do not.
             if hip_rel_y > 0.55 and ankle_rel_y > 0.95:
+                _inc_selection_stat(selection_stats, "likely_trainer_rejections")
                 return None
+            if ankle_rel_y > 1.10 and hip_rel_y > 0.28 and shoulder_rel_y > -0.35:
+                score -= 0.85
 
-    return score
+        if person_bbox is not None:
+            px1, py1, px2, py2 = person_bbox
+            person_h = max(py2 - py1, 1.0)
+            person_w = max(px2 - px1, 1.0)
+            person_bottom_rel = (py2 - y1) / horse_h
+            person_top_rel = (py1 - y1) / horse_h
+            person_center_x = (px1 + px2) / 2.0
+            horse_overlap_ratio = _bbox_intersection(person_bbox, (x1, y1, x2, y2)) / max(_bbox_area(person_bbox), 1.0)
+            vertical_person_shape = person_h / max(person_w, 1.0)
+
+            score += min(horse_overlap_ratio, 1.0) * 0.30
+            score += max(0.0, 1.0 - abs(person_center_x - horse_cx) / max(horse_w * 0.80, 1.0)) * 0.15
+
+            standing_person = (
+                person_bottom_rel > 1.06
+                and person_h > horse_h * 0.62
+                and vertical_person_shape > 1.55
+                and hip_rel_y > 0.24
+            )
+            beside_horse = (
+                person_center_x < x1 + horse_w * 0.10
+                or person_center_x > x2 - horse_w * 0.10
+                or torso_rel_x < 0.08
+                or torso_rel_x > 0.92
+            )
+            if standing_person and (beside_horse or person_top_rel > -0.55):
+                _inc_selection_stat(selection_stats, "likely_trainer_rejections")
+                return None
+            if standing_person:
+                score -= 1.10
+            elif person_bottom_rel > 1.05 and hip_rel_y > 0.35:
+                score -= 0.50
+
+    if score < 0.95:
+        return None
+
+    center = np.array([
+        (float(hip_mid[0]) + float(shoulder_mid[0])) / 2.0,
+        (float(hip_mid[1]) + float(shoulder_mid[1])) / 2.0,
+    ], dtype=float)
+    return RiderCandidate(
+        score=score,
+        mounted_score=score,
+        center=center,
+        torso_size=torso_size,
+        pose_bbox=pose_bbox,
+        person_bbox=person_bbox,
+        kps=kps,
+    )
 
 
 # ── CAE — Camera-Aware Expectation ────────────────────────────────────────────
@@ -1435,6 +1698,8 @@ def analyze_video(
     sampled_slots: list[int] = []
     timeline_entries: list[dict] = []
     batch_stats: dict[str, list[int]] = {}
+    selection_stats: dict[str, int] = {}
+    rider_tracker = RiderTrackState()
     latest_processed_time = 0.0
     last_progress_emit_at = 0.0
     previous_motion_thumb: Optional[np.ndarray] = None
@@ -1482,7 +1747,13 @@ def analyze_video(
         if not sampled_frames:
             return
         selected_batch, horse_hits, crop_hits = _run_inference_batch(
-            sampled_frames, horse_sess, pose_sess, cropper, batch_stats=batch_stats
+            sampled_frames,
+            horse_sess,
+            pose_sess,
+            cropper,
+            batch_stats=batch_stats,
+            tracker=rider_tracker,
+            selection_stats=selection_stats,
         )
         horse_count += horse_hits
         crop_count += crop_hits
@@ -1614,8 +1885,16 @@ def analyze_video(
         )
     logger.info(
         "[analyze_video] %s %s",
-        _describe_batch_sizes("horse_batches", batch_stats.get("horse", [])),
+        _describe_batch_sizes("detector_batches", batch_stats.get("detector", [])),
         _describe_batch_sizes("pose_batches", batch_stats.get("pose", [])),
+    )
+    logger.info(
+        "[analyze_video] rider_selection multi_candidate_frames=%s "
+        "likely_trainer_rejections=%s continuity_rejections=%s selected_valid_rider_frames=%s",
+        selection_stats.get("multi_candidate_frames", 0),
+        selection_stats.get("likely_trainer_rejections", 0),
+        selection_stats.get("continuity_rejections", 0),
+        selection_stats.get("selected_valid_rider_frames", 0),
     )
 
     max_cae_w = max(cae_per_frame) if cae_per_frame else 1.0
