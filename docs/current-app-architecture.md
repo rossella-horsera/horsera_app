@@ -110,7 +110,7 @@ The route table in [src/App.tsx](../src/App.tsx) defines the current navigation 
 | --- | --- | --- |
 | `/#/` | Rides list and upload flow | Primary landing page and main entry to analysis |
 | `/#/rides/:id` | Ride detail and playback | Hydrates keyframes, resolves playback URLs, supports video replacement |
-| `/#/jobs/:jobId/view` | Recovery/debug viewer | Polls a job until complete and then loads overlay playback |
+| `/#/jobs/:jobId/view` | Recovery/debug viewer | Polls a job, shows preview overlays when available, then swaps to final playback |
 | `/#/progress` | Insights/progress screen | Promoted to main nav |
 | `/#/journey` | Progression/journey screen | Still partly heuristic and discipline-limited |
 | `/#/analysis` | Analysis sandbox | Kept URL-accessible but removed from main navigation |
@@ -158,12 +158,12 @@ There are two analysis-oriented client hooks in the repo:
 Today, `usePoseAPI` is the operational path for the ride-analysis loop. It:
 
 1. creates a local blob URL for immediate playback UX
-2. optionally compresses the selected video in-browser
-3. requests a signed upload URL
-4. uploads directly to cloud storage
-5. submits a job from the uploaded object path
-6. polls job status
-7. maps returned keypoints into frontend playback structures
+2. requests a signed upload URL
+3. uploads the original video directly to cloud storage
+4. submits a job from the uploaded object path
+5. records a small pending-analysis session once the backend job id exists
+6. polls job status and renders a provisional preview result when available
+7. maps the final result into frontend playback structures and saves the completed ride
 
 `useVideoAnalysis` remains in the codebase as an older or fallback-oriented path. It dynamically loads TF.js and MoveNet in-browser and can produce local demo or local analysis output, but it is not the main path wired into the primary upload flow.
 
@@ -178,7 +178,7 @@ The FastAPI service in [pose_api/main.py](../pose_api/main.py) is the core analy
 - `POST /videos/read-url`: mint signed playback URLs for stored videos
 - `POST /analyze/video/object`: create a job from an already-uploaded GCS object
 - `POST /analyze/video`: legacy multipart upload path
-- `GET /jobs/{job_id}`: polling endpoint for job state and results
+- `GET /jobs/{job_id}`: polling endpoint for job state, provisional preview output, and final results
 - `POST /analyze/frame`: synchronous single-frame analysis
 
 These responsibilities combine what many systems would split into separate services:
@@ -247,6 +247,8 @@ The main video pipeline in [pose_api/pipeline.py](../pose_api/pipeline.py) is ro
 7. derive riding-quality scores from biomechanics
 8. package frame-level and aggregate outputs into a `PipelineResult`
 
+The same pipeline can run in preview mode with a `max_duration_sec` cutoff and a `result_scope` of `preview`. The first implementation previews the opening segment of the ride, using the same output shape as the final analysis so the frontend can reuse report and overlay components while labeling the scores provisional.
+
 The pipeline also tracks:
 
 - sampled frame counts
@@ -260,6 +262,7 @@ The pipeline also tracks:
 The backend uses a mixed result-persistence approach:
 
 - job metadata can live in memory or Firestore
+- preview payloads live separately from final `result` payloads on the job record
 - full result payloads can be stored inline with the job record or offloaded to GCS
 - when full results are stored in GCS, polling can hydrate them back into the returned response on demand
 
@@ -289,9 +292,9 @@ sequenceDiagram
   loop poll until complete or failed
     Rider->>Pose: GET /jobs/{job_id}
     Pose->>Jobs: read current status
-    Worker->>Jobs: update progress and final status
-    Worker->>GCS: optionally read source object and write result payload
-    Pose-->>Rider: pending / processing / complete / failed
+    Worker->>Jobs: update preview, progress, and final status
+    Worker->>GCS: optionally read source object and write final result payload
+    Pose-->>Rider: pending / processing / preview / complete / failed
   end
 
   Rider->>Pose: POST /videos/pin
@@ -334,6 +337,7 @@ That means the app can have:
 | Browser local cache | [src/lib/safeStorage.ts](../src/lib/safeStorage.ts) | localStorage with in-memory fallback |
 | Rider profile | `horsera_user_profile` via [src/lib/userProfile.ts](../src/lib/userProfile.ts) | onboarding/profile data |
 | Cached ride list | `horsera_rides` via [src/lib/storage.ts](../src/lib/storage.ts) | local ride cache without full keyframes |
+| Pending analysis sessions | `horsera_pending_analysis_sessions` via [src/lib/pendingAnalysis.ts](../src/lib/pendingAnalysis.ts) | local recovery list for uploaded jobs that are still processing or preview-ready |
 | Firestore cutover marker | `horsera_firestore_cutover_v1` | one-time migration/backfill marker |
 | Cadence history | `horsera_cadence_history` | persisted chat transcript |
 | Profile photo | `horsera_profile_photo` | avatar image data URL |
@@ -366,6 +370,7 @@ The pose job payload returned through polling is effectively:
 
 - job metadata: `job_id`, `status`, `stage`, timestamps, error
 - optional progress metadata while processing
+- optional preview payload with status, first-segment scope, provisional result, completion time, or error
 - optional result payload when complete
 
 The result payload includes, at minimum:
@@ -376,6 +381,8 @@ The result payload includes, at minimum:
 - detection-related metadata
 - insight strings
 - `framesData` with per-frame timestamps and normalized keypoints
+
+The preview payload intentionally uses the same `PipelineResult` shape as the final result but is stored under `preview.result` and labeled with a `scope` of `first_segment`. Preview results should not be saved as final ride metrics.
 
 ### Where Metrics Are Produced
 
@@ -426,6 +433,22 @@ This is the core activation loop of the app. If upload succeeds but polling late
 - jobs may fail after upload succeeds
 - browser polling can degrade into confusing retry behavior
 - debugging becomes harder because failures may be infrastructure- or memory-driven rather than clean application exceptions
+
+#### Full-ride analysis latency remains visible
+
+**What it is**
+
+Large videos can still take a long time to analyze end-to-end. The current mitigation is a preview pass: after upload completes, the worker analyzes the first segment quickly, stores it under `job.preview`, and then continues the canonical full-ride pass.
+
+**Why it matters**
+
+The rider gets useful provisional feedback sooner, but the final saved ride still depends on the slower full-video analysis path.
+
+**Current evidence**
+
+- [pose_api/main.py](../pose_api/main.py) runs `stage: "previewing"` before `stage: "analyzing"` when `PREVIEW_DURATION_SECONDS` is enabled.
+- [src/hooks/usePoseAPI.ts](../src/hooks/usePoseAPI.ts) exposes `previewResult`, `previewMeta`, and `finalResultPending`.
+- [src/lib/pendingAnalysis.ts](../src/lib/pendingAnalysis.ts) keeps preview-ready jobs visible if the rider leaves the upload screen.
 
 #### Execution backend complexity has grown
 

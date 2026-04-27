@@ -154,6 +154,8 @@ class PipelineResult:
     sampleIntervalSec: float
     insights:      list[str]
     frames_data:   list[dict]
+    resultScope:   str
+    scope:         dict[str, Any]
 
     def to_dict(self) -> dict:
         return {
@@ -170,6 +172,8 @@ class PipelineResult:
             "sampleIntervalSec": self.sampleIntervalSec,
             "insights":       self.insights,
             "framesData":     self.frames_data,
+            "resultScope":    self.resultScope,
+            "scope":          self.scope,
         }
 
 
@@ -1349,6 +1353,8 @@ def analyze_video(
     use_smart_crop: bool = True,
     use_smoothing: bool = True,
     progress_callback: Optional[Callable[[dict[str, Any]], None]] = None,
+    max_duration_sec: Optional[float] = None,
+    result_scope: str = "full",
 ) -> PipelineResult:
     """
     Analyze a video for rider biomechanics.
@@ -1358,11 +1364,16 @@ def analyze_video(
         sample_fps: Frame sampling rate (default 3 fps)
         use_smart_crop: Enable smart cropping for better pose accuracy (default True)
         use_smoothing: Enable EMA smoothing for crop region stability (default True)
+        max_duration_sec: Optional early cutoff for preview analysis.
+        result_scope: Describes whether the result is "preview" or "full".
     """
     horse_sess, pose_sess = _get_sessions()
 
     native_fps, total_frames = _video_meta(video_path)
     duration_estimate_sec = total_frames / max(native_fps, 1e-6)
+    bounded_duration_estimate_sec = duration_estimate_sec
+    if max_duration_sec is not None and max_duration_sec > 0:
+        bounded_duration_estimate_sec = min(duration_estimate_sec, float(max_duration_sec))
     sample_every_frame = SAMPLE_EVERY_FRAME or sample_fps <= 0
     effective_sample_fps = native_fps if sample_every_frame else max(float(sample_fps), 1.0)
     adaptive_sample_fps = min(float(ADAPTIVE_SAMPLE_MAX_FPS), native_fps)
@@ -1374,7 +1385,7 @@ def analyze_video(
     progress_sample_fps = adaptive_sample_fps if adaptive_sample_enabled else effective_sample_fps
     estimated_samples = total_frames if sample_every_frame else max(
         1,
-        int(math.ceil(duration_estimate_sec * progress_sample_fps)),
+        int(math.ceil(bounded_duration_estimate_sec * progress_sample_fps)),
     )
     sample_interval = 1.0 / max(effective_sample_fps, 1.0)
     adaptive_sample_interval = 1.0 / max(adaptive_sample_fps, 1.0)
@@ -1391,7 +1402,8 @@ def analyze_video(
         cadence_label = f"{sample_interval:.3f}s cadence"
     logger.info(
         f"[analyze_video] {total_frames} frames @ {native_fps:.1f} fps — "
-        f"sampling on {cadence_label} (~{approx_effective:.1f} fps target)"
+        f"sampling on {cadence_label} (~{approx_effective:.1f} fps target), "
+        f"scope={result_scope} max_duration={max_duration_sec}"
     )
     logger.info(
         f"[analyze_video] smart_crop={use_smart_crop} smoothing={use_smoothing}"
@@ -1442,8 +1454,8 @@ def analyze_video(
             return
 
         processed_ratio = 0.0
-        if duration_estimate_sec > 0:
-            processed_ratio = min(1.0, latest_processed_time / duration_estimate_sec)
+        if bounded_duration_estimate_sec > 0:
+            processed_ratio = min(1.0, latest_processed_time / bounded_duration_estimate_sec)
         if sampled_count > 0:
             processed_ratio = max(processed_ratio, min(1.0, sampled_count / max(estimated_samples, 1)))
 
@@ -1534,6 +1546,9 @@ def analyze_video(
 
             frame_time = _frame_timestamp_seconds(cap, idx, native_fps, last_frame_time)
             last_frame_time = frame_time
+            if max_duration_sec is not None and max_duration_sec > 0 and frame_time >= float(max_duration_sec):
+                del raw_frame
+                break
 
             adaptive_boost_active = False
             if adaptive_sample_enabled:
@@ -1658,6 +1673,12 @@ def analyze_video(
         sampleIntervalSec = round(sample_interval, 6),
         insights       = _generate_insights(bio, det_rate),
         frames_data    = frames_data,
+        resultScope    = result_scope,
+        scope          = {
+            "kind": "first_segment" if result_scope == "preview" else "full",
+            "duration_seconds": round(float(duration_sec), 3),
+            "sample_fps": round(float(effective_sample_fps), 3),
+        },
     )
 
 

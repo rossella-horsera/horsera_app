@@ -3,20 +3,14 @@
 //
 // Flow:
 //   1. Create blob URL immediately → video plays while analysis runs
-//   2. Create ride_sessions row (no video_url yet)
-//   3. Compress video in-browser (720p / 2 Mbps) via canvas+MediaRecorder
-//      [progress 0→10%] — skipped for small files or unsupported browsers
-//   4. Request signed upload URL + upload video directly to cloud storage
+//   2. Request signed upload URL + upload video directly to cloud storage
 //      [progress 10→18%]
-//   5. POST object path to /analyze/video/object
-//   6. Poll GET /jobs/{job_id} every 3s              [progress 20→95%]
-//   7. On complete: store result, mark done          [progress 100%]
+//   3. POST object path to /analyze/video/object
+//   4. Poll GET /jobs/{job_id}; preview may arrive before final result
+//   5. On complete: store final result, mark done     [progress 100%]
 //
-// Storage upload is deferred to handleSaveSession in RidesPage.tsx —
-// the user only pays the upload cost when they explicitly save the ride.
-//
-// Returns the same { status, progress, result, error, analyzeVideo, reset }
-// shape as useVideoAnalysis so the rest of RidesPage.tsx is unchanged.
+// Returns the useVideoAnalysis-compatible fields plus preview state for the
+// provisional report shown while the final full-ride analysis continues.
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import type { VideoAnalysisResult, AnalysisStatus, TimestampedFrame } from './useVideoAnalysis';
@@ -68,6 +62,27 @@ export interface PoseJobAnalysisProgress {
   progress_pct?: number;
 }
 
+interface PoseResultScope {
+  kind?: string;
+  duration_seconds?: number;
+  sample_fps?: number;
+}
+
+interface PoseJobResult {
+  biometrics?: VideoAnalysisResult['biometrics'];
+  insights?: string[];
+  framesAnalyzed?: number;
+  sampleIntervalSec?: number;
+  framesData?: Array<{
+    frame_time?: number;
+    detected?: boolean;
+    sample_index?: number;
+    source_frame_index?: number;
+    keypoints?: [number, number, number][] | null;
+  }>;
+  scope?: PoseResultScope;
+}
+
 interface PoseJobResponse {
   status?: string;
   stage?: string;
@@ -75,18 +90,13 @@ interface PoseJobResponse {
   started_at?: number;
   completed_at?: number;
   error?: string | null;
-  result?: {
-    biometrics?: VideoAnalysisResult['biometrics'];
-    insights?: string[];
-    framesAnalyzed?: number;
-    sampleIntervalSec?: number;
-    framesData?: Array<{
-      frame_time?: number;
-      detected?: boolean;
-      sample_index?: number;
-      source_frame_index?: number;
-      keypoints?: [number, number, number][] | null;
-    }>;
+  result?: PoseJobResult | null;
+  preview?: {
+    status?: 'pending' | 'processing' | 'complete' | 'failed';
+    result?: PoseJobResult | null;
+    completed_at?: number;
+    scope?: PoseResultScope;
+    error?: string;
   } | null;
   analysis_progress?: PoseJobAnalysisProgress | null;
 }
@@ -96,6 +106,11 @@ export interface PoseAnalysisMeta {
   headline: string;
   detail: string | null;
   elapsedSec: number | null;
+}
+
+export interface PosePreviewMeta {
+  durationSeconds: number;
+  sampleFps: number;
 }
 
 function readNumber(value: unknown): number | null {
@@ -146,6 +161,13 @@ function buildAnalysisMeta(job?: PoseJobResponse | null): PoseAnalysisMeta {
         stage,
         headline: 'Queued for analysis',
         detail: 'Upload finished. Waiting for a worker to pick up your ride.',
+        elapsedSec,
+      };
+    case 'previewing':
+      return {
+        stage,
+        headline: 'Preparing a quick preview',
+        detail: 'Cadence is reading the opening stretch so you can see provisional results sooner.',
         elapsedSec,
       };
     case 'downloading':
@@ -203,6 +225,45 @@ function buildAnalysisMeta(job?: PoseJobResponse | null): PoseAnalysisMeta {
   }
 }
 
+function mapPoseResultToVideoResult(
+  r: NonNullable<PoseJobResponse['result']>,
+  blobUrl: string,
+): VideoAnalysisResult {
+  const sampleIntervalSec = typeof r.sampleIntervalSec === 'number' ? r.sampleIntervalSec : undefined;
+  const allFrames: TimestampedFrame[] = (r.framesData ?? []).map((fd) => ({
+    time: fd.frame_time ?? 0,
+    detected: fd.detected,
+    sampleIndex: fd.sample_index,
+    sourceFrameIndex: fd.source_frame_index,
+    sampleIntervalSec,
+    frame: Array.isArray(fd.keypoints)
+      ? fd.keypoints.map(([x, y, conf]) => ({ x, y, score: conf }))
+      : null,
+  }));
+  const firstDetectedFrame = allFrames.find((frame) => Array.isArray(frame.frame));
+  return {
+    biometrics: r.biometrics!,
+    insights: toMovementInsights(r.insights ?? []),
+    frameCount: r.framesAnalyzed ?? 0,
+    videoPlaybackUrl: blobUrl,
+    bestMomentStart: allFrames.length > 0 ? allFrames[0].time : 0,
+    allFrames,
+    thumbnailDataUrl: '',
+    bestFrame: firstDetectedFrame?.frame ?? null,
+  };
+}
+
+function getPreviewMeta(job: PoseJobResponse): PosePreviewMeta | null {
+  const scope = job.preview?.scope ?? job.preview?.result?.scope;
+  const durationSeconds = readNumber(scope?.duration_seconds);
+  const sampleFps = readNumber(scope?.sample_fps);
+  if (durationSeconds === null && sampleFps === null) return null;
+  return {
+    durationSeconds: durationSeconds ?? 60,
+    sampleFps: sampleFps ?? 2,
+  };
+}
+
 function deriveProgressFromJob(job: PoseJobResponse, attempts: number): number {
   const stage = getJobStage(job);
   const stageProgress = readNumber(job.analysis_progress?.progress_pct);
@@ -211,6 +272,11 @@ function deriveProgressFromJob(job: PoseJobResponse, attempts: number): number {
       return 22;
     case 'downloading':
       return 30;
+    case 'previewing':
+      if (stageProgress !== null) {
+        return Math.max(24, Math.min(38, Math.round(24 + (stageProgress * 14))));
+      }
+      return Math.min(38, 24 + Math.round(attempts * 1.2));
     case 'analyzing':
       if (stageProgress !== null) {
         return Math.max(35, Math.min(92, Math.round(35 + (stageProgress * 57))));
@@ -230,7 +296,7 @@ function deriveProgressFromJob(job: PoseJobResponse, attempts: number): number {
 
 function getPollDelay(job?: PoseJobResponse | null): number {
   const stage = getJobStage(job);
-  if (stage === 'queued' || stage === 'downloading' || stage === 'persisting') {
+  if (stage === 'queued' || stage === 'downloading' || stage === 'previewing' || stage === 'persisting') {
     return FAST_POLL_MS;
   }
   if (stage === 'analyzing') {
@@ -349,6 +415,9 @@ export function usePoseAPI(): {
   status:       AnalysisStatus;
   progress:     number;
   result:       VideoAnalysisResult | null;
+  previewResult: VideoAnalysisResult | null;
+  previewMeta: PosePreviewMeta | null;
+  finalResultPending: boolean;
   error:        string | null;
   analysisJobId: string | null;
   uploadedObjectPath: string | null;
@@ -359,6 +428,9 @@ export function usePoseAPI(): {
   const [status,    setStatus]    = useState<AnalysisStatus>('idle');
   const [progress,  setProgress]  = useState(0);
   const [result,    setResult]    = useState<VideoAnalysisResult | null>(null);
+  const [previewResult, setPreviewResult] = useState<VideoAnalysisResult | null>(null);
+  const [previewMeta, setPreviewMeta] = useState<PosePreviewMeta | null>(null);
+  const [finalResultPending, setFinalResultPending] = useState(false);
   const [error,     setError]     = useState<string | null>(null);
   const [analysisJobId, setAnalysisJobId] = useState<string | null>(null);
   const [uploadedObjectPath, setUploadedObjectPath] = useState<string | null>(null);
@@ -405,6 +477,9 @@ export function usePoseAPI(): {
     setProgress(0);
     setError(null);
     setResult(null);
+    setPreviewResult(null);
+    setPreviewMeta(null);
+    setFinalResultPending(false);
     setAnalysisJobId(null);
     setUploadedObjectPath(null);
     setAnalysisMeta({
@@ -587,6 +662,12 @@ export function usePoseAPI(): {
 
           setAnalysisMeta(buildAnalysisMeta(job));
 
+          if (job.preview?.status === 'complete' && job.preview.result?.biometrics) {
+            setPreviewResult(mapPoseResultToVideoResult(job.preview.result, blobUrl));
+            setPreviewMeta(getPreviewMeta(job));
+            setFinalResultPending(true);
+          }
+
           if (job.status === 'pending' || job.status === 'processing') {
             bumpProgress(deriveProgressFromJob(job, attempts));
             schedulePoll(getPollDelay(job));
@@ -598,28 +679,8 @@ export function usePoseAPI(): {
             _bench(`DONE: analysis complete after ${attempts} polls`);
             const r = job.result;
 
-            const sampleIntervalSec = typeof r.sampleIntervalSec === 'number' ? r.sampleIntervalSec : undefined;
-            const allFrames: TimestampedFrame[] = (r.framesData ?? []).map((fd) => ({
-              time: fd.frame_time ?? 0,
-              detected: fd.detected,
-              sampleIndex: fd.sample_index,
-              sourceFrameIndex: fd.source_frame_index,
-              sampleIntervalSec,
-              frame: Array.isArray(fd.keypoints)
-                ? fd.keypoints.map(([x, y, conf]) => ({ x, y, score: conf }))
-                : null,
-            }));
-            const firstDetectedFrame = allFrames.find((frame) => Array.isArray(frame.frame));
-            setResult({
-              biometrics:       r.biometrics!,
-              insights:         toMovementInsights(r.insights ?? []),
-              frameCount:       r.framesAnalyzed ?? 0,
-              videoPlaybackUrl: blobUrl,
-              bestMomentStart:  allFrames.length > 0 ? allFrames[0].time : 0,
-              allFrames,
-              thumbnailDataUrl: '',
-              bestFrame:        firstDetectedFrame?.frame ?? null,
-            });
+            setResult(mapPoseResultToVideoResult(r, blobUrl));
+            setFinalResultPending(false);
             setProgress(100);
             setStatus('done');
             setAnalysisMeta(buildAnalysisMeta(job));
@@ -664,6 +725,9 @@ export function usePoseAPI(): {
     setStatus('idle');
     setProgress(0);
     setResult(null);
+    setPreviewResult(null);
+    setPreviewMeta(null);
+    setFinalResultPending(false);
     setError(null);
     setAnalysisJobId(null);
     setUploadedObjectPath(null);
@@ -676,5 +740,18 @@ export function usePoseAPI(): {
     scheduleBlobUrlRevoke(blobUrlRef.current);
   }, [scheduleBlobUrlRevoke]);
 
-  return { status, progress, result, error, analysisJobId, uploadedObjectPath, analysisMeta, analyzeVideo, reset };
+  return {
+    status,
+    progress,
+    result,
+    previewResult,
+    previewMeta,
+    finalResultPending,
+    error,
+    analysisJobId,
+    uploadedObjectPath,
+    analysisMeta,
+    analyzeVideo,
+    reset,
+  };
 }

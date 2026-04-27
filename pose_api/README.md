@@ -16,6 +16,13 @@ Receives a riding video → returns 6 biomechanics scores + Training Scale quali
 | `GET` | `/jobs/{job_id}` | Poll job status + results |
 | `POST` | `/analyze/frame` | Single base64 frame → instant keypoints |
 
+`GET /jobs/{job_id}` now exposes two result surfaces:
+
+- `preview`: provisional first-segment analysis, usually produced before the full ride completes
+- `result`: canonical full-ride analysis, unchanged from the previous final-result flow
+
+The preview uses the same score, insight, and `framesData` shape as the final result so the frontend can render the same report components while clearly labeling it provisional.
+
 ## Run locally
 
 ```bash
@@ -122,6 +129,8 @@ in the Horsera frontend (`src/lib/storage.ts`).
 | `CLOUD_RUN_GPU_JOB` | _(empty)_ | Cloud Run Job name for GPU worker |
 | `WORKER_TIMEOUT_SECONDS` | `3600` | Expected worker task timeout used for stale-job detection in the API |
 | `STALE_JOB_GRACE_SECONDS` | `90` | Extra buffer before the API converts a long-running Cloud Run job into a failed status |
+| `PREVIEW_DURATION_SECONDS` | `60` | First-segment window used for provisional preview analysis before the full ride pass |
+| `PREVIEW_SAMPLE_FPS` | `2` | Preview sampling rate; lower than full analysis to make the first report arrive sooner |
 | `SAMPLE_FPS` | `3` | Frame sampling rate for video analysis |
 | `SAMPLE_EVERY_FRAME` | `false` | When `true`, analyze every decoded input frame instead of sampling on a cadence |
 | `ADAPTIVE_SAMPLE_MAX_FPS` | `8` | Burst sampling ceiling used when motion spikes or tracking is lost |

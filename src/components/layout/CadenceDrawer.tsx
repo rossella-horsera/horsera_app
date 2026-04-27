@@ -103,7 +103,9 @@ function loadHistory(): Message[] {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) return parsed;
     }
-  } catch {}
+  } catch {
+    // Ignore malformed persisted chat history and start fresh.
+  }
   const p = getUserProfile();
   const name = p.firstName || 'Rider';
   return [{
@@ -145,11 +147,13 @@ export default function CadenceDrawer({ open, onClose, onStreamingChange, onSpee
   // Abort any active recognition when drawer closes
   useEffect(() => {
     if (!open && recognitionRef.current) {
-      try { recognitionRef.current.abort(); } catch {}
+      try { recognitionRef.current.abort(); } catch {
+        // Ignore browsers that throw while tearing down recognition.
+      }
       recognitionRef.current = null;
       setSpeechState('idle'); onSpeechStateChange?.('idle');
     }
-  }, [open]);
+  }, [open, onSpeechStateChange]);
 
   const showComingSoon = useCallback((msg: string) => {
     if (comingSoonTimerRef.current) clearTimeout(comingSoonTimerRef.current);
@@ -258,7 +262,9 @@ export default function CadenceDrawer({ open, onClose, onStreamingChange, onSpee
                 return updated;
               });
             }
-          } catch {}
+          } catch {
+            // Ignore malformed streaming chunks and keep reading.
+          }
         }
       }
     } catch {
@@ -275,7 +281,7 @@ export default function CadenceDrawer({ open, onClose, onStreamingChange, onSpee
     } finally {
       setIsStreaming(false); onStreamingChange?.(false);
     }
-  }, [messages, isStreaming]);
+  }, [messages, isStreaming, onStreamingChange]);
 
   const handlePickImage = useCallback(() => {
     if (isStreaming) return;
@@ -309,7 +315,9 @@ export default function CadenceDrawer({ open, onClose, onStreamingChange, onSpee
 
     // If already listening, stop the current session
     if (speechState === 'listening') {
-      try { recognitionRef.current?.stop(); } catch {}
+      try { recognitionRef.current?.stop(); } catch {
+        // Ignore stop errors from browsers that already ended recognition.
+      }
       setInterimTranscript('');
       return;
     }
@@ -360,7 +368,7 @@ export default function CadenceDrawer({ open, onClose, onStreamingChange, onSpee
       showComingSoon('Voice input unavailable');
       setSpeechState('idle'); onSpeechStateChange?.('idle');
     }
-  }, [speechState, showComingSoon]);
+  }, [speechState, showComingSoon, onSpeechStateChange]);
 
   const isRecording = speechState === 'listening';
 

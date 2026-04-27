@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getUserProfile } from '../lib/userProfile';
+import { getUserProfile, saveUserProfile } from '../lib/userProfile';
 import { useStoredRides } from '../lib/storage';
 
 // ── Design tokens ──────────────────────────────────────────────────────────
@@ -300,7 +300,7 @@ export default function JourneyPage() {
             {DISCIPLINE_OPTIONS.map(d => (
               <button key={d.key} onClick={() => {
                 setSelectedDiscipline(d.key);
-                try { const { setUserProfile } = require('../lib/userProfile'); setUserProfile({ ...profile, discipline: d.key }); } catch { /* noop */ }
+                saveUserProfile({ discipline: d.key });
                 setShowDisciplineSelector(false);
               }} style={{
                 fontSize: 10, padding: '4px 12px', borderRadius: 14,
