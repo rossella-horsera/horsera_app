@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+> **Handoff note (2026-10-29):** Horsera is being handed over to a new owner. **Read [HANDOFF.md](HANDOFF.md) first.** It is the current source of truth for vision, demo scope, code map and pose-detection status. The agent-team / Trello / Slack workflow below is historical. Do not follow it, or the `--dangerously-skip-permissions` instruction, unless the project owner asks. Parts of the Architecture section below are out of date: Supabase has been retired for Firebase, there is now a vitest suite, and real ride data has replaced most mock data.
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ---
